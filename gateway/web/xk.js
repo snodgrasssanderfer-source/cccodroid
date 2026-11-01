@@ -238,6 +238,25 @@
     };
   }
   listen();
+
+  // ── 日记：按角色、日期 ──
+  let diaryRole = null;
+  XK.tab("diary", "日记", async (body) => {
+    if (!ROLES) await loadRoles();
+    diaryRole = diaryRole || ROLES.active;
+    const r = await api("/api/xk/diary?role=" + diaryRole);
+    body.innerHTML = `<div class="xk-row">${ROLES.roles.map((x) => `<button class="btn sm ${x.id === diaryRole ? "" : "ghost"}" data-role="${x.id}">${esc(x.name)}</button>`).join("")}</div>
+      <p class="tiny">每晚 22:00 左右根据当天的素材写一篇。${diaryRole === "xiaoke" ? "小克走订阅账号：要在「定时任务」页底部打开「订阅账户」才会写。" : ""}${r.pending.length ? `还没写的素材：${r.pending.map(esc).join("、")}` : ""}</p>
+      <div class="xk-row">${r.days.map((d) => `<button class="btn sm ghost" data-day="${d}">${d}</button>`).join("") || "<span class='tiny'>还没有日记。</span>"}</div>
+      <div id="xk-day" class="xk-card hidden" style="white-space:pre-wrap"></div>`;
+    body.onclick = async (e) => {
+      if (e.target.dataset.role) { diaryRole = e.target.dataset.role; return openPanel("diary"); }
+      const day = e.target.dataset.day;
+      if (!day) return;
+      try { const t = await api(`/api/xk/diary/${diaryRole}/${day}`); const el = $("#xk-day", body); el.textContent = t.text; el.classList.remove("hidden"); }
+      catch (err) { fail(err); }
+    };
+  });
   const boot = () => { mountEntry(); if (!$("#xk-entry")) setTimeout(boot, 500); };
   boot();
 })();

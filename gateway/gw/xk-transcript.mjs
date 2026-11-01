@@ -19,6 +19,7 @@ export function turns(sessionId, since = 0) {
     let e;
     try { e = JSON.parse(line); } catch { continue; }   // 进程被杀时最后一行可能只写了一半
     if ((e.type !== "user" && e.type !== "assistant") || e.isMeta || e.isCompactSummary || e.isSidechain) continue;
+    if (e.message?.model === "<synthetic>") continue;   // 接口出错时 Claude Code 自己写的报错，不是她说的话
     const at = Date.parse(e.timestamp) || 0;
     if (at < since) continue;
     const text = textOf(e.message && e.message.content).trim();
