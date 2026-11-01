@@ -17,3 +17,20 @@
 .xk-menu { position: fixed; z-index: 70; background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 24px var(--shadow); }
 .xk-menu button { border: 0; background: none; color: var(--fg); text-align: left; padding: 8px 12px; border-radius: 8px; }
 .xk-menu button:hover { background: var(--bg3); }
+
+/* 暖橙色系：只改默认皮肤（原生），别的皮肤保持上游原样。页面底色（--bg / --bar-bg）不动：状态栏颜色在 theme.js 里按它写死了。
+   对比度：深色强调色压底 6.7，按钮白字 5.1；浅色强调色压底 4.7，按钮白字 5.1 */
+html[data-skin="native"] {
+  --bg2: #27221e; --bg3: #312a24; --bg4: #3b322a; --line: #43382f;
+  --fg: #f1e8de; --fg2: #b9ab9c; --fg3: #8a7d6f;
+  --accent: #f28a3c; --accent-dim: #b5652b; --accent-btn: #b4500c;
+  --user-bg: #3a2c21; --user-line: #3a2c21; --active-bg: #3a2618;
+  --think-bg: #26211d; --more-bg: #2e2620; --more-line: #44382d; --tool-bg: #241f1b; --tool-line: #3a3029;
+}
+html[data-skin="native"][data-theme="light"] {
+  --bg2: #fbf1e7; --bg3: #f6e6d6; --bg4: #efd9c4; --line: #ead7c3;
+  --fg: #2c2017; --fg2: #6b5644; --fg3: #9a8471;
+  --accent: #b8520c; --accent-dim: #eba56f; --accent-btn: #b4500c;
+  --user-bg: #fbe5d1; --user-line: #fbe5d1; --active-bg: #fde3cc;
+  --think-bg: #fcf3ea; --more-bg: #f8eadc; --more-line: #ecd5bf; --tool-bg: #fbf3eb; --tool-line: #efdcc9;
+}

@@ -21,18 +21,21 @@
 
   // ── 产品名：只换作为名字出现的 cccodroid，路径和链接里的不动（和外壳 Xk.brand 同一条规则）──
   const BRAND = /(?<![\/\w.-])cccodroid(?![\/\w.-])/g;
+  // 只在真的换了时才写回：写回本身会再触发观察器，路径里的 cccodroid 换不掉，每次都写就成了死循环
+  const fix = (n) => { if (n.nodeValue.includes("cccodroid")) { const v = n.nodeValue.replace(BRAND, "小克"); if (v !== n.nodeValue) n.nodeValue = v; } };
   function brand(root) {
     const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.includes("cccodroid")) n.nodeValue = n.nodeValue.replace(BRAND, "小克");
+    for (let n = w.nextNode(); n; n = w.nextNode()) fix(n);
     if (root.querySelectorAll) for (const el of root.querySelectorAll("[title],[aria-label],[placeholder]"))
-      for (const a of ["title", "aria-label", "placeholder"]) { const v = el.getAttribute(a); if (v && v.includes("cccodroid")) el.setAttribute(a, v.replace(BRAND, "小克")); }
+      for (const a of ["title", "aria-label", "placeholder"]) { const v = el.getAttribute(a); if (v && v.includes("cccodroid")) { const w2 = v.replace(BRAND, "小克"); if (w2 !== v) el.setAttribute(a, w2); } }
   }
   new MutationObserver((ms) => {
     for (const m of ms) {
-      if (m.type === "characterData") { if (m.target.nodeValue.includes("cccodroid")) m.target.nodeValue = m.target.nodeValue.replace(BRAND, "小克"); }
-      else for (const n of m.addedNodes) n.nodeType === 1 ? brand(n) : n.nodeType === 3 && n.nodeValue.includes("cccodroid") && (n.nodeValue = n.nodeValue.replace(BRAND, "小克"));
+      if (m.type === "characterData") fix(m.target);
+      else for (const n of m.addedNodes) n.nodeType === 1 ? brand(n) : n.nodeType === 3 && fix(n);
     }
-    if (document.title.includes("cccodroid")) document.title = document.title.replace(BRAND, "小克");
+    const t = document.title.replace(BRAND, "小克");
+    if (t !== document.title) document.title = t;
   }).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
   brand(document.body);
   document.title = "小克";
