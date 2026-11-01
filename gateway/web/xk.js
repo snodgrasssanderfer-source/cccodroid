@@ -202,6 +202,32 @@
       } catch (err) { fail(err); }
     };
   });
+
+  // ── 接班提示：网关发 xk 事件；新会话一拿到会话号就打开（只在主人正看着被接班的那个会话时） ──
+  const follow = new Map();   // run 号 → 要不要跟过去
+  function listen() {
+    const es = new EventSource("/api/events");
+    es.onmessage = (m) => {
+      let ev;
+      try { ev = JSON.parse(m.data); } catch { return; }
+      if (ev.type === "xk") {
+        if (ev.op === "handover") {
+          toast(`${roleName(ev.to)}接班了：${ev.reason}`);
+          const cur = window.__cc && window.__cc.view.sessionId;
+          if (!ev.fromSession || ev.fromSession === cur) follow.set(ev.runId, true);
+          loadRoles().then(() => paintChip(true)).catch(() => {});
+        } else if (ev.op === "handover_none") toast(`${roleName(ev.from)}：${ev.reason}`, true);
+        else if (ev.op === "memory_failed") toast(`${roleName(ev.role)}整理记忆没成功：${ev.error}`, true);
+        else if (ev.op === "diary") toast(ev.text, !!ev.error);
+      }
+      if (ev.runId && ev.sessionId && follow.get(ev.runId)) {
+        follow.delete(ev.runId);
+        window.__cc.openSession(ev.sessionId);
+        setTimeout(() => paintChip(true).catch(() => {}), 300);
+      }
+    };
+  }
+  listen();
   const boot = () => { mountEntry(); if (!$("#xk-entry")) setTimeout(boot, 500); };
   boot();
 })();

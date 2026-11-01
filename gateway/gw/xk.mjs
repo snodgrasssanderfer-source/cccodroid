@@ -10,6 +10,7 @@ import { RUNS } from "./runs.mjs";
 import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
+import { handoverRoles } from "./xk-handover.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {
@@ -54,6 +55,7 @@ addRoute(async (req, res, u, p) => {
   if (!String(ctx.body.message || "").trim()) return sendJson(res, 400, { error: "empty message" });
   const item = enqueue({ ...ctx.body, internal: false, auto: undefined });
   writeCarry(ctx.role, item.id, carryText(ctx.carry.fromSid, ctx.carry.fromRole, ctx.role, ctx.carry.reason));
+  ctx.onQueued?.(item);
   if (ctx.notice) publish({ type: "xk", op: "handover", runId: item.id, ...ctx.notice });
   return sendJson(res, 200, { ok: true, id: item.id, injected: !!item.injected, started: RUNS.has(item.id), xk: ctx.notice });
 });
@@ -61,7 +63,7 @@ addRoute(async (req, res, u, p) => {
 // ── 角色、人设、世界书、手动切换 ──
 addRoute(async (req, res, u, p) => {
   if (p === "/api/xk/roles" && req.method === "GET")
-    return sendJson(res, 200, { active: STATE.active, order: STATE.order, roles: ROLES.map((r) => ({ ...r, projectId: projectOf(r.id), cooldown: STATE.cooldown[r.id] || null, ...personaStatus(r.id) })) });
+    return sendJson(res, 200, { active: STATE.active, order: STATE.order, roles: ROLES.map((r, i) => ({ ...r, projectId: projectOf(r.id), ...handoverRoles()[i], ...personaStatus(r.id) })) });
   let m = p.match(/^\/api\/xk\/roles\/([a-z]+)\/persona$/);
   if (m && req.method === "PUT") return sendJson(res, 200, importPersona(m[1], (await json(req)).text || ""));
   if (p === "/api/xk/worldbook" && req.method === "PUT") return sendJson(res, 200, importWorldbook((await json(req)).text || ""));
