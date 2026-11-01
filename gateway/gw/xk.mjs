@@ -12,6 +12,7 @@ import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, http
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
 import "./xk-agy.mjs";
+import "./xk-diary.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {
