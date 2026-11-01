@@ -161,6 +161,47 @@
       if (e.target.id === "xk-order-save") api("/api/xk/order", { method: "PUT", body: { order: $("#xk-order", body).value.split(/[,，\s]+/).filter(Boolean) } }).then(() => toast("已保存")).catch(fail);
     };
   });
+
+  // ── 记忆：每个角色一套，看、改、删 ──
+  const KIND = { fact: "事实", event: "事件", plan: "计划", opinion: "看法" };
+  const CH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
+  let memRole = null;
+  XK.tab("memory", "记忆", async (body) => {
+    if (!ROLES) await loadRoles();
+    memRole = memRole || ROLES.active;
+    const r = await api("/api/xk/memory?role=" + memRole);
+    body.innerHTML = `<div class="xk-row">${ROLES.roles.map((x) => `<button class="btn sm ${x.id === memRole ? "" : "ghost"}" data-role="${x.id}">${esc(x.name)}</button>`).join("")}
+      <input class="xk-in" id="xk-mq" placeholder="筛选" style="flex:1;min-width:120px"></div>
+      <p class="tiny">${r.items.length} 条。对话停下 10 分钟后她会自动整理一遍；灰色的是已过去的。</p><div id="xk-mlist"></div>`;
+    const paint = () => {
+      const q = $("#xk-mq", body).value.trim();
+      $("#xk-mlist", body).innerHTML = r.items.filter((m) => !q || m.text.includes(q) || m.who.includes(q)).map((m) => `
+        <div class="xk-card${m.past ? " xk-past" : ""}" data-id="${m.id}">
+          <div class="tiny">${esc(m.date)} · ${KIND[m.kind] || m.kind} · ${esc(m.who)} · 来自${CH[m.channel] || esc(m.channel)}${m.past ? ` · 已过去${m.until ? "（" + esc(m.until) + " 起）" : ""}` : m.until ? ` · 到 ${esc(m.until)}` : ""}</div>
+          <div>${esc(m.text)}</div>
+          <div class="xk-row"><button class="btn sm ghost" data-act="edit">改</button><button class="btn sm ghost" data-act="past">${m.past ? "还成立" : "标成已过去"}</button><button class="btn sm ghost" data-act="del">删</button></div>
+        </div>`).join("") || `<p class="tiny">还没有记忆。</p>`;
+    };
+    paint();
+    $("#xk-mq", body).oninput = paint;
+    body.onclick = async (e) => {
+      const rb = e.target.dataset.role;
+      if (rb) { memRole = rb; return openPanel("memory"); }
+      const act = e.target.dataset.act, card = e.target.closest(".xk-card");
+      if (!act || !card) return;
+      const id = card.dataset.id, m = r.items.find((x) => x.id === id);
+      try {
+        if (act === "del") { if (!confirm("删掉这条记忆？")) return; await api(`/api/xk/memory/${memRole}/${id}`, { method: "DELETE" }); }
+        if (act === "past") await api(`/api/xk/memory/${memRole}/${id}`, { method: "PATCH", body: { past: !m.past, until: m.past ? "" : new Date().toISOString().slice(0, 10) } });
+        if (act === "edit") {
+          const text = prompt("内容", m.text); if (text == null) return;
+          const date = prompt("日期（YYYY-MM-DD）", m.date); if (date == null) return;
+          await api(`/api/xk/memory/${memRole}/${id}`, { method: "PATCH", body: { text, date } });
+        }
+        openPanel("memory");
+      } catch (err) { fail(err); }
+    };
+  });
   const boot = () => { mountEntry(); if (!$("#xk-entry")) setTimeout(boot, 500); };
   boot();
 })();
