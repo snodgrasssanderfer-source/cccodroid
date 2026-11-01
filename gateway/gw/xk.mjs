@@ -1,52 +1,15 @@
 // 小克：网关里我们自己加的全部功能从这里进。server.mjs 只多了一行 import 和 ROUTES 里的 routeXk（排第一，要先看 /api/chat）。
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { CFG, LIVE, log } from "./config.mjs";
+import { LIVE, log } from "./config.mjs";
 import { NEXT, readBody, sendJson } from "./http.mjs";
-import { TOKEN } from "./access.mjs";
 import { publish } from "./bus.mjs";
 import { enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
-import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
-import { recentText } from "./xk-transcript.mjs";
-
-export const XK_HOME = path.join(CFG.home, ".config", "xiaoke");
-fs.mkdirSync(XK_HOME, { recursive: true });
-
-// ── 状态：当前角色、接班顺序、冷却、会话从哪个角色接过来 ──
-const STATE_FILE = path.join(XK_HOME, "state.json");
-export const STATE = { active: "xiaoke", order: ["xiaoke", "hachimi", "deepseek"], projects: {}, cooldown: {}, origin: {}, pending: {} };
-try { Object.assign(STATE, JSON.parse(fs.readFileSync(STATE_FILE, "utf8"))); } catch (e) { if (e.code !== "ENOENT") throw new Error("小克状态文件坏了：" + e.message); }
-export function saveState() { fs.writeFileSync(STATE_FILE + ".tmp", JSON.stringify(STATE, null, 1)); fs.renameSync(STATE_FILE + ".tmp", STATE_FILE); }
-
-// 各模块往这里挂：handlers(req, res, u, p) 不认领就返回 NEXT
-const ROUTES = [];
-export const addRoute = (fn) => ROUTES.push(fn);
-export const httpError = (status, msg) => Object.assign(new Error(msg), { status });
-
-export async function json(req) {
-  const t = await readBody(req);
-  try { return t ? JSON.parse(t) : {}; } catch (e) { throw httpError(400, "请求不是 JSON：" + e.message); }
-}
-
-/** 调网关自己的公开接口（项目、定时任务）：走上游的校验和存储，不碰它的内部变量 */
-export function selfApi(method, p, body) {
-  return new Promise((resolve, reject) => {
-    const data = body == null ? null : Buffer.from(JSON.stringify(body));
-    const r = http.request({ host: "127.0.0.1", port: CFG.port, path: p, method,
-      headers: { host: "127.0.0.1:" + CFG.port, "x-cc-token": TOKEN, ...(data ? { "content-type": "application/json", "content-length": data.length } : {}) } }, (res) => {
-      let t = ""; res.on("data", (c) => (t += c)); res.on("end", () => {
-        let j; try { j = JSON.parse(t); } catch { j = { raw: t }; }
-        res.statusCode < 300 ? resolve(j) : reject(new Error(`${method} ${p} → ${res.statusCode} ${j.error || j.message || t.slice(0, 200)}`));
-      });
-    });
-    r.on("error", reject);
-    if (data) r.write(data);
-    r.end();
-  });
-}
+import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
+import { PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
+import "./xk-memory.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {
@@ -61,30 +24,13 @@ async function ensureProjects() {
   }
   saveState();
 }
-export const projectOf = (id) => STATE.projects[id] || null;
-export const roleOfProject = (pid) => ROLES.find((r) => STATE.projects[r.id] === pid) || null;
-
 if (LIVE) {
   ensureRoles();
   // 等主地址监听上了再调自己的接口
   setTimeout(() => ensureProjects().catch((e) => log("⚠️ 小克建角色项目失败：" + e.message)), 1500).unref();
 }
 
-// ── 接班说明：带上来源会话最近几轮，写进新会话第一轮的 run 号下，由 xk-hook.mjs 注入（只带一次） ──
-export function carryText(fromSid, fromRole, toRole, reason) {
-  const talk = fromSid ? recentText(fromSid, 6, { assistant: fromRole ? roleById(fromRole).name : "她" }) : "";
-  return `（接班说明，给你自己看的）主人刚才在和${fromRole ? roleById(fromRole).name : "另一位"}聊，${reason}，现在换成你接着聊。` +
-    (talk ? `下面是刚才最近几轮，只是让你知道在聊什么；这不是你的记忆，你用自己的人设和记忆回应：\n${talk}` : "");
-}
-export function writeCarry(role, runId, text) {
-  const f = path.join(roleDir(role), ".xk", "carry", runId + ".md");
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, text + "\n");
-}
-
 // ── /api/chat：先决定这条消息该落到哪个角色，再交给上游原样处理 ──
-// planners(b, ctx) 可以改 ctx：{ body, role, carry: {fromSid, fromRole, reason}, notice }。接班模块会往这里加
-export const PLANNERS = [];
 function fakeReq(req, body) {
   const r = Readable.from([Buffer.from(body)]);
   return Object.assign(r, { method: req.method, url: req.url, headers: { ...req.headers, "content-length": String(Buffer.byteLength(body)) }, socket: req.socket, ccAuthed: req.ccAuthed });
