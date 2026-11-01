@@ -48,7 +48,10 @@ export function selfApi(method, p, body) {
 export const projectOf = (id) => STATE.projects[id] || null;
 export const roleOfProject = (pid) => ROLES.find((r) => STATE.projects[r.id] === pid) || null;
 
-// planners(b, ctx) 可以改 ctx：{ body, role, carry: {fromSid, fromRole, reason}, notice }。接班模块往这里加
+// 非 Claude Code 的角色引擎（哈基米的 agy）登记自己能不能用：ENGINES.agy = () => true/false
+export const ENGINES = {};
+
+// planners(b, ctx) 可以改 ctx：{ body, role, carry: {fromSid, fromRole, reason}, notice, onQueued(item) }。接班模块往这里加
 export const PLANNERS = [];
 
 // ── 接班说明：带上来源会话最近几轮，写进新会话第一轮的 run 号下，由 xk-hook.mjs 注入（只带一次） ──
