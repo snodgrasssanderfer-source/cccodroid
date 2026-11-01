@@ -100,19 +100,25 @@ export function personaStatus(id) {
   return { imported, personaChars: imported ? a.replace(/^---[\s\S]*?---\n/, "").length : 0, postHistoryChars: ph.trim().length };
 }
 
-/** 世界书：纯文本 / Markdown 原样；SillyTavern 世界书 JSON（entries）转成一节一节的 Markdown */
-export function importWorldbook(text) {
+/** 一份世界书文件转成 Markdown：纯文本 / Markdown 原样；SillyTavern 世界书 JSON（entries）转成一节一节的 */
+function worldbookMd(text) {
   let md = String(text);
   try {
     const j = JSON.parse(md);
     const entries = j.entries || j.character_book?.entries || j.data?.character_book?.entries;
     if (entries) {
       const list = Array.isArray(entries) ? entries : Object.values(entries);
-      md = "# 世界书\n\n" + list.filter((e) => e && e.content && e.enabled !== false && !e.disable)
+      md = list.filter((e) => e && e.content && e.enabled !== false && !e.disable)
         .map((e) => `## ${e.comment || e.name || [].concat(e.keys || e.key || []).join("、") || "条目"}\n\n${String(e.content).trim()}\n`).join("\n");
     }
   } catch { /* 不是 JSON：按文本用 */ }
-  if (!md.trim()) throw Object.assign(new Error("世界书是空的"), { status: 400 });
+  return md.trim();
+}
+/** 世界书：一份文本，或好几个文件 [{ name, text }]（按给的顺序拼成一份，整份替换旧的） */
+export function importWorldbook(input) {
+  const parts = (Array.isArray(input) ? input : [{ text: input }]).map((f) => worldbookMd(f && f.text != null ? f.text : f)).filter(Boolean);
+  if (!parts.length) throw Object.assign(new Error("世界书是空的"), { status: 400 });
+  const md = parts.length === 1 && /^#\s/.test(parts[0]) ? parts[0] : (/^#\s/.test(parts[0]) ? "" : "# 世界书\n\n") + parts.join("\n\n");
   write(WORLDBOOK, md.trim() + "\n");
-  return { chars: md.trim().length };
+  return { chars: md.trim().length, files: parts.length };
 }

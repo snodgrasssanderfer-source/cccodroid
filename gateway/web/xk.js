@@ -240,11 +240,12 @@
   async function switchRole(id) {
     const cc = window.__cc, from = cc.view.sessionId || null;
     const r = await api("/api/xk/switch", { method: "POST", body: { to: id, fromSessionId: from } });
+    cur.sid = undefined; cur.role = id; cur.origin = null;
     cc.newConversation();
     cc.view.projectId = r.projectId;
-    await loadRoles(); cur.sid = undefined; cur.role = id; cur.origin = null;
+    await loadRoles();
     applyRole(id, true);
-    toast(`换成${rname(id)}了`, from ? "下一条消息会带上刚才的对话" : "");
+    toast(`换成${rname(id)}了`, from ? "下一条消息会带上刚才的对话" : "", sprite(id, "wave"));
   }
 
   // ── 她在干什么：输入框上方探出小人；思考过程跑着时展开 ──
@@ -367,17 +368,47 @@
     b.innerHTML = `<div class="xk-cards">${order.map((id) => `<button class="xk-card xk-press${id === cur.role ? " on" : ""}" data-id="${id}" style="--c:var(--xk-c-${id === "deepseek" ? "xiaoyu" : id});--s:var(--xk-s-${id === "deepseek" ? "xiaoyu" : id})"><img src="${sprite(id, asleep(id) ? "sleeping" : "idle")}" alt=""><b>${rname(id)}</b><span class="xk-tag">${roleState(id)}</span></button>`).join("")}</div>
       <div class="xk-block"><h2>替班顺序</h2><div class="xk-order">${order.map((id, i) => `${i ? `<button class="xk-swap xk-press" data-i="${i}" aria-label="交换顺序">${svg("swap")}</button>` : ""}<div class="o"><i style="background-image:url('${sprite(id, "idle")}')"></i><span>${rname(id)}</span></div>`).join("")}</div>
         <p class="xk-hint">谁的额度用完，就由下一位接班，只带上刚才那段对话；额度恢复后交还。点中间的箭头换顺序。</p></div>
-      <div class="xk-block"><h2>大家共用的世界书</h2><p class="xk-hint" style="margin:0 0 10px">屋子、三位住客、替班和留言板的规矩，三个人每一轮都会读到。纯文本、Markdown 或 SillyTavern 世界书 JSON。</p>
-        <label class="xk-mini xk-press">导入世界书<input type="file" accept=".txt,.md,.json" id="xk-wb"></label></div>`;
+      <div class="xk-block"><h2>导入人设与世界书</h2><p class="xk-hint" style="margin:0 0 10px">一次可以选好几个文件，txt、md、SillyTavern 的 JSON 都行。按文件名猜它是谁的人设、还是世界书，导入前可以改。世界书三个人共用，每一轮都会读到。</p>
+        <label class="xk-mini xk-press">选文件导入<input type="file" multiple id="xk-imp"></label></div>`;
     b.querySelectorAll(".xk-card").forEach((c) => c.onclick = () => { SFX.play("tap"); roleSheet(c.dataset.id); });
     b.querySelectorAll(".xk-swap").forEach((x) => x.onclick = async () => {
       const i = +x.dataset.i, o = order.slice(); [o[i - 1], o[i]] = [o[i], o[i - 1]];
       try { await api("/api/xk/order", { method: "PUT", body: { order: o } }); SFX.play("toggle"); renderRoles(); } catch (e) { fail(e); }
     });
-    $("#xk-wb", b).onchange = async (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      try { const r = await api("/api/xk/worldbook", { method: "PUT", body: { text: await f.text() } }); toast("世界书导入好了", `${r.chars} 字，三个人下一轮就能读到`); } catch (err) { fail(err); }
-    };
+    $("#xk-imp", b).onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) importSheet(fs).catch(fail); };
+  }
+  // ── 批量导入：每个文件猜一个去处（世界书 / 谁的人设），主人可以改，再一起导入 ──
+  const TARGETS = [["wb", "世界书"], ["xiaoke", "小克"], ["hachimi", "哈基米"], ["deepseek", "小鱼"], ["", "不导入"]];
+  function guessTarget(name, text) {
+    const n = name.toLowerCase();
+    if (/世界书|world|lore|设定集/.test(n)) return "wb";
+    if (/小克|xiaoke|claude/.test(n)) return "xiaoke";
+    if (/哈基米|hachimi|gemini/.test(n)) return "hachimi";
+    if (/小鱼|deepseek|xiaoyu|鲸/.test(n)) return "deepseek";
+    if (/【[^】]*】\s*system_prompt|^\s*system_prompt/m.test(text)) return cur.role || "xiaoke";
+    return "wb";
+  }
+  async function importSheet(files) {
+    const items = await Promise.all(files.map(async (f) => { const text = await f.text(); return { name: f.name, text, to: guessTarget(f.name, text) }; }));
+    const rows = () => items.map((it, i) => `<div class="xk-row stack"><span class="k">${esc(it.name)}<small>${it.text.length} 字</small></span>
+      <span class="xk-chips">${TARGETS.map(([v, l]) => `<button class="xk-mini xk-press${it.to === v ? " on" : ""}" data-i="${i}" data-v="${v}">${l}</button>`).join("")}</span></div>`).join("");
+    openSheet(`<h2>导入这些文件</h2><p class="sub">去处是按文件名猜的，点一下能改。世界书会整份换成这次选成「世界书」的文件（按顺序拼在一起）；同一个人选了好几份人设，用最后一份。新开的会话才会用上。</p><div class="xk-list" id="xk-imp-l">${rows()}</div><button class="xk-wide xk-press" id="xk-imp-go">导入</button>`, (s) => {
+      $("#xk-imp-l", s).onclick = (e) => { const b = e.target.closest("[data-i]"); if (!b) return; items[+b.dataset.i].to = b.dataset.v; SFX.play("tap"); $("#xk-imp-l", s).innerHTML = rows(); };
+      $("#xk-imp-go", s).onclick = async () => {
+        const done = [];
+        try {
+          const wb = items.filter((x) => x.to === "wb");
+          if (wb.length) { const r = await api("/api/xk/worldbook", { method: "PUT", body: { files: wb.map(({ name, text }) => ({ name, text })) } }); done.push(`世界书 ${r.files} 个文件，${r.chars} 字`); }
+          for (const id of ["xiaoke", "hachimi", "deepseek"]) {
+            const it = items.filter((x) => x.to === id).pop(); if (!it) continue;
+            const r = await api(`/api/xk/roles/${id}/persona`, { method: "PUT", body: { text: it.text } });
+            done.push(`${rname(id)}的人设 ${r.personaChars} 字`);
+          }
+          closeSheet();
+          if (done.length) { toast("导入好了", done.join("；"), sprite(cur.role || "xiaoke", "happy")); SFX.play("done"); renderRoles().catch(() => {}); }
+        } catch (err) { fail(new Error((done.length ? "已导入：" + done.join("；") + "。" : "") + err.message)); }
+      };
+    });
   }
   async function roleSheet(id) {
     if (!ROLES) await loadRoles().catch(() => null);
@@ -386,8 +417,8 @@
     const [mem, dia] = await Promise.all([api("/api/xk/memory?role=" + id).catch(() => ({ items: [] })), api("/api/xk/diary?role=" + id).catch(() => ({ days: [] }))]);
     openSheet(`<div style="display:flex;gap:14px;align-items:center"><img src="${sprite(id, z ? "sleeping" : "wave")}" alt="" style="width:96px;height:96px;object-fit:contain"><div><h2>${rname(id)}</h2><p class="sub" style="margin:0">${ROLE[id].sub} · ${roleState(id)}${cd ? " · " + cd : ""}</p></div></div>
       <div class="xk-facts"><div><b>${r.imported ? r.personaChars + " 字" : "还没导入"}</b>人设</div><div><b>共用</b>世界书</div><div><b>${mem.items.length} 条</b>记忆</div><div><b>${dia.days.length} 篇</b>日记</div></div>
-      <div class="xk-list" style="margin-top:12px"><label class="xk-row xk-press" style="cursor:pointer"><span class="k">导入人设<small>.txt，「【一】system_prompt」那样分三段；没有标记就整篇当人设</small></span>${svg("go")}<input type="file" accept=".txt,text/plain" id="xk-pf" hidden></label>
-      ${id === "hachimi" ? `<button class="xk-row xk-press" id="xk-agy"><span class="k">Antigravity（agy）<small id="xk-agy-s">查询中…</small></span>${svg("go")}</button>` : ""}</div>
+      <div class="xk-list" style="margin-top:12px"><label class="xk-row xk-press" style="cursor:pointer"><span class="k">导入人设<small>.txt，「【一】system_prompt」那样分三段；没有标记就整篇当人设</small></span>${svg("go")}<input type="file" id="xk-pf" hidden></label>
+      ${id === "hachimi" ? `<div id="xk-agy"><div class="xk-row"><span class="k">Google 账号（Antigravity）<small>查询中…</small></span></div></div>` : ""}</div>
       <button class="xk-wide xk-press" id="xk-talk"${z ? " disabled" : ""}>${z ? "她睡着了" : id === cur.role ? "回去聊天" : `换${rname(id)}来聊（开新会话）`}</button>`, (s) => {
       $("#xk-talk", s).onclick = () => { closeSheet(); go(0); if (id !== cur.role) setTimeout(() => switchRole(id).catch(fail), 380); };
       $("#xk-pf", s).onchange = async (e) => {
@@ -395,15 +426,82 @@
         try { const x = await api(`/api/xk/roles/${id}/persona`, { method: "PUT", body: { text: await f.text() } }); toast(`${rname(id)}的人设导入好了`, `人设 ${x.personaChars} 字，post_history ${x.postHistoryChars} 字。新开的会话才会用上`, sprite(id, "happy")); closeSheet(); }
         catch (err) { fail(err); }
       };
-      if (id === "hachimi") api("/api/xk/agy").then((a) => {
-        $("#xk-agy-s", s).textContent = a.installed ? `${a.version} · ${a.auth ? "已登录" : "还没登录：打开终端输入 agy，按提示用 Google 账号授权"}` : "还没装，点这里从官方渠道下载";
-        $("#xk-agy", s).onclick = async () => {
-          if (a.installed) { closeSheet(); $("#btn-term")?.click(); return; }
-          $("#xk-agy-s", s).textContent = "下载中…";
-          try { const x = await api("/api/xk/agy/install", { method: "POST" }); $("#xk-agy-s", s).textContent = `${x.version} 装好了，打开终端输入 agy 登录`; } catch (err) { fail(err); }
-        };
-      }).catch((e) => { $("#xk-agy-s", s).textContent = e.message; });
+      if (id === "hachimi") agyPanel($("#xk-agy", s));
     });
+  }
+
+  // ── 哈基米的 Google 登录：网关在伪终端里跑 agy、选 Google 登录、交出登录链接；主人授权后把授权码贴回来 ──
+  const openUrl = (u) => { try { if (window.CCApp && typeof CCApp.openUrl === "function") return CCApp.openUrl(u); } catch {} window.open(u, "_blank", "noopener"); };
+  async function agyPanel(box, fresh) {
+    const row = (k, sub, right = "") => `<div class="xk-row"><span class="k">${k}${sub ? `<small>${sub}</small>` : ""}</span>${right}</div>`;
+    let a;
+    try { a = await api("/api/xk/agy" + (fresh ? "?fresh=1" : "")); } catch (e) { box.innerHTML = row("Google 账号（Antigravity）", esc(e.message)); return; }
+    if (!box.isConnected) return;
+    if (!a.installed) {
+      box.innerHTML = row("Antigravity 还没装", "哈基米靠它用你的 Google 账号说话。从官方渠道下载，按官方清单核对 sha512", '<button class="xk-mini xk-press" data-a="install">下载安装</button>');
+    } else if (a.auth) {
+      const opts = [{ id: "", label: "跟随 agy 的默认" }, ...a.models];
+      box.innerHTML = row("Google 账号", `已登录 · agy ${esc(a.version)}`, '<button class="xk-mini xk-press" data-a="relogin">重新登录</button>') +
+        `<div class="xk-row stack"><span class="k">哈基米用的模型<small>换了从下一条消息起生效</small></span><span class="xk-chips">${opts.map((m) => `<button class="xk-mini xk-press${(a.model || "") === m.id ? " on" : ""}" data-m="${esc(m.id)}">${esc(m.label)}</button>`).join("")}</span></div>`;
+    } else {
+      const L = a.login || {};
+      if (L.stage === "url" || L.stage === "verifying") {
+        box.innerHTML = row("① 打开登录页，用 Google 账号授权", "授权完页面上会给一串授权码", '<button class="xk-mini xk-press" data-a="open">打开登录页</button><button class="xk-mini xk-press" data-a="copy">复制链接</button>') +
+          `<div class="xk-row stack"><span class="k">② 把授权码贴到这里</span><span class="xk-chips"><input id="xk-agy-code" placeholder="授权码" autocomplete="off" style="flex:1;min-width:140px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);padding:8px 10px;font:14px var(--mono, monospace)"><button class="xk-mini xk-press" data-a="code">${L.stage === "verifying" ? "确认中…" : "提交"}</button></span></div>`;
+      } else {
+        box.innerHTML = row("Google 账号", L.stage === "failed" ? "没登上：" + esc(L.error) : L.stage === "starting" || L.stage === "choosing" ? "正在准备登录页…" : a.auth === false ? "还没登录" : "查不到登录状态，可能是网络问题",
+          `<button class="xk-mini xk-press" data-a="login">${L.stage === "failed" ? "再试一次" : "登录 Google"}</button>`);
+      }
+      // 登录进行中：盯着进度，拿到链接、登上了都会刷新这块
+      if (["starting", "choosing", "verifying"].includes(L.stage)) setTimeout(() => agyPanel(box), 1500);
+      box.dataset.url = L.url || "";
+    }
+    box.onclick = async (e) => {
+      const b = e.target.closest("[data-a],[data-m]"); if (!b) return;
+      SFX.play("tap");
+      try {
+        if (b.dataset.m != null) { await api("/api/xk/agy/model", { method: "PUT", body: { model: b.dataset.m } }); toast("换好了", "哈基米下一条消息起用 " + (b.dataset.m || "agy 的默认模型"), sprite("hachimi", "happy")); return agyPanel(box); }
+        const act = b.dataset.a;
+        if (act === "install") { b.textContent = "下载中…"; b.disabled = true; const x = await api("/api/xk/agy/install", { method: "POST" }); toast(`agy ${x.version} 装好了`, "接着登录 Google 账号"); return agyPanel(box, true); }
+        if (act === "login" || act === "relogin") { b.textContent = "准备中…"; b.disabled = true; await api("/api/xk/agy/login", { method: "POST" }); return agyPanel(box); }
+        if (act === "open") return openUrl(box.dataset.url);
+        if (act === "copy") { try { await navigator.clipboard.writeText(box.dataset.url); toast("链接复制好了", "到浏览器里粘贴打开"); } catch { window.prompt?.("复制这个链接", box.dataset.url); } return; }
+        if (act === "code") { const code = $("#xk-agy-code", box).value.trim(); if (!code) return; await api("/api/xk/agy/login/code", { method: "POST", body: { code } }); return agyPanel(box); }
+      } catch (err) { fail(err); agyPanel(box); }
+    };
+    if (a.auth && box.dataset.wasLogin === "1") { toast("哈基米登上了", "Google 账号已连好", sprite("hachimi", "happy")); SFX.play("done"); }
+    box.dataset.wasLogin = a.auth ? "0" : (a.login && a.login.stage !== "idle" ? "1" : box.dataset.wasLogin || "0");
+  }
+
+  // ── 模型和人设绑定：输入栏里选了另一个角色那家的模型，就换成那个角色 ──
+  // 已有会话：网关拦下这次换型号，回一个 xkSwitch（原会话不动），这里开新会话落到那个角色、记着刚选的型号；
+  // 新会话（还没会话号）：上游拿 ?provider= 问一遍，这里看到就直接换人，选的型号由上游自己记着
+  const roleOfProv = (pid) => ROLES && pid ? (ROLES.roles.find((r) => r.provider === pid) || {}).id || null : null;
+  let binding = false;
+  const rawFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const res = await rawFetch(input, init);
+    try {
+      const url = typeof input === "string" ? input : input.url || "";
+      if (!binding && url.startsWith("/api/session-model")) {
+        if (String(init?.method || "GET").toUpperCase() === "POST") {
+          const j = await res.clone().json();
+          if (j.xkSwitch) bindTo(j.xkSwitch.to, { provider: j.xkSwitch.provider, model: j.xkSwitch.model });
+        } else {
+          const q = new URL(url, location.origin).searchParams, to = !q.get("id") && roleOfProv(q.get("provider"));
+          if (to && cur.role && to !== cur.role) bindTo(to, null);
+        }
+      }
+    } catch {}
+    return res;
+  };
+  async function bindTo(to, pick) {
+    binding = true;
+    try {
+      await switchRole(to);
+      // 刚选的型号带过去：新会话的第一条消息会把它钉上
+      if (pick && pick.provider) window.__cc.state.pendingModel = { provider: pick.provider, ...(pick.model != null ? { model: pick.model } : {}) };
+    } catch (e) { fail(e); } finally { setTimeout(() => { binding = false; }, 800); }
   }
 
   // ── 记忆页 ──

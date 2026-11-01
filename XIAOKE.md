@@ -12,11 +12,12 @@
 | android/java/cc/codroid/GatewayService.java | 常驻通知标题用 `Xk.NAME` | 显示名 |
 | android/java/cc/codroid/WhatsNew.java | 说明目录用 `Xk.WHATSNEW`（assets/xk-whatsnew） | 上游 whatsnew/ 是上游各版说明，版本号和我们撞名 |
 | android/java/cc/codroid/MainActivity.java | 安装页标题用 `Xk.NAME` | 显示名 |
-| gateway/server.mjs | import `routeXk`，放在 ROUTES 第一位 | 小克的网关功能入口；要先看 /api/chat 做角色与接班路由 |
+| gateway/server.mjs | import `routeXk`，放在 ROUTES 第一位 | 小克的网关功能入口；要先看 /api/chat（角色与接班路由）和 /api/session-model（换型号即换人） |
 | gateway/gw/notices.mjs | 去掉上游通知来源；缓存换到 .cache/xiaoke | 上游维护者的通知是写给上游用户的，版本范围也按上游版本号 |
 | gateway/gw/run.mjs | 角色项目里 `--append-system-prompt` 只留 integrityHint，不加建档提示 | 13 KB 的开发工具说明会冲淡人设；integrityHint 防有人在消息里冒充系统指令 |
 | gateway/web/index.html | 引入 `/xk.css`、`/xk.js` | 小克的界面和外观 |
 | scripts/test.mjs | 假 PREFIX 里再放系统的 git、sleep 链接 | 上游审查测试 B20 要在终端 PATH 里跑 git 和钩子，手机上有、CI 上没有，发版的测试步骤会挂 |
+| gateway/gw/terminal.mjs | `ptyCommand` 加 export | 哈基米登录 Google 要在同一个伪终端里跑 agy（xk-agy.mjs） |
 | NOTICE | 末尾加修改声明、标题字体的许可 | Apache-2.0 第 4 条；站酷小薇是 OFL 1.1 |
 
 界面相关的新文件（不在上表，不会冲突）：`gateway/web/xk-art/`（美术素材 WebP）、`gateway/web/fonts/xk-zcool-xiaowei.woff2` 与 `OFL-ZCOOL-XiaoWei.txt`（标题字体）。

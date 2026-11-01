@@ -11,6 +11,7 @@ import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, role
 import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
+import { effectiveModel, routeSessModel } from "./sessmodel.mjs";
 import "./xk-agy.mjs";
 import "./xk-diary.mjs";
 
@@ -21,8 +22,8 @@ async function ensureProjects() {
     const dir = fs.realpathSync(roleDir(r.id));
     let p = projects.find((x) => x.path === dir);
     if (!p) p = (await selfApi("POST", "/api/projects", { name: r.name, mode: "dir", path: dir })).project;
-    // 只在主人没设过时给默认服务商，设过就尊重主人的
-    if (r.provider && !p.provider) p = (await selfApi("PATCH", "/api/projects/" + encodeURIComponent(p.id), { provider: r.provider })).project;
+    // 模型和人设绑定（主人 11-01 定的）：角色项目的接口每次启动都对回这个角色的那家
+    if (r.provider && p.provider !== r.provider) p = (await selfApi("PATCH", "/api/projects/" + encodeURIComponent(p.id), { provider: r.provider })).project;
     STATE.projects[r.id] = p.id;
   }
   saveState();
@@ -45,8 +46,11 @@ addRoute(async (req, res, u, p) => {
   try { b = JSON.parse(raw || "{}"); } catch { return sendJson(res, 400, { error: "bad json" }); }
   const ctx = { body: { ...b }, role: null, carry: null, notice: null };
   if (!b.sessionId && !b.follow) {
+    // 新会话首条带的模型选了另一家（输入栏里换了型号）：模型和人设绑定，落到那家对应的角色
+    const byPin = b.pin && roleOfProvider(b.pin.provider);
+    if (byPin && byPin.id !== roleOfProject(b.projectId)?.id) { ctx.body.projectId = projectOf(byPin.id); STATE.active = byPin.id; saveState(); }
     // 新会话没指定项目：落到当前角色
-    if (!b.projectId && projectOf(STATE.active)) ctx.body.projectId = projectOf(STATE.active);
+    if (!ctx.body.projectId && projectOf(STATE.active)) ctx.body.projectId = projectOf(STATE.active);
     ctx.role = roleOfProject(ctx.body.projectId)?.id || null;
     // 主人手动切过来的：带上切换前那段对话
     if (ctx.role && STATE.pending[ctx.role]) { ctx.carry = STATE.pending[ctx.role]; delete STATE.pending[ctx.role]; saveState(); }
@@ -72,13 +76,37 @@ addRoute(async (req, res, u, p) => {
   return sendJson(res, 200, { ok: true, id: item.id, injected: !!item.injected, started: RUNS.has(item.id), xk: ctx.notice });
 });
 
+// ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（开新会话，带上这段对话），原会话不动 ──
+const roleOfProvider = (pid) => (pid ? ROLES.find((r) => r.provider === pid) || null : null);
+function switchTo(to, fromSessionId, reason) {
+  STATE.active = to;
+  const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
+  if (fromSessionId && fromRole !== to) STATE.pending[to] = { fromSid: fromSessionId, fromRole, reason };
+  saveState();
+  return { ok: true, active: to, projectId: projectOf(to) };
+}
+addRoute(async (req, res, u, p) => {
+  if (p !== "/api/session-model" || req.method !== "POST") return NEXT;
+  const raw = await readBody(req);
+  let b = {}; try { b = JSON.parse(raw || "{}"); } catch {}
+  const cur = b.id ? roleOfSession(String(b.id)) : null, to = typeof b.provider === "string" ? roleOfProvider(b.provider) : null;
+  if (cur && to && to.id !== cur.id) {
+    const sw = switchTo(to.id, String(b.id), `主人在输入栏换成了${to.name}的模型`);
+    return sendJson(res, 200, { ok: true, ...effectiveModel(String(b.id)), xkSwitch: { to: to.id, projectId: sw.projectId, model: typeof b.model === "string" ? b.model : null, provider: b.provider } });
+  }
+  return routeSessModel(fakeReq(req, raw), res, u, p);
+});
+
 // ── 角色、人设、世界书、手动切换 ──
 addRoute(async (req, res, u, p) => {
   if (p === "/api/xk/roles" && req.method === "GET")
     return sendJson(res, 200, { active: STATE.active, order: STATE.order, roles: ROLES.map((r, i) => ({ ...r, projectId: projectOf(r.id), ...handoverRoles()[i], ...personaStatus(r.id) })) });
   let m = p.match(/^\/api\/xk\/roles\/([a-z]+)\/persona$/);
   if (m && req.method === "PUT") return sendJson(res, 200, importPersona(m[1], (await json(req)).text || ""));
-  if (p === "/api/xk/worldbook" && req.method === "PUT") return sendJson(res, 200, importWorldbook((await json(req)).text || ""));
+  if (p === "/api/xk/worldbook" && req.method === "PUT") {
+    const b = await json(req);
+    return sendJson(res, 200, importWorldbook(Array.isArray(b.files) ? b.files : b.text || ""));
+  }
   if (p === "/api/xk/session-role" && req.method === "GET") {
     const sid = u.searchParams.get("sid");
     const r = sid ? roleOfSession(sid) : roleById(STATE.active);
@@ -88,11 +116,7 @@ addRoute(async (req, res, u, p) => {
     // 手动切换：之后的新会话落到这个角色；从某个会话切过来的，第一条消息带上那段对话
     const { to, fromSessionId } = await json(req);
     if (!roleById(to)) throw httpError(404, "没有这个角色：" + to);
-    STATE.active = to;
-    const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
-    if (fromSessionId && fromRole !== to) STATE.pending[to] = { fromSid: fromSessionId, fromRole, reason: "主人手动换了角色" };
-    saveState();
-    return sendJson(res, 200, { ok: true, active: to, projectId: projectOf(to) });
+    return sendJson(res, 200, switchTo(to, fromSessionId, "主人手动换了角色"));
   }
   if (p === "/api/xk/order" && req.method === "PUT") {
     const { order } = await json(req);
@@ -123,7 +147,7 @@ addRoute(async (req, res, u, p) => {
 });
 
 export async function routeXk(req, res, u, p) {
-  if (!p.startsWith("/api/xk/") && p !== "/api/chat") return NEXT;
+  if (!p.startsWith("/api/xk/") && p !== "/api/chat" && p !== "/api/session-model") return NEXT;   // session-model：输入栏换型号要先看是不是换了人
   try {
     for (const r of ROUTES) if ((await r(req, res, u, p)) !== NEXT) return;
   } catch (e) {

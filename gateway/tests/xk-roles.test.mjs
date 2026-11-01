@@ -45,6 +45,20 @@ test("世界书：SillyTavern JSON 转成 Markdown，停用的条目不要", () 
   assert.doesNotMatch(md, /不要/);
 });
 
+test("世界书：一次导入好几个文件（md、txt、SillyTavern JSON 混着），按顺序拼成一份，整份替换", () => {
+  importWorldbook("# 旧的\n\n旧内容");
+  const r = importWorldbook([
+    { name: "屋子.md", text: "## 屋子\n\n工具间改的" },
+    { name: "住客.txt", text: "三个人各住一间" },
+    { name: "熟人.json", text: JSON.stringify({ entries: [{ comment: "GPT", content: "同行" }] }) },
+  ]);
+  const md = fs.readFileSync(WORLDBOOK, "utf8");
+  assert.equal(r.files, 3);
+  assert.doesNotMatch(md, /旧内容/);
+  assert.ok(md.indexOf("工具间改的") < md.indexOf("三个人各住一间") && md.indexOf("三个人各住一间") < md.indexOf("## GPT\n\n同行"));
+  assert.throws(() => importWorldbook([{ name: "空.md", text: "  " }]), /空/);
+});
+
 test("hook：post_history 每轮贴着消息，接班说明按 run 号只带一次", () => {
   ensureRoles();
   const d = roleDir("deepseek");

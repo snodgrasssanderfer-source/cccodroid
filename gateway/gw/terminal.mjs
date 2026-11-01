@@ -61,7 +61,7 @@ _,st=os.waitpid(pid,0)
 sys.exit(os.waitstatus_to_exitcode(st) if hasattr(os,"waitstatus_to_exitcode") else 0)
 `;
 
-function ptyCommand() {
+export function ptyCommand() {   // xk: 导出给哈基米的登录（xk-agy.mjs）用同一个伪终端
   const own = process.env.CCAPP_PTYHOST || path.join(HERE, "lib", "ptyhost");
   if (fs.existsSync(own)) return [own];
   const py = [PREFIX && path.join(PREFIX, "bin", "python3"), path.join(CFG.runtime, "..", "devbin", "python3")]
