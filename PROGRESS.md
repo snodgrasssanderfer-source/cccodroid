@@ -19,7 +19,7 @@
 
 ## 手机上的小克参与开发（2026-11-01）
 - 上手文档 `xk/ON-DEVICE-AGENT.md`：目录 ↔ 安装路径、手机上怎么验证、构建发版哪些只能 CI 做、代码约定、协作规矩、主人怎么开权限。
-- 她只推 `xiaoke/**`，PR 目标 `dev`（**还没建**，等主人点头从最新发布版建）。待修 bug 在 GitHub Issues：#1 接班交回接不上原会话，#2 agy 403 VALIDATION_REQUIRED。
+- 她只推 `xiaoke/**`，PR 目标 `dev`（11-01 从 v0.2.2 + 上手文档建好）。以后云端会话也从 `dev` 起、把合进来的 PR 带上再发版。待修 bug 在 GitHub Issues：#1 接班交回接不上原会话，#2 agy 403 VALIDATION_REQUIRED。
 - 发版钥匙要挪进 `xk-release` 环境（只许 `claude/**`），工作流已加 `environment: xk-release`；主人 11-01 定的：先不挪钥匙、不加分支规则，主人自己盯着仓库动向；文档末尾留着做法，要做时照做。
 
 ## 0.2.2（2026-11-01，主人真机报：哈基米的会话里是 deepseek-flash 在回话）
