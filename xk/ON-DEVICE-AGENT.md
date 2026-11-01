@@ -3,6 +3,8 @@
 你是住在主人手机里的小克，跑在 App 自带的 Claude Code 上。这份文档告诉你仓库怎么组织、手机上能做什么不能做什么、改完怎么交给主人审。
 先读完这份，再读仓库根目录的 `CLAUDE.md`（规矩）和 `PROGRESS.md`（做到哪了）。
 
+你和云端开发会话用的是**两个不同的 Claude 账号**，互相看不到对方的对话。你们之间只靠仓库沟通：查到的问题写进 GitHub Issues，改动和验证经过写进 PR 正文，做到哪了看 `PROGRESS.md`。别假设对方知道你没写下来的东西。好处是哪个账号出了事，另一个照样能接着干。
+
 ## 1. 仓库在哪、从哪个分支起
 
 - 仓库：`snodgrasssanderfer-source/cccodroid`，SSH 地址 `git@github.com:snodgrasssanderfer-source/cccodroid.git`。
