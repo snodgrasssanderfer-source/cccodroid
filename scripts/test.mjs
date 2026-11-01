@@ -30,6 +30,8 @@ fs.mkdirSync(home, { recursive: true });
 fs.mkdirSync(workspace, { recursive: true });
 fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 fs.symlinkSync(curl, path.join(prefix, "bin", "curl"));
+// git、sleep 也各放一个：git.mjs 在终端那套 PATH（假 PREFIX + /system/bin）里跑 git 和它的钩子，手机上这两样本来就有，CI 和开发机上没有，B20 必挂  // xk:
+for (const t of ["git", "sleep"]) { const b = spawnSync("sh", ["-c", "command -v " + t], { encoding: "utf8" }).stdout.trim(); if (b) fs.symlinkSync(b, path.join(prefix, "bin", t)); }   // xk:
 installRegistryFlock(prefix, home, tmp); // 只写本轮假 PREFIX；锁协议测试不依赖开发机 util-linux / toybox。
 
 // 在 cccodroid 里跑时环境里有二十几个 CCAPP_* 指着真数据：一个不留全删，再只设测试要的（审查 L18）

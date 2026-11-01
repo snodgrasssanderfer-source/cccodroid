@@ -5,7 +5,7 @@
 ## 版本
 - 代码里是 **0.2.0**（versionCode 3），还没发版；已发布的最新是 **v0.1.1**（versionCode 2），对应提交 `522330c`（`claude/phase1-20261101` 分支）。Release 里有 `cccodroid-36.apk` 和 `cccodroid.apk`。
 - 底座：11-01 同步到上游 `6aa2610`（v0.5.18 之后又两批审查修复），fork 的 main 已快进。
-- 网关测试：483 项，失败 2，跳过 1。失败的两项（`audit1101` 里的 B20 git 超时、B22 自定义命令 YAML）在纯上游 main 上一样失败，是上游新测试在云端容器里的问题，不是我们改出来的。
+- 网关测试：483 项。上游新测试 B20 在 CI 上挂是因为测试用的假 PREFIX 里没有 git、sleep，已在 scripts/test.mjs 补上（登记在 XIAOKE.md）；B22 要 `yq`，GitHub 的机器上有，云端容器里没有，所以只在容器里失败。
 
 ## 已经做完（phase1）
 1. 显示名改为小克，App 更新指向 fork 自己的 Release。
