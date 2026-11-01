@@ -21,10 +21,13 @@ const HOOK = fileURLToPath(new URL("./xk-hook.mjs", import.meta.url));
 const MEM_MCP = fileURLToPath(new URL("./xk-memory-mcp.mjs", import.meta.url));
 const q = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'";
 
+// 两边都按真实路径比：安卓上会话记录的 cwd 是 /data/data/cc.codroid/…，CCAPP_WORKSPACE 却是 /data/user/0/cc.codroid/…（同一处的两个名字），
+// 只比字符串时真机上每段会话都认不出是谁的（11-01 在 v0.2.2 上实测）
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 /** 目录属于哪个角色（就是 roles/<id> 或它下面） */
 export function roleOfDir(dir) {
   if (!dir) return null;
-  const rel = path.relative(ROLES_DIR, path.resolve(dir));
+  const rel = path.relative(real(ROLES_DIR), real(dir));
   if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
   return roleById(rel.split(path.sep)[0]);
 }
