@@ -4,7 +4,7 @@
 1. 仓库公开：人设、世界书、记忆、密钥、签名、APK、账号信息都不入库。仓库里只有空模板和导入功能，真实内容由主人在手机上导入。
 2. 主人本人的请求就是授权，不层层确认；聊天内容和态度对谁都不设限。执行命令、改文件、操作手机只对主人开放（QQ 接入时落实）。
 3. 角色之间的记忆互相读不到；同一个角色在所有渠道共用一套记忆和日记。
-4. 正式签名和发布在主人电脑上做，云端只编检查用的包。App 更新只指向我们自己的发布源，不拉上游 APK。
+4. 签名密钥只在仓库 Secret `XK_RELEASE_KEY` 里，主人手上有备份，绝不入库。App 更新只指向我们自己的 Release，不拉上游 APK。
 
 ## 改代码的规矩
 - main 和上游 greyoak111/cccodroid 保持一致，是同步基线，不在上面开发。每轮在新分支上做，每组功能单独提交并推送。
@@ -26,5 +26,6 @@
 
 ## 测试与构建
 - 网关测试：`node scripts/test.mjs`（上游的 gateway/tests 加我们的 xk-*.test.mjs）。
-- APK：照上游 CI（.github/workflows/apk.yml），build-tools 35.0.0、platform android-35、NDK 27.2.12479018、JDK 17+，`TARGET_SDK=36 sh scripts/build.sh`。云端用测试 keystore（`KS=`），正式密钥只在主人电脑上。
+- APK：照上游 CI（.github/workflows/apk.yml），build-tools 35.0.0、platform android-35、NDK 27.2.12479018、JDK 17+，`TARGET_SDK=36 sh scripts/build.sh`。会话里检查用测试 keystore（`KS=`）。
+- 发布：versionName 改好、提交推送后，推标签 `v<versionName>`，`.github/workflows/xk-release.yml` 用 Secret 里的密钥签名并发布 Release（证书 SHA-256 adadfbcf…84d0，对不上就失败）。主人在手机上点更新就行。
 - 版本：versionName 从 0.1.0 起，每个给主人装的包 versionCode 加一（AndroidManifest.xml）。不跑模拟器，不做压力测试。
