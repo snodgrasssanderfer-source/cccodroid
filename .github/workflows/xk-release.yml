@@ -1,17 +1,50 @@
-# 小克的正式包：推一个 v* 版本标签（和 AndroidManifest 的 versionName 一致），就打包、用主人的密钥签名、发布成 Release。
+# 小克的正式包：开发分支（claude/**）推上来时，如果 AndroidManifest 的 versionName 还没有对应的 Release，
+# 就打包、用主人的密钥签名、发布成 Release v<versionName>（标签由这里创建）。手动推 v* 标签也一样发布。
 # App 内的更新检查读的就是这里的 Release（Xk.java 的 DEFAULT_FEED）。密钥只在仓库 Secret XK_RELEASE_KEY 里（{key, cert} JSON 的 base64）。
 name: xk-release
 
 on:
   push:
+    branches: ["claude/**"]
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: xk-release
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - name: 这个版本要不要发
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          want=v$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' android/AndroidManifest.xml | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$want" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::标签是 $GITHUB_REF_NAME，AndroidManifest 的 versionName 是 ${want#v}"; exit 1
+          fi
+          # 已经发过的版本不重发（分支上没改版本号的普通提交走到这里就结束）
+          code=$(curl -sS -o /tmp/rel.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$want")
+          case "$code" in
+            200) echo "$want 已经发布过，这次不发"; exit 0;;
+            404) ;;
+            *) echo "::error::查 Release 失败（HTTP $code）：$(cat /tmp/rel.json)"; exit 1;;
+          esac
+          echo "tag=$want" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
     runs-on: ubuntu-24.04
     env:
       BUILD_TOOLS: "35.0.0"
@@ -28,12 +61,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4.4.0
         with:
           node-version: "22"
-
-      - name: 版本号对得上
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          want=$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' android/AndroidManifest.xml | head -1)
-          [ "v$want" = "$GITHUB_REF_NAME" ] || { echo "::error::标签是 $GITHUB_REF_NAME，AndroidManifest 的 versionName 是 $want"; exit 1; }
 
       - name: 网关测试
         run: node scripts/test.mjs
@@ -65,17 +92,9 @@ jobs:
           done
 
       - name: 发布
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/cccodroid-36.apk dist/cccodroid.apk \
-            --title "小克 $GITHUB_REF_NAME" --notes "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"
-
-      - name: 手动跑时留个包
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
-        with:
-          name: xiaoke-${{ github.sha }}
-          path: dist/*.apk
-          retention-days: 7
+          gh release create "$TAG" dist/cccodroid-36.apk dist/cccodroid.apk --target "$GITHUB_SHA" \
+            --title "小克 $TAG" --notes "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"
