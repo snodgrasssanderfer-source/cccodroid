@@ -105,7 +105,7 @@ addRoute(async (req, res, u, p) => {
 
 // ── App 更新源（外壳 Xk.java 读同一个文件）──
 const FEED = path.join(XK_HOME, "update-feed");
-const DEFAULT_FEED = "https://api.github.com/repos/snodgrasssanderfer-source/xiaoke-ccc/releases?per_page=30";
+const DEFAULT_FEED = "https://api.github.com/repos/snodgrasssanderfer-source/cccodroid/releases?per_page=30";
 addRoute(async (req, res, u, p) => {
   if (p !== "/api/xk/update-feed") return NEXT;
   if (req.method === "GET") {

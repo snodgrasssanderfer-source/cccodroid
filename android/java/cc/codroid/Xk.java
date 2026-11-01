@@ -10,7 +10,7 @@ final class Xk {
     static final String NAME = "小克";
     /** 包名固定 cc.codroid（工具包按它改写过路径），这里和 Env 里的令牌路径一样直接写死 */
     static final File HOME = new File("/data/data/cc.codroid/files/home");
-    static final String DEFAULT_FEED = "https://api.github.com/repos/snodgrasssanderfer-source/xiaoke-ccc/releases?per_page=30";
+    static final String DEFAULT_FEED = "https://api.github.com/repos/snodgrasssanderfer-source/cccodroid/releases?per_page=30";
 
     // 只换作为产品名出现的 cccodroid；路径（/sdcard/cccodroid）、链接（greyoak111/cccodroid）、cccodroid-xxx 这类标识照旧，否则会指错地方
     private static final Pattern BRAND = Pattern.compile("(?<![/\\w.-])cccodroid(?![/\\w.-])");
@@ -33,6 +33,6 @@ final class Xk {
     /** 发布列表对应的 owner/repo，拼 Release 下载地址用 */
     static String repo() {
         Matcher m = Pattern.compile("api\\.github\\.com/repos/([^/]+/[^/?]+)/releases").matcher(feed());
-        return m.find() ? m.group(1) : "snodgrasssanderfer-source/xiaoke-ccc";
+        return m.find() ? m.group(1) : "snodgrasssanderfer-source/cccodroid";
     }
 }
