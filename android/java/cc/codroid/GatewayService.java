@@ -241,7 +241,7 @@ public class GatewayService extends Service {
             PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CH)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-            .setContentTitle("cccodroid")
+            .setContentTitle(Xk.NAME)   // xk
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(open)

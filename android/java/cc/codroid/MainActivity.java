@@ -1231,7 +1231,7 @@ public class MainActivity extends Activity {
         head.setPadding(0, 0, 0, dp(12));
         head.addView(new Mark(this, BrowserPane.pal(this, dark, "fg"), Mark.dotColor(this, dark)), new LinearLayout.LayoutParams(dp(34), dp(34)));
         TextView title = new TextView(this);
-        title.setText("cccodroid");
+        title.setText(Xk.NAME);   // xk
         title.setTextSize(24);
         title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
         title.setPadding(dp(12), 0, 0, 0);
