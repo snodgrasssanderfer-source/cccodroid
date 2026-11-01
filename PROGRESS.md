@@ -19,8 +19,8 @@
 
 ## 手机上的小克参与开发（2026-11-01）
 - 上手文档 `xk/ON-DEVICE-AGENT.md`：目录 ↔ 安装路径、手机上怎么验证、构建发版哪些只能 CI 做、代码约定、协作规矩、主人怎么开权限。
-- 她只推 `xiaoke/**`，PR 目标 `dev`（**还没建**，等主人点头从最新发布版建）。待修 bug 记在 `xk/issues.md`（fork 的 Issues 关着）。
-- 发版钥匙要挪进 `xk-release` 环境（只许 `claude/**`），工作流已加 `environment: xk-release`；主人还要按文档末尾删掉仓库级 Secret、加分支规则。没做完之前**别给她写权限**。
+- 她只推 `xiaoke/**`，PR 目标 `dev`（**还没建**，等主人点头从最新发布版建）。待修 bug 在 GitHub Issues：#1 接班交回接不上原会话，#2 agy 403 VALIDATION_REQUIRED。
+- 发版钥匙要挪进 `xk-release` 环境（只许 `claude/**`），工作流已加 `environment: xk-release`；主人 11-01 定的：先不挪钥匙、不加分支规则，主人自己盯着仓库动向；文档末尾留着做法，要做时照做。
 
 ## 0.2.2（2026-11-01，主人真机报：哈基米的会话里是 deepseek-flash 在回话）
 - 根因：哈基米不走 Claude Code，只有 `/api/chat` 的角色路由会把她的消息交给 agy；绕开它的路（新会话还没拿到会话号时只带 `follow` 的下一条、空闲自动压缩……）会在她的目录里起 claude，用的是全局那家（主人的是 DeepSeek）。

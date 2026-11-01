@@ -113,7 +113,7 @@ cat $S/home/.gateway-token        # 令牌
 
 1. 只在 `xiaoke/<主题>` 分支上干活，从 `origin/dev` 起，做一小块就提交、推送一次。
 2. 改完开 PR，目标分支 `dev`。PR 正文写三段：
-   - **改了什么、为什么**（对应哪个 bug：`xk/issues.md` 第 N 条，或 issue 的 `Fixes #N`）；
+   - **改了什么、为什么**（对应哪个 issue，正文写 `Fixes #N`）；
    - **怎么验证的**：跑了哪些测试、结果如何；在手机上怎么试的（沙箱网关还是临时改装好的文件、看到了什么）；
    - **没验证的**：直接写没验证。
 3. 不推 `main`、`dev`、`claude/**`，不推标签，不改 `.github/workflows/`、签名、版本号、包名。
@@ -128,7 +128,7 @@ cat $S/home/.gateway-token        # 令牌
 - `xk/`：人设（`persona/`）、世界书（`worldbook.md`）、调研（`research/`）、美术清单（`art-checklist.md`）、界面原型（`prototype/`）。
 - 上游的已知问题：`docs/known-issues.zh-CN.md`；上游的设计取舍：`docs/design-philosophy.zh-CN.md`、`docs/permissions.zh-CN.md`。
 - 二次开发前的上游审计：`snodgrasssanderfer-source/godot-test` 仓库 `claude/ccc-audit-20261101` 分支的 `projects/xiaoke-ccc/docs/CCC_AUDIT.md`（架构、系统提示、服务商、扩展点、包名、构建、许可）。
-- 待修的 bug：`xk/issues.md`（仓库的 GitHub Issues 开了以后会搬过去）。
+- 待修的 bug：仓库的 GitHub Issues（#1 接班交回接不上原会话、#2 agy 403 VALIDATION_REQUIRED）。
 
 ---
 
@@ -150,7 +150,7 @@ cat ~/.ssh/xiaoke_cccodroid.pub     # 把这一行发给主人
 
 **② 主人把公钥贴进仓库**：GitHub 打开仓库 → **Settings** → 左栏 **Deploy keys** → **Add deploy key** → Title 填 `xiaoke-on-device`，Key 粘贴那一行 → 勾上 **Allow write access** → **Add key**。
 
-**③ 先把发版钥匙锁好，再交钥匙**（必须做：有写权限就能推分支，而推上去的分支里的工作流能读到仓库级的 Secret）：
+**③（可选）把发版钥匙锁进环境**（主人 11-01 定的：先不做，主人自己盯着仓库动向。要做时照下面来——有写权限就能推分支，推上去的分支里的工作流能读到仓库级的 Secret）：
 1. **Settings → Environments → New environment**，名字 `xk-release`。
    - **Deployment branches and tags** 选 **Selected branches and tags** → Add rule → `claude/**`。
    - 在这个环境的 **Environment secrets** 里新建 `XK_RELEASE_KEY`，值和原来那个一样（主人手上有备份）。
