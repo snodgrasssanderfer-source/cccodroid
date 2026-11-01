@@ -8,6 +8,8 @@ import java.util.regex.Pattern;
 /** 小克在外壳里的两处差异：显示名、App 更新源。集中在这里，上游原文件只各改一行调用。 */
 final class Xk {
     static final String NAME = "小克";
+    // 更新说明目录（assets/ 下）。上游的 whatsnew/ 是上游各版的说明，版本号和我们的撞名，不能弹
+    static final String WHATSNEW = "xk-whatsnew";
     /** 包名固定 cc.codroid（工具包按它改写过路径），这里和 Env 里的令牌路径一样直接写死 */
     static final File HOME = new File("/data/data/cc.codroid/files/home");
     static final String DEFAULT_FEED = "https://api.github.com/repos/snodgrasssanderfer-source/cccodroid/releases?per_page=30";

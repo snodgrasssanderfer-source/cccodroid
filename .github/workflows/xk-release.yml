@@ -96,5 +96,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.plan.outputs.tag }}
         run: |
+          # 正文 = App 里弹的那份更新说明（android/assets/xk-whatsnew/<版本>.zh.md），再加安装提示
+          notes="$RUNNER_TEMP/notes.md"
+          { [ -f "android/assets/xk-whatsnew/$TAG.zh.md" ] && cat "android/assets/xk-whatsnew/$TAG.zh.md" && echo
+            echo "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"; } > "$notes"
           gh release create "$TAG" dist/cccodroid-36.apk dist/cccodroid.apk --target "$GITHUB_SHA" \
-            --title "小克 $TAG" --notes "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"
+            --title "小克 $TAG" --notes-file "$notes"

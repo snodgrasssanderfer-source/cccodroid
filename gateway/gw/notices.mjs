@@ -13,13 +13,12 @@ import { CFG, LIVE, PREFIX, log } from "./config.mjs";
 import { NEXT, readBody, sendJson } from "./http.mjs";
 import { privCall } from "./usage.mjs";
 
-const SOURCES = (process.env.CCAPP_NOTICES_URL ? [process.env.CCAPP_NOTICES_URL] : [])
-  .concat(["https://cccodroid.net/notices.json", "https://raw.githubusercontent.com/greyoak111/cccodroid/main/notices/notices.json"]);
+const SOURCES = (process.env.CCAPP_NOTICES_URL ? [process.env.CCAPP_NOTICES_URL] : []);   // xk: 不收上游维护者的通知（是写给上游用户的，版本范围也按上游版本号）
 // 与组件索引同一把公钥（gw/components.mjs）；Claude Code 验证记录（gw/ccverified.mjs）也用它。测试（CCAPP_TEST=1）时可换成测试钥匙
 export const PUBKEY = crypto.createPublicKey(!LIVE && process.env.CCAPP_TEST_PUBKEY ? process.env.CCAPP_TEST_PUBKEY :
   "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA4u1V3UuRVZgXwqXXQaQIBaefPf2PCGqKqvsna9Pgzzs=\n-----END PUBLIC KEY-----\n");
 const EVERY = 3 * 3600e3;
-const CACHE = path.join(CFG.home, ".cache", "cccodroid", "notices.json");
+const CACHE = path.join(CFG.home, ".cache", "xiaoke", "notices.json");   // xk: 不读之前缓存的上游通知
 const SEEN = path.join(CFG.home, ".config", "cccodroid", "notices-seen.json");
 
 let data = null, fetchedAt = 0, lastError = "", appVer = "", busy = null;

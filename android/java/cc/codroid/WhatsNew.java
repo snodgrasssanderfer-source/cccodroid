@@ -22,7 +22,7 @@ import org.json.JSONObject;
  *   跳过了几个版本 → 显示看过之后的，新的在前，最多 3 个。
  */
 final class WhatsNew {
-    private static final String DIR = "whatsnew", KEY = "whatsNewSeen";
+    private static final String DIR = Xk.WHATSNEW, KEY = "whatsNewSeen";   // xk: 弹我们自己的更新说明
     private static final int MAX = 3;
 
     private WhatsNew() {}
