@@ -46,6 +46,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.tag != ''
     runs-on: ubuntu-24.04
+    # 签名钥匙放在这个环境里，环境只许 claude/** 分支用：手机上的小克有写权限的部署钥匙，
+    # 她在自己的分支（xiaoke/**）上加的工作流拿不到钥匙。环境和规则怎么设见 xk/ON-DEVICE-AGENT.md 末尾
+    environment: xk-release
     env:
       BUILD_TOOLS: "35.0.0"
       PLATFORM: "android-35"
