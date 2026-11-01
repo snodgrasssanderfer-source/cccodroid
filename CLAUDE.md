@@ -20,7 +20,7 @@
 - 界面：`gateway/web/xk.js` 只通过 `window.__cc`、DOM 和 `/api/xk/*` 和上游界面打交道。
 
 ## 同步上游
-1. `git fetch upstream --tags`，main 快进到上游最新 tag，推送 main。
+1. `git fetch upstream main`（只取分支，不取标签：上游的 v0.x 标签和我们的版本号同名，不能推进我们的仓库），fork 的 main 快进到 upstream/main 并推送。
 2. 开发分支 `git rebase main`。冲突只应出现在 XIAOKE.md 列出的那几行，按"上游新代码 + 我们那一行"解决。
 3. 跑测试和构建（见下），XIAOKE.md 里行号有变就更新。
 
