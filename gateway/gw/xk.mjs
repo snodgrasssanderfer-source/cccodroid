@@ -5,14 +5,14 @@ import { Readable } from "node:stream";
 import { LIVE, log } from "./config.mjs";
 import { NEXT, readBody, sendJson } from "./http.mjs";
 import { publish } from "./bus.mjs";
-import { enqueue, routeQueue } from "./queue.mjs";
+import { START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
 import { effectiveModel, routeSessModel } from "./sessmodel.mjs";
-import "./xk-agy.mjs";
+import { sidOfAgyRun } from "./xk-agy.mjs";
 import "./xk-diary.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
@@ -54,7 +54,12 @@ addRoute(async (req, res, u, p) => {
     ctx.role = roleOfProject(ctx.body.projectId)?.id || null;
     // 主人手动切过来的：带上切换前那段对话
     if (ctx.role && STATE.pending[ctx.role]) { ctx.carry = STATE.pending[ctx.role]; delete STATE.pending[ctx.role]; saveState(); }
-  } else ctx.role = roleOfSession(b.sessionId)?.id || null;
+  } else {
+    // 只带 follow（新会话还没拿到会话号时发的下一条）：前一轮是哈基米的，就是她那个会话
+    const sid = b.sessionId || (b.follow ? sidOfAgyRun(b.follow) : null);
+    if (sid && !b.sessionId) { ctx.body.sessionId = sid; ctx.body.follow = null; }
+    ctx.role = roleOfSession(sid)?.id || null;
+  }
   for (const plan of PLANNERS) await plan(b, ctx);
   const role = roleById(ctx.role);
   if (role && role.engine !== "claude") {
@@ -74,6 +79,19 @@ addRoute(async (req, res, u, p) => {
   ctx.onQueued?.(item);
   if (ctx.notice) publish({ type: "xk", op: "handover", runId: item.id, ...ctx.notice });
   return sendJson(res, 200, { ok: true, id: item.id, injected: !!item.injected, started: RUNS.has(item.id), xk: ctx.notice });
+});
+
+// ── 兜底：不走 Claude Code 的角色（哈基米），她的会话 / 项目里绝不起 claude ──
+// 走漏的路：空闲自动压缩、绕过 /api/chat 入队的轮次……一旦起了，就是全局那家（比如 DeepSeek）顶着她的人设说话（主人 11-01 报）。
+// 主人发的消息改交她自己的引擎；网关自己起的（空闲压缩等）直接不跑
+START_GUARDS.push((q) => {
+  const sid = q.sessionId || (q.follow ? sidOfAgyRun(q.follow) : null);
+  const role = sid ? roleOfSession(sid) : roleOfProject(q.projectId);
+  if (!role || role.engine === "claude") return true;
+  if (q.auto || q.internal || !ENGINE_RUN[role.engine]) { log(`跳过${role.name}会话里的一轮（${q.auto || "内部"}）：她不走 Claude Code`); return false; }
+  log(`⚠️ ${role.name}的消息差点交给 Claude Code（${q.id}），改交 ${role.engine}`);
+  ENGINE_RUN[role.engine]({ id: q.id, message: String(q.message || ""), sessionId: sid }, {});
+  return false;
 });
 
 // ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（开新会话，带上这段对话），原会话不动 ──

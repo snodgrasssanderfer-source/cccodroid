@@ -22,6 +22,9 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
       const run = process.env.CCAPP_RUN_ID;
       const carry = run && path.join(dir, ".xk", "carry", run + ".md");
       if (carry && fs.existsSync(carry)) { parts.push(fs.readFileSync(carry, "utf8").trim()); fs.rmSync(carry); }
+      // 这一轮实际用的模型：人设里写着「系统写了就照实说」，这里就是系统写的那句（run.mjs 起 claude 时设的环境变量）
+      const model = process.env.ANTHROPIC_MODEL, prov = process.env.CCAPP_PROVIDER;
+      if (model) parts.push(`（系统：你这一轮用的模型是 ${model}${prov ? "，接口 " + prov : ""}。主人问起就照这个答。）`);
       const ph = path.join(dir, "persona", "post_history.md");
       if (fs.existsSync(ph)) { const t = fs.readFileSync(ph, "utf8").trim(); if (t) parts.push(t); }
     } else throw new Error("不认识的 hook 事件：" + ev);

@@ -98,18 +98,35 @@ function appendTurn(sid, role, text, parent) {
   return uuid;
 }
 
-/** 跑一轮。item：{ id, message, sessionId? }；extra：{ internal, carry } */
+// agy 的轮次不在上游的 RUNS 里：界面在新会话还没拿到会话号时发的第二条消息只带 follow（前一轮的 run 号），靠这张表认出是哪个会话
+const RUN_SID = new Map();
+export const sidOfAgyRun = (id) => RUN_SID.get(String(id)) || null;
+// 同一会话的轮次一个接一个跑：两个 agy 进程同时接着同一个 conversation 会互相踩
+const CHAIN = new Map();
+export function runAgyQueued(item, extra = {}) {
+  const sid = item.sessionId || null;
+  if (!sid) return runAgy(item, extra);
+  const prev = CHAIN.get(sid) || Promise.resolve();
+  const next = prev.then(() => new Promise((done) => runAgy(item, { ...extra, onEnd: done })));
+  CHAIN.set(sid, next);
+  next.then(() => { if (CHAIN.get(sid) === next) CHAIN.delete(sid); });
+}
+
+/** 跑一轮。item：{ id, message, sessionId? }；extra：{ internal, carry, onEnd } */
 export function runAgy(item, extra = {}) {
   const runId = item.id, startedAt = Date.now();
   let sid = item.sessionId || null;
   const isNew = !sid;
   if (isNew) sid = crypto.randomUUID();
+  RUN_SID.set(String(runId), sid);
+  if (RUN_SID.size > 500) RUN_SID.delete(RUN_SID.keys().next().value);
   const emit = (ev) => publish({ ...ev, runId });
   emit({ type: "run_start", text: item.message, sessionId: isNew ? null : sid, startedAt, ...(extra.internal ? { auto: "xk-agy" } : {}) });
   const ctx = [];
   const hits = search(DIR, item.message, 6);
   if (hits.length) ctx.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准）：\n" + hits.map(line).join("\n"));
   if (extra.carry) ctx.push(extra.carry);
+  ctx.push(`（系统：你这一轮经 Antigravity 用的是 Gemini，模型 ${STATE.agyModel || "是 agy 的默认"}。主人问起就照这个答。）`);
   if (fs.existsSync(postHistoryFile("hachimi"))) ctx.push(fs.readFileSync(postHistoryFile("hachimi"), "utf8").trim());
   const content = [...(ctx.length ? [{ type: "text", text: "（给你自己看的背景，不是主人说的话）\n" + ctx.join("\n\n") }] : []), { type: "text", text: item.message }];
   let parent = null;
@@ -117,6 +134,7 @@ export function runAgy(item, extra = {}) {
     const run = { id: runId, text: item.message, sessionId: sid, cwd: DIR, startedAt, provider: "agy", ...(extra.internal ? { auto: "xk-agy" } : {}) };
     for (const h of END_HOOKS) { try { h(run, fields); } catch (e) { log("结束钩子出错: " + e.message); } }
     publish({ type: "run_end", runId, sessionId: sid, aborted: false, durationMs: Date.now() - startedAt, ...(extra.internal ? { auto: "xk-agy" } : {}), ...fields });
+    extra.onEnd?.();
   };
   try {
     writeAgents(); ensureMcp();
@@ -166,7 +184,7 @@ export function runAgy(item, extra = {}) {
     finish({ isError: !ok, subtype: result ? String(result.status) : "no_result", ...(extra.internal ? { finalText: reply } : {}) });
   });
 }
-ENGINE_RUN.agy = runAgy;
+ENGINE_RUN.agy = runAgyQueued;
 
 // ── 登录：照旧版小克登录 Claude 的做法，在伪终端里跑 agy（没登录时它先弹登录菜单），选 Google 登录，
 //    把它打出来的登录链接交给界面，主人在浏览器里授权后把授权码贴回来。网关只搬字节，凭据由 agy 自己存，我们不读不存。
