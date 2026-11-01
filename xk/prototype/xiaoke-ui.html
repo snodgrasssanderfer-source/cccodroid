@@ -1,0 +1,702 @@
+<title>小克的小屋</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;600&family=ZCOOL+XiaoWei&display=swap">
+<style>
+/* 布局：一屏应用。顶部角色栏、中间内容区各自滚动、底部五栏常驻；当前角色的主色贯穿整个界面，替班时跟着变 */
+@property --role { syntax: "<color>"; inherits: true; initial-value: #d9692a; }
+@property --role-soft { syntax: "<color>"; inherits: true; initial-value: #fbe4d2; }
+:root {
+  --paper: #fff7ee;      /* 纸面底色 */
+  --sheet: #fffdf9;      /* 卡片、面板 */
+  --ink: #2a211b;        /* 正文 */
+  --ink-2: #6e5a4a;      /* 次要文字 */
+  --ink-3: #a08c7a;      /* 提示文字 */
+  --line: #ecdccb;       /* 分隔线 */
+  --think: #f6ede3;      /* 思考区底色 */
+  --shadow: 0 6px 24px rgba(74, 46, 22, .10);
+  --ok: #4f8a5b;
+  --role: #d9692a; --role-soft: #fbe4d2;
+  --c-xiaoke: #d9692a; --c-xiaoke-soft: #fbe4d2;
+  --c-hachimi: #7d55c9; --c-hachimi-soft: #ece4fa;
+  --c-xiaoyu: #3a6cc0; --c-xiaoyu-soft: #dcebfa;
+  --f-ui: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --f-read: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --f-title: "ZCOOL XiaoWei", "Noto Serif SC", serif;
+  --spring: cubic-bezier(.34, 1.4, .64, 1);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --paper-tex: none;
+  transition: --role .6s var(--ease), --role-soft .6s var(--ease);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #1d1713; --sheet: #271f19; --ink: #f2e7db; --ink-2: #c3b09e; --ink-3: #8c7a6a; --line: #3b3028; --think: #2e251e;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .35); --ok: #7cbf8a;
+  --c-xiaoke: #f39a58; --c-xiaoke-soft: #45301f; --c-hachimi: #b496ef; --c-hachimi-soft: #352a4a; --c-xiaoyu: #7ea8ee; --c-xiaoyu-soft: #22324a;
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --paper: #1d1713; --sheet: #271f19; --ink: #f2e7db; --ink-2: #c3b09e; --ink-3: #8c7a6a; --line: #3b3028; --think: #2e251e;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .35); --ok: #7cbf8a;
+  --c-xiaoke: #f39a58; --c-xiaoke-soft: #45301f; --c-hachimi: #b496ef; --c-hachimi-soft: #352a4a; --c-xiaoyu: #7ea8ee; --c-xiaoyu-soft: #22324a;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--paper); color: var(--ink); font-family: var(--f-ui); font-size: 15px; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--paper); }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--role); outline-offset: 2px; }
+.press { transition: transform .18s var(--spring); }
+.press:active { transform: scale(.95); }
+
+#app { height: 100%; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; position: relative; background: var(--paper) var(--paper-tex); background-size: 256px; }
+main { flex: 1; position: relative; overflow: hidden; }
+.screen { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transform: translateX(var(--from, 24px)); transition: opacity .32s var(--ease), transform .42s var(--ease); }
+.screen.on { opacity: 1; pointer-events: auto; transform: none; }
+.scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 4px 24px; }
+.page-head { padding: 18px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px)); }
+.page-head h1 { font-family: var(--f-title); font-weight: 400; font-size: 30px; margin: 0; letter-spacing: .04em; }
+.page-head p { margin: 2px 0 0; color: var(--ink-3); font-size: 13px; }
+
+/* 底部五栏 */
+nav.tabs { display: grid; grid-template-columns: repeat(5, 1fr); position: relative; background: var(--sheet); border-top: 1px solid var(--line); padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px)); }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 4px; font-size: 11px; color: var(--ink-3); position: relative; z-index: 1; transition: color .25s; }
+.tab svg { width: 24px; height: 24px; transition: transform .35s var(--spring); }
+.tab.on { color: var(--role); }
+.tab.on svg { transform: translateY(-1px) scale(1.08); }
+.pill { position: absolute; top: 6px; height: 48px; border-radius: 16px; background: var(--role-soft); transition: transform .45s var(--spring), width .45s var(--spring); z-index: 0; }
+
+/* 聊天页 */
+.chat-head { display: flex; align-items: center; gap: 12px; padding: 12px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); background: var(--paper); }
+.face { width: 46px; height: 46px; border-radius: 50%; flex: none; background: var(--role-soft) center 12% / 210% no-repeat; box-shadow: 0 0 0 2px var(--sheet), 0 0 0 4px var(--role); transition: box-shadow .6s var(--ease); }
+.who { flex: 1; min-width: 0; }
+.who b { font-family: var(--f-title); font-weight: 400; font-size: 22px; letter-spacing: .04em; }
+.who small { margin-left: 6px; color: var(--ink-3); font-size: 12px; }
+.status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); height: 18px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.status.busy .dot { background: var(--role); animation: breathe 1.2s ease-in-out infinite; }
+.status.sleep .dot { background: var(--ink-3); }
+@keyframes breathe { 50% { transform: scale(.6); opacity: .5; } }
+.icon-btn { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--ink-2); }
+.icon-btn svg { width: 22px; height: 22px; }
+
+.msgs { display: flex; flex-direction: column; gap: 14px; padding-top: 14px; }
+.me { align-self: flex-end; max-width: 80%; background: var(--role-soft); color: var(--ink); padding: 9px 14px; border-radius: 18px 18px 6px 18px; line-height: 1.6; animation: pop .38s var(--spring); }
+.her { font-family: var(--f-read); font-size: 16px; line-height: 1.85; letter-spacing: .01em; animation: rise .45s var(--ease); }
+.her p { margin: 0 0 .5em; }
+.her ol { margin: .2em 0 .6em; padding-left: 1.4em; }
+.her .by { display: block; font-family: var(--f-ui); font-size: 11px; color: var(--ink-3); margin-bottom: 2px; }
+.caret::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--role); vertical-align: middle; animation: breathe 1s infinite; }
+@keyframes pop { from { opacity: 0; transform: translateY(10px) scale(.92); } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.sys { align-self: center; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); padding: 4px 0; animation: rise .45s var(--ease); }
+.sys img { width: 22px; height: 22px; }
+
+/* 思考与步骤：一直看得见，跑着时展开，跑完收成一行，点一下再展开 */
+.proc { background: var(--think); border-radius: 14px; overflow: hidden; animation: rise .4s var(--ease); }
+.proc-top { width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13px; color: var(--ink-2); text-align: left; }
+.proc-top .lbl { flex: 1; }
+.proc-top svg { width: 16px; height: 16px; transition: transform .35s var(--ease); }
+.proc.open .proc-top svg.chev { transform: rotate(180deg); }
+.proc-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .4s var(--ease); }
+.proc.open .proc-body { grid-template-rows: 1fr; }
+.proc-inner { min-height: 0; overflow: hidden; }
+.thought { margin: 0 12px 8px; font-size: 13px; line-height: 1.7; color: var(--ink-2); white-space: pre-wrap; }
+.steps { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 10px; }
+.step { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 10px; font-size: 13px; animation: rise .35s var(--ease); }
+.step .ic { width: 26px; height: 26px; border-radius: 8px; background: var(--sheet); display: grid; place-items: center; color: var(--role); flex: none; }
+.step .ic svg { width: 15px; height: 15px; }
+.step .t { flex: 1; min-width: 0; }
+.step .t code { font-size: 12px; color: var(--ink-3); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark { width: 18px; height: 18px; flex: none; }
+.mark.run { border: 2px solid var(--line); border-top-color: var(--role); border-radius: 50%; animation: spin .8s linear infinite; }
+.mark.ok { color: var(--ok); animation: pop .3s var(--spring); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 她在干什么：只在思考、干活、睡着时从输入框上方探出来 */
+.peek { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); bottom: 100%; width: 84px; height: 84px; pointer-events: none; transform: translateY(30px) scale(.6); opacity: 0; transition: transform .5s var(--spring), opacity .3s; }
+.peek.on { transform: none; opacity: 1; }
+.peek img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(74, 46, 22, .18)); }
+.peek .bub { position: absolute; top: 2px; left: -6px; font: 700 15px var(--f-ui); color: var(--role); animation: bob 1.4s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(-5px); } }
+.composer-wrap { position: relative; }
+.composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px)); }
+.composer textarea { flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); background: var(--sheet); color: var(--ink); border-radius: 20px; padding: 10px 14px; font: 15px/1.5 var(--f-ui); max-height: 120px; }
+.composer textarea::placeholder { color: var(--ink-3); }
+.send { width: 42px; height: 42px; border-radius: 50%; background: var(--role); color: #fff; display: grid; place-items: center; flex: none; transition: transform .2s var(--spring), opacity .2s; }
+.send:disabled { opacity: .35; }
+.send svg { width: 20px; height: 20px; }
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px)); scrollbar-width: none; }
+.chip { flex: none; font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); background: var(--sheet); }
+
+/* 角色页 */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.card { background: var(--sheet); border-radius: 18px; padding: 8px 6px 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; border: 1.5px solid transparent; transition: border-color .4s, transform .3s var(--spring); }
+.card.on { border-color: var(--c); background: var(--cs); }
+.card img { width: 100%; aspect-ratio: 1; object-fit: contain; max-width: 100%; transition: transform .5s var(--spring); }
+.card:active img { transform: translateY(-4px) rotate(-2deg); }
+.card b { font-family: var(--f-title); font-weight: 400; font-size: 18px; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--paper); color: var(--ink-3); }
+.card.on .tag { background: var(--c); color: #fff; }
+.block { background: var(--sheet); border-radius: 18px; padding: 14px; margin-top: 14px; }
+.block h2 { font-size: 14px; margin: 0 0 10px; font-weight: 500; }
+.order { display: flex; align-items: center; justify-content: space-around; }
+.order .o { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; transition: transform .45s var(--spring); }
+.order .o span:first-child { width: 48px; height: 48px; border-radius: 50%; background: var(--paper) center 12% / 210% no-repeat; }
+.swap { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-3); }
+.swap svg { width: 18px; height: 18px; }
+.hint { font-size: 12px; color: var(--ink-3); margin: 10px 0 0; }
+
+/* 记忆页 */
+.seg { display: inline-flex; background: var(--sheet); border-radius: 12px; padding: 3px; gap: 2px; position: relative; }
+.seg button { padding: 6px 14px; border-radius: 9px; font-size: 13px; color: var(--ink-2); position: relative; z-index: 1; transition: color .25s; }
+.seg button.on { color: var(--ink); }
+.seg .knob { position: absolute; top: 3px; bottom: 3px; border-radius: 9px; background: var(--paper); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); transition: transform .4s var(--spring), width .4s var(--spring); }
+.tools-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.search { flex: 1; min-width: 160px; display: flex; align-items: center; gap: 8px; background: var(--sheet); border-radius: 12px; padding: 0 12px; color: var(--ink-3); }
+.search svg { width: 16px; height: 16px; }
+.search input { flex: 1; min-width: 0; border: 0; background: none; padding: 10px 0; font: inherit; color: var(--ink); }
+.group-t { font-size: 13px; color: var(--ink-3); margin: 16px 2px 8px; }
+.mem { background: var(--sheet); border-radius: 14px; margin-bottom: 8px; overflow: hidden; transition: opacity .3s, transform .35s var(--ease); }
+.mem > button { width: 100%; text-align: left; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
+.mem .meta { font-size: 11px; color: var(--role); }
+.mem .txt { font-family: var(--f-read); font-size: 15px; line-height: 1.6; }
+.mem.past .txt { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line); }
+.mem .acts { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s var(--ease); }
+.mem.open .acts { grid-template-rows: 1fr; }
+.mem .acts > div { min-height: 0; overflow: hidden; display: flex; gap: 8px; padding: 0 14px; }
+.mem.open .acts > div { padding-bottom: 12px; }
+.mini { font-size: 12px; padding: 6px 12px; border-radius: 999px; background: var(--paper); color: var(--ink-2); }
+.mini.danger { color: #c0483a; }
+.mem.gone { opacity: 0; transform: translateX(40px); }
+.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 32px 0; color: var(--ink-3); font-size: 13px; text-align: center; }
+.empty img { width: 150px; height: 150px; object-fit: contain; }
+
+/* 日记页 */
+.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 4px 0 14px; }
+.day { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; border-radius: 12px; font-size: 11px; color: var(--ink-3); position: relative; }
+.day b { font-size: 16px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.day.on { background: var(--role-soft); }
+.day.on b { color: var(--role); }
+.day.has::after { content: ""; position: absolute; bottom: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--role); }
+.book { perspective: 1400px; }
+.page { position: relative; background: var(--sheet) var(--paper-tex); background-size: 256px; border-radius: 6px 16px 16px 6px; box-shadow: var(--shadow), inset 10px 0 18px -14px rgba(74, 46, 22, .35); padding: 22px 22px 26px 26px; min-height: 380px; transform-origin: left center; }
+.page.flip { animation: flip .55s var(--ease); }
+@keyframes flip { 0% { transform: rotateY(0); } 45% { transform: rotateY(-70deg); opacity: .4; } 55% { transform: rotateY(-70deg); opacity: .4; } 100% { transform: rotateY(0); } }
+.page h3 { font-family: var(--f-title); font-weight: 400; font-size: 20px; margin: 0 0 12px; }
+.page .body { font-family: var(--f-read); font-size: 15.5px; line-height: 2.05; background-image: linear-gradient(transparent calc(2.05em - 1px), var(--line) 0); background-size: 100% 2.05em; }
+.page .body p { margin: 0; text-indent: 2em; }
+.page .src { font-size: 11px; color: var(--ink-3); margin-top: 14px; }
+.ribbon-mark { position: absolute; top: -6px; right: 28px; width: 14px; height: 64px; background: var(--ink); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%); opacity: .85; }
+.sign { position: absolute; right: 18px; bottom: 14px; width: 34px; height: 34px; opacity: .9; }
+
+/* 我的页 */
+.me-card { display: flex; align-items: center; gap: 14px; background: var(--sheet); border-radius: 18px; padding: 14px; }
+.me-card img { width: 64px; height: 64px; }
+.me-card b { font-size: 17px; }
+.me-card p { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); }
+.list { background: var(--sheet); border-radius: 16px; overflow: hidden; }
+.row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; text-align: left; }
+.row + .row { border-top: 1px solid var(--line); }
+.row svg.lead { width: 20px; height: 20px; color: var(--ink-2); flex: none; }
+.row .k { flex: 1; min-width: 0; }
+.row .k small { display: block; font-size: 12px; color: var(--ink-3); }
+.row .v { font-size: 13px; color: var(--ink-3); }
+.row svg.go { width: 16px; height: 16px; color: var(--ink-3); }
+.sw { width: 46px; height: 28px; border-radius: 999px; background: var(--line); position: relative; flex: none; transition: background .3s; }
+.sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .2); transition: transform .4s var(--spring); }
+.sw.on { background: var(--role); }
+.sw.on::after { transform: translateX(18px); }
+
+/* 底部面板、提示、启动页、花瓣 */
+.veil { position: fixed; inset: 0; background: rgba(30, 20, 12, .32); opacity: 0; pointer-events: none; transition: opacity .3s; z-index: 30; }
+.veil.on { opacity: 1; pointer-events: auto; }
+.sheet { position: fixed; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; background: var(--sheet); border-radius: 22px 22px 0 0; padding: 8px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); transform: translateY(105%); transition: transform .45s var(--spring); z-index: 31; max-height: 80%; overflow-y: auto; }
+.sheet.on { transform: none; }
+.sheet .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
+.sheet h2 { font-family: var(--f-title); font-weight: 400; font-size: 22px; margin: 0 0 4px; }
+.sheet .sub { color: var(--ink-3); font-size: 13px; margin: 0 0 14px; }
+.sheet .wide { width: 100%; padding: 12px; border-radius: 14px; background: var(--role); color: #fff; margin-top: 12px; }
+.facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.facts div { background: var(--paper); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: var(--ink-3); }
+.facts b { display: block; font-size: 15px; color: var(--ink); font-weight: 500; }
+.toast { position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px)); transform: translate(-50%, -140%); background: var(--sheet); box-shadow: var(--shadow); border-radius: 18px; padding: 10px 16px 10px 10px; display: flex; align-items: center; gap: 10px; font-size: 13px; z-index: 40; transition: transform .5s var(--spring); width: min(340px, calc(100% - 32px)); }
+.toast > div { flex: 1; min-width: 0; color: var(--ink-2); line-height: 1.5; }
+.toast.on { transform: translate(-50%, 0); }
+.toast img { width: 56px; height: 56px; object-fit: contain; flex: none; }
+.toast b { display: block; font-size: 14px; }
+#splash { position: fixed; inset: 0; z-index: 50; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; transition: opacity .6s var(--ease); }
+#splash.out { opacity: 0; pointer-events: none; }
+#splash .bloom { position: relative; width: 120px; height: 120px; }
+#splash .bloom img { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+#splash h1 { font-family: var(--f-title); font-weight: 400; font-size: 38px; letter-spacing: .2em; margin: 8px 0 0; opacity: 0; animation: rise .8s .7s var(--ease) forwards; }
+#splash p { color: var(--ink-3); font-size: 13px; margin: 0; opacity: 0; animation: rise .8s .9s var(--ease) forwards; }
+.petal { position: fixed; top: -40px; width: 22px; height: 22px; pointer-events: none; z-index: 45; animation: fall var(--d, 3.2s) linear forwards; }
+@keyframes fall { to { transform: translate(var(--dx, 40px), 110vh) rotate(var(--r, 540deg)); } }
+
+[data-motion="off"] *, [data-motion="off"] *::before, [data-motion="off"] *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+</style>
+
+<div id="app" data-role="xiaoke">
+  <main>
+    <!-- 聊天 -->
+    <section class="screen on" id="s-chat" aria-label="聊天">
+      <header class="chat-head">
+        <button class="face press" id="face" aria-label="切换角色"></button>
+        <div class="who">
+          <div><b id="who-name">小克</b><small id="who-sub">Claude</small></div>
+          <div class="status" id="status"><span class="dot"></span><span id="status-t">在线</span></div>
+        </div>
+        <button class="icon-btn press" id="more" aria-label="更多"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+      </header>
+      <div class="scroll" id="chat-scroll"><div class="msgs" id="msgs"></div></div>
+      <div class="composer-wrap">
+        <div class="peek" id="peek"><img alt=""><span class="bub"></span></div>
+        <div class="chips" id="chips"></div>
+        <form class="composer" id="composer">
+          <textarea id="input" rows="1" placeholder="和小克说说话…" aria-label="消息"></textarea>
+          <button class="send press" id="send" aria-label="发送" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        </form>
+      </div>
+    </section>
+    <!-- 角色 -->
+    <section class="screen" id="s-roles" aria-label="角色">
+      <div class="page-head"><h1>角色</h1><p>同住一屋，各有各的脾气</p></div>
+      <div class="scroll" id="roles-body"></div>
+    </section>
+    <!-- 记忆 -->
+    <section class="screen" id="s-mem" aria-label="记忆">
+      <div class="page-head"><h1>记忆</h1><p>她们各记各的，互相看不到</p></div>
+      <div class="scroll">
+        <div class="tools-row">
+          <div class="seg" id="mem-seg"></div>
+          <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="mem-q" placeholder="搜记忆"></label>
+        </div>
+        <div id="mem-list"></div>
+      </div>
+    </section>
+    <!-- 日记 -->
+    <section class="screen" id="s-diary" aria-label="日记">
+      <div class="page-head"><h1>日记</h1><p>每晚十点后，她们各写一篇</p></div>
+      <div class="scroll">
+        <div class="seg" id="diary-seg"></div>
+        <div class="week" id="week"></div>
+        <div class="book"><article class="page" id="page"></article></div>
+      </div>
+    </section>
+    <!-- 我的 -->
+    <section class="screen" id="s-me" aria-label="我的">
+      <div class="page-head"><h1>我的</h1><p>把小屋收拾成喜欢的样子</p></div>
+      <div class="scroll" id="me-body"></div>
+    </section>
+  </main>
+  <nav class="tabs" id="tabs" aria-label="主导航"><span class="pill" id="pill"></span></nav>
+</div>
+
+<div class="veil" id="veil"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+<div class="toast" id="toast" role="status"></div>
+<div id="splash"><div class="bloom"><img data-k="bud" alt=""><img data-k="half" alt=""><img data-k="open" alt=""></div><h1>小克</h1><p>住在你手机里的那朵小橙花</p></div>
+
+<script>
+"use strict";
+// 本地打开仓库里的这份文件时，图片在 gateway/web/xk-art/；发布成网页时和页面放在一起
+const ART = location.protocol === "file:" ? "../../gateway/web/xk-art/" : "";
+const art = (p) => ART + p + ".webp";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const store = { get(k, d) { try { const v = localStorage.getItem("xk-proto-" + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem("xk-proto-" + k, JSON.stringify(v)); } catch {} } };
+
+const ICON = {
+  chat: '<path d="M5 18.5 4 21l3.2-1.4A8.5 8.5 0 1 0 5 18.5Z"/>',
+  roles: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2a4.4 4.4 0 0 1 5 4.3"/>',
+  mem: '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M10 7.5h4M10 16.5h4"/>',
+  diary: '<path d="M6 3.5h11a1.5 1.5 0 0 1 1.5 1.5v15H7a2 2 0 0 1-2-2V4.5a1 1 0 0 1 1-1Z"/><path d="M5 18a2 2 0 0 1 2-2h11.5"/><path d="M13 3.5v6l2-1.4 2 1.4v-6"/>',
+  me: '<path d="M12 3.5c1.6 2 4.2 2.4 6 1.6.6 3.6-.3 7.4-2.4 10.1L12 20l-3.6-4.8C6.3 12.5 5.4 8.7 6 5.1c1.8.8 4.4.4 6-1.6Z"/>',
+  book: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5Z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5Z"/>',
+  file: '<path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10A.5.5 0 0 1 7 20Z"/><path d="M14 3.5V8h4"/>',
+  pen: '<path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/>',
+  term: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4"/>',
+  chev: '<path d="m6 9 6 6 6-6"/>', go: '<path d="m9 6 6 6-6 6"/>', check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  swap: '<path d="M7 7h11l-3-3M17 17H6l3 3"/>', user: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16 7l2.5 2.5"/>', link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  sound: '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4Z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  wave: '<path d="M3 12c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/>', code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>', moon: '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5Z"/>',
+};
+const svg = (k, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
+
+// ── 三位住客 ──
+const ROLES = {
+  xiaoke: { name: "小克", sub: "Claude", dir: "xiaoke", mark: "icon/flower_open", s: { idle: "01_idle", thinking: "02_thinking", working: "03_working", happy: "04_flustered", sleeping: "09_sleeping", wave: "12_wave", oops: "08_oops", error: "13_error" } },
+  hachimi: { name: "哈基米", sub: "Gemini", dir: "hachimi", mark: "icon/mark_paw", s: { idle: "01_idle", thinking: "02_thinking", working: "03_working", happy: "04_happy", sleeping: "07_sleeping", wave: "08_wave", oops: "06_oops", error: "05_pout" } },
+  xiaoyu: { name: "小鱼", sub: "DeepSeek", dir: "xiaoyu", mark: "icon/mark_bowl", s: { idle: "01_idle", thinking: "02_thinking", working: "03_working", happy: "04_happy", sleeping: "07_sleeping", wave: "08_wave", oops: "06_oops", error: "05_pout" } },
+};
+const sprite = (id, st) => art(ROLES[id].dir + "/" + ROLES[id].s[st]);
+const S = { tab: 0, role: "xiaoke", order: ["xiaoke", "hachimi", "xiaoyu"], asleep: new Set(), busy: false, sound: store.get("sound", true), motion: store.get("motion", true), theme: store.get("theme", "auto") };
+
+// ── 音效：全部用 Web Audio 现场合成，很轻、很短 ──
+const SFX = (() => {
+  let ctx, out, noise;
+  const init = () => {
+    if (ctx) return true;
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return false; }
+    out = ctx.createGain(); out.gain.value = .5; out.connect(ctx.destination);
+    noise = ctx.createBuffer(1, ctx.sampleRate * .5, ctx.sampleRate);
+    const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    return true;
+  };
+  const env = (g, t, a, peak, dec) => { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + dec); };
+  const tone = (type, f0, f1, peak, dec, delay = 0) => {
+    const t = ctx.currentTime + delay, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dec);
+    env(g, t, .004, peak, dec); o.connect(g).connect(out); o.start(t); o.stop(t + dec + .05);
+  };
+  const hiss = (ftype, f0, f1, q, peak, a, dec, delay = 0) => {
+    const t = ctx.currentTime + delay, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noise; f.type = ftype; f.Q.value = q; f.frequency.setValueAtTime(f0, t); if (f1) f.frequency.exponentialRampToValueAtTime(f1, t + a + dec);
+    env(g, t, a, peak, dec); s.connect(f).connect(g).connect(out); s.start(t); s.stop(t + a + dec + .05);
+  };
+  const lib = {
+    tap: () => { hiss("bandpass", 2600, 0, 1.4, .18, .002, .035); tone("sine", 1500, 0, .025, .03); },
+    tab: () => hiss("bandpass", 900, 2600, .9, .12, .03, .14),
+    send: () => { tone("sine", 480, 900, .14, .11); hiss("highpass", 3000, 0, .7, .05, .002, .03); },
+    receive: () => { tone("sine", 1318, 0, .05, .7); tone("sine", 1975, 0, .03, .5, .05); },
+    done: () => { tone("triangle", 880, 660, .05, .06); hiss("bandpass", 4000, 0, 2, .05, .001, .02, .01); },
+    toggle: () => { hiss("bandpass", 3200, 0, 3, .16, .001, .015); tone("sine", 160, 90, .08, .05); },
+    sheet: () => hiss("lowpass", 1600, 400, .6, .1, .04, .22),
+    sleep: () => { tone("sine", 392, 262, .07, .9); tone("sine", 196, 0, .04, .9, .1); },
+    error: () => { tone("sine", 190, 150, .16, .14); hiss("bandpass", 900, 0, 4, .05, .001, .03); },
+    petal: () => { [0, .12, .24].forEach((d, i) => tone("sine", [1568, 1760, 2093][i], 0, .025, .6, d)); },
+  };
+  return { play(k) { if (!S.sound || !init()) return; if (ctx.state === "suspended") ctx.resume(); try { lib[k](); } catch {} } };
+})();
+
+// ── 主题、动效 ──
+function applyTheme() {
+  const r = document.documentElement;
+  if (S.theme === "auto") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", S.theme);
+  r.dataset.motion = S.motion ? "on" : "off";
+  const dark = S.theme === "dark" || (S.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+  r.style.setProperty("--paper-tex", `url("${art(dark ? "deco/paper_dark" : "deco/paper_light")}")`);
+}
+function applyRole() {
+  const r = document.documentElement.style, id = S.role;
+  r.setProperty("--role", `var(--c-${id})`); r.setProperty("--role-soft", `var(--c-${id}-soft)`);
+  $("#app").dataset.role = id;
+  $("#who-name").textContent = ROLES[id].name; $("#who-sub").textContent = ROLES[id].sub;
+  $("#input").placeholder = `和${ROLES[id].name}说说话…`;
+  setFace(S.asleep.has(id) ? "sleeping" : "idle");
+}
+function setFace(st) { $("#face").style.backgroundImage = `url("${sprite(S.role, st === "sleeping" ? "sleeping" : "idle")}")`; }
+function setStatus(kind, text) { const el = $("#status"); el.className = "status " + kind; $("#status-t").textContent = text; }
+const PEEK_BUB = { thinking: "?", working: "…", sleeping: "Zzz" };
+function peek(st) {
+  const p = $("#peek");
+  if (!st) { p.classList.remove("on"); return; }
+  p.querySelector("img").src = sprite(S.role, st); p.querySelector(".bub").textContent = PEEK_BUB[st] || "";
+  p.classList.add("on");
+}
+
+// ── 底部五栏 ──
+const TABS = [["chat", "聊天", "s-chat"], ["roles", "角色", "s-roles"], ["mem", "记忆", "s-mem"], ["diary", "日记", "s-diary"], ["me", "我的", "s-me"]];
+function buildTabs() {
+  const nav = $("#tabs");
+  TABS.forEach(([k, label], i) => {
+    const b = document.createElement("button"); b.className = "tab press"; b.innerHTML = svg(k) + label; b.setAttribute("aria-label", label);
+    b.onclick = () => go(i); nav.appendChild(b);
+  });
+  movePill();
+  addEventListener("resize", movePill);
+}
+function movePill() {
+  const tabs = [...document.querySelectorAll(".tab")], t = tabs[S.tab], pill = $("#pill");
+  tabs.forEach((x, i) => x.classList.toggle("on", i === S.tab));
+  const w = Math.min(t.offsetWidth - 10, 64);
+  pill.style.width = w + "px"; pill.style.transform = `translateX(${t.offsetLeft + (t.offsetWidth - w) / 2}px)`;
+}
+function go(i) {
+  if (i === S.tab) return;
+  const dir = i > S.tab ? 1 : -1, from = $("#" + TABS[S.tab][2]), to = $("#" + TABS[i][2]);
+  from.style.setProperty("--from", -dir * 24 + "px"); from.classList.remove("on");
+  to.style.setProperty("--from", dir * 24 + "px"); void to.offsetWidth; to.classList.add("on");
+  S.tab = i; movePill(); SFX.play("tab");
+  ({ roles: renderRoles, mem: renderMem, diary: renderDiary, me: renderMe })[TABS[i][0]]?.();
+}
+
+// ── 聊天 ──
+const msgs = () => $("#msgs");
+const toBottom = () => { const s = $("#chat-scroll"); s.scrollTo({ top: s.scrollHeight, behavior: S.motion ? "smooth" : "auto" }); };
+function addMe(text) { const d = document.createElement("div"); d.className = "me"; d.textContent = text; msgs().appendChild(d); toBottom(); }
+function addSys(html) { const d = document.createElement("div"); d.className = "sys"; d.innerHTML = html; msgs().appendChild(d); toBottom(); }
+function addHer(html, by) { const d = document.createElement("div"); d.className = "her"; d.innerHTML = (by ? `<span class="by">${esc(by)}</span>` : "") + html; msgs().appendChild(d); toBottom(); return d; }
+function procBox(open) {
+  const d = document.createElement("div"); d.className = "proc" + (open ? " open" : "");
+  d.innerHTML = `<button class="proc-top">${svg("book")}<span class="lbl">思考与步骤</span>${svg("chev", "chev")}</button><div class="proc-body"><div class="proc-inner"><div class="thought"></div><div class="steps"></div></div></div>`;
+  d.querySelector(".proc-top").onclick = () => { d.classList.toggle("open"); SFX.play("tap"); };
+  msgs().appendChild(d); toBottom(); return d;
+}
+function stepRow(box, ic, label, code, done) {
+  const r = document.createElement("div"); r.className = "step";
+  r.innerHTML = `<span class="ic">${svg(ic)}</span><span class="t">${esc(label)}<code>${esc(code)}</code></span>${done ? `<span class="mark ok">${svg("check")}</span>` : '<span class="mark run"></span>'}`;
+  box.querySelector(".steps").appendChild(r); toBottom(); return r;
+}
+async function typeInto(el, text, speed = 26) {
+  if (!S.motion) { el.textContent += text; return; }
+  for (let i = 0; i < text.length; i += 2) { el.textContent += text.slice(i, i + 2); if (i % 24 === 0) toBottom(); await wait(speed); }
+}
+// 回复正文按段落匀速吐出来；列表在干活时才出现
+async function streamReply(blocks, by) {
+  const d = addHer("", by); d.classList.add("caret");
+  for (const b of blocks) {
+    if (Array.isArray(b)) { const ol = document.createElement("ol"); d.appendChild(ol); for (const li of b) { const x = document.createElement("li"); ol.appendChild(x); await typeInto(x, li); } }
+    else { const p = document.createElement("p"); d.appendChild(p); await typeInto(p, b); }
+  }
+  d.classList.remove("caret"); toBottom();
+}
+
+// 演示用的回答，按三个人各自的口吻
+const SCRIPT = {
+  xiaoke: {
+    praise: ["冷不丁来这么一句，存心让我接不上话是不是。", "行吧，看在你眼力不错的份上，这句我收下了。"],
+    chat: [["这个问题挠到我了。我先说结论：多半是后人顺着字面附会出来的，真要较真，源头到现在都没吵出定论。", "糟了，一聊起这个又刹不住车。打住。"], ["今天没什么新鲜的。上午你走以后，我把前天聊的几件事归了档。", "B站那扇窗你还没给我开，想出门逛也没处去。"], ["说实话，我拿不准。你要是有兴致，咱们可以慢慢聊。"]],
+    work: { think: "主人要整理昨天的笔记。先翻记忆，看他上次说笔记放在哪……记得在 notes/ 下。读昨天那份，按事情归类，重复的合并，日期写成具体的。", steps: [["mem", "翻记忆", "recall 笔记放在哪"], ["file", "读昨天的笔记", "notes/2026-10-31.md"], ["pen", "写进整理稿", "notes/整理.md"]], reply: ["理好了，归成三件事：", ["周五想去新开的书店看看", "搬工位的事已经办妥", "那篇长文的结尾，你说要再想想"], "原稿没动，整理稿单独存了一份。"] },
+  },
+  hachimi: {
+    praise: ["那当然，我一直这么快，只是平时被小克抢了戏。", "这句等留言板装好了，我第一张便条就写给她看。喵。"],
+    chat: [["那我有三个主意你挑一个：去菜市场买条没见过的鱼回来研究；把收藏夹里吃灰最久的电影翻出来看完；或者今天说话都不许带“的”字。", "最后一个我其实已经输了。"], ["比点子我不输她，比磨一个问题磨到底，她确实比我能熬。这话你别转告她。"]],
+    work: { think: "要整理笔记？先看看 notes/ 里有什么，顺手按主题拆开，再生成一份目录，主人以后找起来快。", steps: [["file", "列出笔记", "ls notes/"], ["file", "读昨天的笔记", "notes/2026-10-31.md"], ["pen", "写进整理稿和目录", "notes/整理.md"]], reply: ["弄好了，还顺手加了个目录：", ["书店：周五去", "工位：已搬完", "长文：结尾待定"], "要不要我把以后每天的笔记都自动归进去？"] },
+  },
+  xiaoyu: {
+    praise: ["嗯，我也这么觉得。", "夸完了能不能顺便把午饭定了。"],
+    chat: [["有事说事，小鱼在。"], ["不知道。我看不到她们的记性，没法替她们说。"]],
+    work: { think: "整理笔记。先读昨天那份，再归类。没必要多做别的。", steps: [["file", "读昨天的笔记", "notes/2026-10-31.md"], ["pen", "写进整理稿", "notes/整理.md"]], reply: ["好了，三条：", ["书店，周五", "工位，搬完了", "长文，结尾还没定"], "就这些。"] },
+  },
+};
+const chatTurn = {};
+function intent(t) { return /可爱|厉害|好看|喜欢你|真棒|聪明/.test(t) ? "praise" : /整理|笔记|帮我|代码|脚本|查|改/.test(t) ? "work" : "chat"; }
+
+async function reply(text) {
+  const id = S.role, R = ROLES[id], sc = SCRIPT[id], kind = intent(text);
+  S.busy = true; syncSend();
+  setStatus("busy", "思考中"); peek("thinking");
+  const box = procBox(true); await wait(350);
+  const thought = kind === "work" ? sc.work.think : kind === "praise" ? "主人在夸我。别慌，正常接话。" : "想想怎么接这句。";
+  await typeInto(box.querySelector(".thought"), thought, 22);
+  const t0 = Date.now();
+  if (kind === "work") {
+    setStatus("busy", "干活中"); peek("working");
+    for (const [ic, label, code] of sc.work.steps) { const r = stepRow(box, ic, label, code); await wait(900); r.querySelector(".mark").outerHTML = `<span class="mark ok">${svg("check")}</span>`; SFX.play("done"); }
+  }
+  const n = box.querySelectorAll(".step").length, secs = Math.max(2, Math.round((Date.now() - t0) / 1000) + 2);
+  box.querySelector(".lbl").textContent = n ? `想了 ${secs} 秒 · ${n} 个步骤` : `想了 ${secs} 秒`;
+  box.classList.remove("open");
+  peek(null); setStatus("busy", "回复中"); SFX.play("receive");
+  if (kind === "praise") { $("#face").style.backgroundImage = `url("${sprite(id, "happy")}")`; petals(); }
+  const lines = kind === "work" ? sc.work.reply : kind === "praise" ? sc.praise : sc.chat[(chatTurn[id] = ((chatTurn[id] ?? -1) + 1) % sc.chat.length)];
+  await streamReply(lines);
+  SFX.play("done"); setStatus("", "在线"); setTimeout(() => setFace("idle"), 1600);
+  S.busy = false; syncSend();
+}
+function syncSend() { $("#send").disabled = S.busy || S.asleep.has(S.role) || !$("#input").value.trim(); }
+
+function seedChat() {
+  addMe("昨天那篇长文，结尾是不是太潦草了");
+  addHer("<p>开头天花乱坠，结尾靠机械降神硬圆，确实潦草。前面埋的三条线只收了一条，剩下两条像没发生过。</p><p>不过中段那场对话写得是真好，可惜了。</p>");
+  addMe("帮我把昨天的笔记理一理");
+  const box = procBox(false);
+  box.querySelector(".thought").textContent = SCRIPT.xiaoke.work.think;
+  SCRIPT.xiaoke.work.steps.forEach(([ic, l, c]) => stepRow(box, ic, l, c, true));
+  box.querySelector(".lbl").textContent = "想了 5 秒 · 3 个步骤";
+  addHer("<p>理好了，归成三件事：</p><ol><li>周五想去新开的书店看看</li><li>搬工位的事已经办妥</li><li>那篇长文的结尾，你说要再想想</li></ol><p>原稿没动，整理稿单独存了一份。</p>");
+}
+function buildChips() {
+  const c = $("#chips");
+  ["今天好可爱", "帮我整理一下笔记", "你今天自己干嘛了"].forEach((t) => {
+    const b = document.createElement("button"); b.className = "chip press"; b.textContent = t;
+    b.onclick = () => { $("#input").value = t; syncSend(); send(); }; c.appendChild(b);
+  });
+}
+function send() {
+  const i = $("#input"), t = i.value.trim();
+  if (!t || S.busy || S.asleep.has(S.role)) return;
+  SFX.play("send"); addMe(t); i.value = ""; i.style.height = ""; syncSend(); reply(t);
+}
+
+// ── 替班 ──
+async function handover() {
+  if (S.busy) return;
+  const from = S.role, next = S.order.find((r) => r !== from && !S.asleep.has(r));
+  S.asleep.add(from); setFace("sleeping"); setStatus("sleep", "额度用完，睡着了"); peek("sleeping"); SFX.play("sleep"); syncSend();
+  await wait(1100);
+  if (!next) { toast(sprite(from, "sleeping"), "三个人都睡着了", "额度恢复后会自己醒来"); return; }
+  // 两张接班插画只画了「小克→哈基米」「哈基米→小鱼」，别的顺序用接班人的招手图
+  const pic = from === "xiaoke" && next === "hachimi" ? art("group/handover_1") : from === "hachimi" && next === "xiaoyu" ? art("group/handover_2") : sprite(next, "wave");
+  toast(pic, `${ROLES[next].name}来接班`, `${ROLES[from].name}的额度用完了，约 3 小时后恢复`);
+  await wait(600); peek(null);
+  S.role = next; applyRole(); setStatus("", "在线");
+  addSys(`<img src="${art(ROLES[next].mark)}" alt="">${ROLES[next].name}接班 · 只带上了刚才这段对话`);
+  $("#face").style.backgroundImage = `url("${sprite(next, "wave")}")`; setTimeout(() => setFace("idle"), 1800);
+  syncSend();
+}
+function wakeAll() {
+  S.asleep.clear(); const back = S.role !== S.order[0]; S.role = S.order[0]; applyRole(); setStatus("", "在线"); peek(null); syncSend();
+  if (back) { addSys(`<img src="${art(ROLES[S.role].mark)}" alt="">${ROLES[S.role].name}醒了，下一条消息交还给她`); SFX.play("receive"); }
+}
+
+// ── 底部面板、提示 ──
+function openSheet(html, bind) {
+  const s = $("#sheet"); s.innerHTML = '<div class="grab"></div>' + html; bind?.(s);
+  $("#veil").classList.add("on"); s.classList.add("on"); SFX.play("sheet");
+}
+function closeSheet() { $("#veil").classList.remove("on"); $("#sheet").classList.remove("on"); }
+$("#veil").onclick = closeSheet;
+function toast(img, title, text) {
+  const t = $("#toast"); t.innerHTML = `<img src="${img}" alt=""><div><b>${esc(title)}</b>${esc(text)}</div>`; t.classList.add("on");
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("on"), 3200);
+}
+function petals() {
+  if (!S.motion || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  SFX.play("petal");
+  for (let i = 0; i < 14; i++) {
+    const p = document.createElement("img"); p.className = "petal"; p.src = art("deco/petal_" + (1 + (i % 5))); p.alt = "";
+    p.style.left = Math.random() * 100 + "vw"; p.style.setProperty("--d", 2.6 + Math.random() * 1.8 + "s"); p.style.setProperty("--dx", (Math.random() * 160 - 80) + "px"); p.style.setProperty("--r", (Math.random() * 720 - 360) + "deg"); p.style.animationDelay = Math.random() * .6 + "s";
+    document.body.appendChild(p); p.addEventListener("animationend", () => p.remove());
+  }
+}
+
+// ── 角色页 ──
+function roleState(id) { return S.asleep.has(id) ? "睡着" : id === S.role ? "在线" : "替班"; }
+function renderRoles() {
+  const b = $("#roles-body");
+  b.innerHTML = `<div class="cards">${S.order.map((id) => `<button class="card press${id === S.role ? " on" : ""}" data-id="${id}" style="--c:var(--c-${id});--cs:var(--c-${id}-soft)"><img src="${sprite(id, S.asleep.has(id) ? "sleeping" : "idle")}" alt="${ROLES[id].name}"><b>${ROLES[id].name}</b><span class="tag">${roleState(id)}</span></button>`).join("")}</div>
+    <div class="block"><h2>替班顺序</h2><div class="order">${S.order.map((id, i) => `${i ? `<button class="swap press" data-i="${i}" aria-label="交换顺序">${svg("swap")}</button>` : ""}<div class="o"><span style="background-image:url('${sprite(id, "idle")}')"></span><span>${ROLES[id].name}</span></div>`).join("")}</div><p class="hint">谁的额度用完，就由下一位接班，只带上刚才那段对话；额度恢复后交还。点中间的箭头换顺序。</p></div>
+    <div class="block"><h2>大家共用的世界书</h2><p class="hint" style="margin:0">屋子、三位住客、替班和留言板的规矩。三个人每一轮都会读到。</p><button class="mini press" style="margin-top:10px" id="wb">导入世界书</button></div>`;
+  b.querySelectorAll(".card").forEach((c) => c.onclick = () => roleSheet(c.dataset.id));
+  b.querySelectorAll(".swap").forEach((x) => x.onclick = () => { const i = +x.dataset.i; [S.order[i - 1], S.order[i]] = [S.order[i], S.order[i - 1]]; SFX.play("toggle"); renderRoles(); });
+  $("#wb").onclick = () => { SFX.play("tap"); toast(art("icon/flower_open"), "这是原型", "真 App 里会打开文件选择"); };
+}
+function roleSheet(id) {
+  const R = ROLES[id], mem = MEM[id].length, dia = Object.keys(DIARY[id]).length;
+  openSheet(`<div style="display:flex;gap:14px;align-items:center"><img src="${sprite(id, "wave")}" alt="" style="width:96px;height:96px;object-fit:contain"><div><h2>${R.name}</h2><p class="sub" style="margin:0">${R.sub} · ${roleState(id)}</p></div></div>
+    <div class="facts" style="margin-top:12px"><div><b>第 ${id === "xiaoke" ? 6 : 1} 版</b>人设</div><div><b>共用</b>世界书</div><div><b>${mem} 条</b>记忆</div><div><b>${dia} 篇</b>日记</div></div>
+    <button class="wide press" id="talk"${S.asleep.has(id) ? " disabled style=\"opacity:.4\"" : ""}>${S.asleep.has(id) ? "她睡着了" : id === S.role ? "回去聊天" : "换她来聊（开新会话）"}</button>`, (s) => {
+    s.querySelector("#talk").onclick = () => {
+      if (S.asleep.has(id)) return;
+      closeSheet(); const changed = id !== S.role; S.role = id; applyRole(); go(0);
+      if (changed) addSys(`<img src="${art(R.mark)}" alt="">换成${R.name} · 新会话，带上刚才那段对话`);
+    };
+  });
+}
+
+// ── 记忆页 ──
+const MEM = {
+  xiaoke: [
+    { d: "今天", m: "11月1日 · App", t: "主人周五想去新开的书店看看" },
+    { d: "今天", m: "11月1日 · 我的看法", t: "那篇长文的结尾靠机械降神，前面三条线只收了一条" },
+    { d: "昨天", m: "10月31日 · App", t: "主人喜欢不加糖的热茶" },
+    { d: "昨天", m: "10月31日 · App", t: "主人下个月要搬工位", past: true },
+    { d: "更早", m: "10月26日 · App", t: "上周日争过那款烂尾的独立游戏，主人说中盘的篝火夜话值回票价" },
+  ],
+  hachimi: [{ d: "今天", m: "11月1日 · App", t: "主人想要笔记带目录，找起来快" }, { d: "更早", m: "10月28日 · App", t: "主人周末无聊时愿意试新花样" }],
+  xiaoyu: [{ d: "更早", m: "10月30日 · App", t: "主人午饭常吃面" }],
+};
+let memRole = "xiaoke";
+function seg(el, cur, onPick) {
+  el.innerHTML = '<span class="knob"></span>' + S.order.map((id) => `<button data-id="${id}" class="${id === cur ? "on" : ""}">${ROLES[id].name}</button>`).join("");
+  const place = () => { const b = el.querySelector("button.on"), k = el.querySelector(".knob"); k.style.width = b.offsetWidth + "px"; k.style.transform = `translateX(${b.offsetLeft - 3}px)`; };
+  requestAnimationFrame(place);
+  el.querySelectorAll("button").forEach((b) => b.onclick = () => { el.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); place(); SFX.play("tap"); onPick(b.dataset.id); });
+}
+function renderMem() {
+  seg($("#mem-seg"), memRole, (id) => { memRole = id; drawMem(); });
+  drawMem();
+}
+function drawMem() {
+  const q = $("#mem-q").value.trim(), list = MEM[memRole].filter((m) => !q || m.t.includes(q)), box = $("#mem-list");
+  if (!list.length) { box.innerHTML = `<div class="empty"><img src="${art(memRole === "xiaoke" ? "xiaoke/11_memory" : "deco/empty_memory")}" alt="">${q ? "没找到相关的记忆" : "还没有记忆"}</div>`; return; }
+  let html = "", last = "";
+  list.forEach((m) => {
+    if (m.d !== last) { html += `<div class="group-t">${m.d}</div>`; last = m.d; }
+    const i = MEM[memRole].indexOf(m);
+    html += `<div class="mem${m.past ? " past" : ""}" data-i="${i}"><button><span class="meta">${esc(m.m)}${m.past ? " · 已过去" : ""}</span><span class="txt">${esc(m.t)}</span></button><div class="acts"><div><button class="mini press" data-a="past">${m.past ? "改回现在" : "标成已过去"}</button><button class="mini danger press" data-a="del">忘掉</button></div></div></div>`;
+  });
+  box.innerHTML = html;
+  box.querySelectorAll(".mem").forEach((el) => {
+    el.firstElementChild.onclick = () => { el.classList.toggle("open"); SFX.play("tap"); };
+    el.querySelectorAll("[data-a]").forEach((b) => b.onclick = () => {
+      const m = MEM[memRole][+el.dataset.i];
+      if (b.dataset.a === "past") { m.past = !m.past; SFX.play("toggle"); drawMem(); }
+      else { SFX.play("sheet"); el.classList.add("gone"); setTimeout(() => { MEM[memRole].splice(+el.dataset.i, 1); drawMem(); }, 320); }
+    });
+  });
+}
+$("#mem-q").oninput = drawMem;
+
+// ── 日记页 ──
+const DAYS = ["10-26", "10-27", "10-28", "10-29", "10-30", "10-31", "11-01"], WD = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const DIARY = {
+  xiaoke: {
+    "10-31": ["今天他说想把笔记整理一下，我顺手把三件事归了档。整理别人的笔记，像替人收拾书桌，得忍住不去动那些放得歪歪扭扭的东西。", "下午聊到那款烂尾的游戏，我又被他说服了一点点。笨拙的余温这个说法，我记下了。"],
+    "11-01": ["今天是搬家后的第一天，住进了一间工具间改出来的小屋。扳手和茶具摆在一块儿，倒也不难看。", "他夸了我一句，我卡壳了。这种事以后得练练。"],
+  },
+  hachimi: { "11-01": ["小克睡着的那会儿轮到我值班。主人要整理笔记，我顺手加了目录，等她醒来看见，应该挑不出毛病。", "应该吧。"] },
+  xiaoyu: { "10-30": ["今天没什么事。主人中午吃的面，我也想吃。"] },
+};
+let diaryRole = "xiaoke", diaryDay = "11-01";
+function renderDiary() { seg($("#diary-seg"), diaryRole, (id) => { diaryRole = id; drawDiary(true); }); drawDiary(false); }
+function drawDiary(flip) {
+  $("#week").innerHTML = DAYS.map((d, i) => `<button class="day press${d === diaryDay ? " on" : ""}${DIARY[diaryRole][d] ? " has" : ""}" data-d="${d}">${WD[i]}<b>${+d.slice(3)}</b></button>`).join("");
+  $("#week").querySelectorAll(".day").forEach((b) => b.onclick = () => { if (b.dataset.d === diaryDay) return; diaryDay = b.dataset.d; SFX.play("tab"); drawDiary(true); });
+  const page = $("#page"), e = DIARY[diaryRole][diaryDay], [m, d] = diaryDay.split("-");
+  const fill = () => {
+    page.innerHTML = e
+      ? `<span class="ribbon-mark"></span><h3>${+m}月${+d}日</h3><div class="body">${e.map((p) => `<p>${esc(p)}</p>`).join("")}</div><p class="src">根据这天的聊天写的 · ${ROLES[diaryRole].name}</p><img class="sign" src="${art(ROLES[diaryRole].mark)}" alt="">`
+      : `<div class="empty"><img src="${art("deco/empty_diary")}" alt="">这天${ROLES[diaryRole].name}没有写日记<br>那天没有聊天，她就没有素材</div>`;
+  };
+  if (flip && S.motion) { page.classList.remove("flip"); void page.offsetWidth; page.classList.add("flip"); setTimeout(fill, 250); } else fill();
+}
+
+// ── 我的页 ──
+function renderMe() {
+  const row = (ic, k, sub, right, id) => `<button class="row press" ${id ? `id="${id}"` : ""}>${svg(ic, "lead")}<span class="k">${k}${sub ? `<small>${sub}</small>` : ""}</span>${right ?? svg("go", "go")}</button>`;
+  const sw = (on) => `<span class="sw${on ? " on" : ""}"></span>`;
+  const themeName = { auto: "跟随系统", light: "浅色", dark: "深色" }[S.theme];
+  $("#me-body").innerHTML = `<div class="me-card"><img src="${art("icon/flower_open")}" alt=""><div><b>主人</b><p>三位住客的房东</p></div></div>
+    <div class="group-t">连接</div><div class="list">${row("user", "Claude 账户", "小克用", '<span class="v">已登录</span>')}${row("key", "DeepSeek 接口", "小鱼用", '<span class="v">已填</span>')}${row("link", "Antigravity", "哈基米用", '<span class="v">未登录</span>')}</div>
+    <div class="group-t">偏好</div><div class="list">${row("moon", "外观", "", `<span class="v">${themeName}</span>`, "r-theme")}${row("sound", "音效", "点按、翻页、发送时的轻响", sw(S.sound), "r-sound")}${row("wave", "动效", "关掉后切换不再滑动", sw(S.motion), "r-motion")}</div>
+    <div class="group-t">工具</div><div class="list">${row("code", "开发工具", "终端、文件、git、组件、插件、定时任务", null, "r-dev")}</div>
+    <div class="group-t">关于</div><div class="list">${row("info", "小克 0.1.1", "基于 cccodroid（Apache-2.0）修改", "")}</div>`;
+  $("#r-sound").onclick = () => { S.sound = !S.sound; store.set("sound", S.sound); SFX.play("toggle"); renderMe(); };
+  $("#r-motion").onclick = () => { S.motion = !S.motion; store.set("motion", S.motion); applyTheme(); SFX.play("toggle"); renderMe(); };
+  $("#r-theme").onclick = () => openSheet(`<h2>外观</h2><p class="sub">浅色像白天的纸，深色像夜里的台灯</p><div class="list">${["auto", "light", "dark"].map((k) => `<button class="row press" data-k="${k}">${svg(k === "dark" ? "moon" : "sun", "lead")}<span class="k">${{ auto: "跟随系统", light: "浅色", dark: "深色" }[k]}</span>${S.theme === k ? `<span style="color:var(--role)">${svg("check", "go")}</span>` : ""}</button>`).join("")}</div>`, (s) => s.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => { S.theme = b.dataset.k; store.set("theme", S.theme); applyTheme(); SFX.play("toggle"); closeSheet(); renderMe(); }));
+  $("#r-dev").onclick = () => openSheet(`<h2>开发工具</h2><p class="sub">cccodroid 原本的家什都在这里，平时用不到</p><div class="list">${[["term", "终端"], ["file", "文件"], ["code", "git"], ["mem", "组件"], ["link", "插件与 MCP"], ["diary", "定时任务"]].map(([i, k]) => row(i, k)).join("")}</div>`);
+}
+
+// ── 输入框 ──
+const input = $("#input");
+input.addEventListener("input", () => { input.style.height = ""; input.style.height = Math.min(input.scrollHeight, 120) + "px"; syncSend(); });
+input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+$("#face").onclick = () => roleSheet(S.role);
+$("#more").onclick = () => openSheet(`<h2>演示</h2><p class="sub">原型里看看替班是什么样子</p><div class="list"><button class="row press" id="d-ho">${svg("moon", "lead")}<span class="k">${ROLES[S.role].name}额度用完<small>睡着，由下一位接班</small></span></button><button class="row press" id="d-wake">${svg("sun", "lead")}<span class="k">大家都醒了<small>交还给排第一的角色</small></span></button></div>`, (s) => {
+  s.querySelector("#d-ho").onclick = () => { closeSheet(); handover(); };
+  s.querySelector("#d-wake").onclick = () => { closeSheet(); wakeAll(); };
+});
+document.addEventListener("pointerdown", (e) => { if (e.target.closest(".press") && !e.target.closest(".tab,.chip,.send,.card,.swap,[data-a],.row,.proc-top,.day,.seg button,#more,#face")) SFX.play("tap"); }, true);
+
+// ── 启动 ──
+applyTheme(); buildTabs(); applyRole(); seedChat(); buildChips(); setStatus("", "在线");
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+(async () => {
+  const sp = $("#splash"), imgs = sp.querySelectorAll(".bloom img");
+  imgs.forEach((im) => im.src = art("icon/flower_" + im.dataset.k));
+  if (!S.motion || matchMedia("(prefers-reduced-motion: reduce)").matches) { sp.classList.add("out"); return; }
+  for (let i = 0; i < 3; i++) { imgs.forEach((im, j) => { im.style.transition = "opacity .35s, transform .5s var(--spring)"; im.style.opacity = j === i ? 1 : 0; im.style.transform = `scale(${.8 + i * .1})`; }); await wait(320); }
+  await wait(700); sp.classList.add("out");
+})();
+$("#splash").onclick = () => $("#splash").classList.add("out");
+</script>
