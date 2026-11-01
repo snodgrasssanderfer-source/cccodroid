@@ -15,3 +15,7 @@ Bundled third-party components:
 The developer toolkit (devkit) released alongside this project consists of
 unmodified Termux packages (path prefix rewritten in place), each distributed
 under its own license; see devkit.lock.json / SBOM.tsv in each devkit release.
+
+小克 (Xiaoke)
+Modified from cccodroid (https://github.com/greyoak111/cccodroid) by snodgrasssanderfer-source.
+Changes are listed in XIAOKE.md; the files added for Xiaoke are named xk*.

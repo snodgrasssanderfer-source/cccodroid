@@ -1,0 +1,15 @@
+/* 小克：在上游 style.css 之后加载。只覆盖变量和我们自己的面板，不动上游布局。 */
+#xk-entry { font-weight: 600; font-size: 15px; color: var(--accent); }
+#xk-panel { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .35); display: flex; align-items: center; justify-content: center; }
+#xk-panel.hidden { display: none; }
+#xk-panel .xk-box { background: var(--bg2); color: var(--fg); width: min(720px, 96vw); max-height: 90vh; border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+#xk-panel .xk-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+#xk-panel .xk-tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
+#xk-panel .xk-tab { border: 0; background: none; color: inherit; padding: 6px 10px; border-radius: 8px; white-space: nowrap; }
+#xk-panel .xk-tab.on { background: var(--accent); color: #fff; }
+#xk-panel .xk-body { padding: 12px 16px 20px; overflow-y: auto; }
+#xk-panel h3 { margin: 14px 0 6px; font-size: 15px; }
+#xk-panel .xk-in, #xk-panel textarea { width: 100%; box-sizing: border-box; margin: 4px 0 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+#xk-panel .xk-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+#xk-panel .xk-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+#xk-panel .xk-past { opacity: .6; }

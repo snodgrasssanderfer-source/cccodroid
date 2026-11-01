@@ -77,14 +77,14 @@ final class Tr {
 
     static synchronized String t(String zh) {
         String code = lang();
-        if ("zh".equals(code)) return zh;
+        if ("zh".equals(code)) return Xk.brand(zh);   // xk: 产品名
         if (dict == null) dict = load(code);
         String s = dict.get(zh);
         if (s == null && !"en".equals(code)) {
             if (en == null) en = load("en");
             s = en.get(zh);
         }
-        return s != null ? s : zh;
+        return Xk.brand(s != null ? s : zh);
     }
 
     static String f(String zh, Object... a) {

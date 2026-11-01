@@ -38,12 +38,12 @@ import org.json.JSONObject;
  */
 final class Updater {
     static final String TAG = "cccodroid-upd";
-    static final String REPO = "greyoak111/cccodroid";
+    static final String REPO = Xk.repo();   // xk: App 更新走我们自己的 Release
     /** 备用源：cccodroid.net 镜像了最近几个版本的 APK 和一份同形状的发布列表（dl/releases.json）。
      *  只在 GitHub 连不上 / 下载不顺时用；下来的 APK 照样核 sha256 和签名。工具包太大，没有镜像 */
-    static final String MIRROR = "https://cccodroid.net";
+    static final String MIRROR = "";   // xk: 上游镜像只有上游的 APK
     /** 同一份 APK 与发布列表的直连线路（不经 Cloudflare；国内有的网络只通其中一条） */
-    static final String DL = "https://dl.cccodroid.net";
+    static final String DL = "";   // xk: 同上
     /** 工具包与本 APK 的接口版本：lock.json 里的 compat（缺省 1）对不上就不装，防止新工具包配旧外壳 */
     static final int DEVKIT_COMPAT = 1;
     static final String CH = "updates";
@@ -715,13 +715,7 @@ final class Updater {
 
     /** 发布列表地址。home/.config/cccodroid/update-feed 里写了地址就用它（测试更新流程用，形状同 GitHub API）。
      *  只在可调试的包里认：正式包里应用身份的任何程序都能写这个文件，拿它把更新检查指到别处（审查 v0.5.9 B1） */
-    private String feed() {
-        File f = new File(env.home, ".config/cccodroid/update-feed");
-        boolean debuggable = (ctx.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-        try { if (debuggable && f.isFile()) { String u = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim(); if (!u.isEmpty()) return u; } }
-        catch (Exception ignored) {}
-        return "https://api.github.com/repos/" + REPO + "/releases?per_page=30";
-    }
+    private String feed() { return Xk.feed(); }   // xk: 可在设置页改的发布源
 
     /** 自动模式的规则：见类注释 */
     private void autoApply() {
