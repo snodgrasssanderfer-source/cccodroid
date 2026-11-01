@@ -3,7 +3,7 @@
 规矩看 CLAUDE.md，改过的上游文件看 XIAOKE.md，人设、世界书和调研资料在 `xk/`。每轮结束时更新这份。
 
 ## 版本
-- 代码里是 **0.2.0**（versionCode 3），还没发版；已发布的最新是 **v0.1.1**（versionCode 2），对应提交 `522330c`（`claude/phase1-20261101` 分支）。Release 里有 `cccodroid-36.apk` 和 `cccodroid.apk`。
+- 已发布 **v0.2.0**（versionCode 3，界面重做），2026-11-01 由 `claude/ui-20261101` 分支的 `3f72cef` 发出，两个 APK 各约 21 MB。之前是 v0.1.1。，对应提交 `522330c`（`claude/phase1-20261101` 分支）。Release 里有 `cccodroid-36.apk` 和 `cccodroid.apk`。
 - 底座：11-01 同步到上游 `6aa2610`（v0.5.18 之后又两批审查修复），fork 的 main 已快进。
 - 网关测试：483 项。上游新测试 B20 在 CI 上挂是因为测试用的假 PREFIX 里没有 git、sleep，已在 scripts/test.mjs 补上（登记在 XIAOKE.md）；B22 要 `yq`，GitHub 的机器上有，云端容器里没有，所以只在容器里失败。
 
@@ -17,7 +17,7 @@
 7. 暖橙色外观（浅色、深色）。
 8. GitHub 自动打包、签名、发布。
 
-## 界面重做：已写进 App，0.2.0 待发版（2026-11-01）
+## 界面重做：v0.2.0 已发布（2026-11-01），等主人真机反馈
 - 代码只在 `gateway/web/xk.js`、`xk.css`，没改上游的界面文件；做法：
   - 配色：`xk.js` 的 PAL 表（三人 × 浅深）写成上游变量表（`--bg`、`--fg`、`--accent`…），选择器 `html[data-xk-role][data-theme][data-skin]` 压过上游各外观，所以上游每一页都跟着换；外壳的状态栏走「拾色」通道（`CCApp.skinPal` + `skinPref("shise")`）。设置里的「风格」一行隐藏，存的别的风格会改回原生。
   - 换人：View Transitions 从头像圆形铺开（820ms）+ bloom 音效；不支持时颜色变量（已注册 `<color>`）渐变。
