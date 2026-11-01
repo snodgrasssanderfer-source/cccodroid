@@ -13,3 +13,7 @@
 #xk-panel .xk-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 #xk-panel .xk-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
 #xk-panel .xk-past { opacity: .6; }
+.xk-role { border: 1px solid var(--line); background: var(--bg3); color: var(--fg); border-radius: 999px; padding: 2px 10px; font-size: 13px; margin: 0 6px; white-space: nowrap; }
+.xk-menu { position: fixed; z-index: 70; background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 24px var(--shadow); }
+.xk-menu button { border: 0; background: none; color: var(--fg); text-align: left; padding: 8px 12px; border-radius: 8px; }
+.xk-menu button:hover { background: var(--bg3); }
