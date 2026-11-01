@@ -441,8 +441,13 @@
       box.innerHTML = row("Antigravity 还没装", "哈基米靠它用你的 Google 账号说话。从官方渠道下载，按官方清单核对 sha512", '<button class="xk-mini xk-press" data-a="install">下载安装</button>');
     } else if (a.auth) {
       const opts = [{ id: "", label: "跟随 agy 的默认" }, ...a.models];
-      box.innerHTML = row("Google 账号", `已登录 · agy ${esc(a.version)}`, '<button class="xk-mini xk-press" data-a="relogin">重新登录</button>') +
+      // 登录是好的，但 Google 要求先验证账号（#2）：验证链接交给系统浏览器，验证完点「验证好了」，下一条消息再试
+      const v = a.verify;
+      box.innerHTML = (v ? row("Google 要求先验证这个账号", "验证之前哈基米用不了 Gemini，也不会替班。验证完回来点「验证好了」",
+        (v.url ? '<button class="xk-mini xk-press" data-a="verify">去验证</button><button class="xk-mini xk-press" data-a="copy">复制链接</button>' : "") + '<button class="xk-mini xk-press" data-a="verified">验证好了</button>') : "") +
+        row("Google 账号", `已登录 · agy ${esc(a.version)}`, '<button class="xk-mini xk-press" data-a="relogin">重新登录</button>') +
         `<div class="xk-row stack"><span class="k">哈基米用的模型<small>换了从下一条消息起生效</small></span><span class="xk-chips">${opts.map((m) => `<button class="xk-mini xk-press${(a.model || "") === m.id ? " on" : ""}" data-m="${esc(m.id)}">${esc(m.label)}</button>`).join("")}</span></div>`;
+      box.dataset.url = (v && v.url) || "";
     } else {
       const L = a.login || {};
       if (L.stage === "url" || L.stage === "verifying") {
@@ -464,7 +469,8 @@
         const act = b.dataset.a;
         if (act === "install") { b.textContent = "下载中…"; b.disabled = true; const x = await api("/api/xk/agy/install", { method: "POST" }); toast(`agy ${x.version} 装好了`, "接着登录 Google 账号"); return agyPanel(box, true); }
         if (act === "login" || act === "relogin") { b.textContent = "准备中…"; b.disabled = true; await api("/api/xk/agy/login", { method: "POST" }); return agyPanel(box); }
-        if (act === "open") return openUrl(box.dataset.url);
+        if (act === "open" || act === "verify") return openUrl(box.dataset.url);
+        if (act === "verified") { await api("/api/xk/agy/verified", { method: "POST" }); toast("好，再试试", "给哈基米发一条消息；还不行会再提示", sprite("hachimi", "happy")); return agyPanel(box); }
         if (act === "copy") { try { await navigator.clipboard.writeText(box.dataset.url); toast("链接复制好了", "到浏览器里粘贴打开"); } catch { window.prompt?.("复制这个链接", box.dataset.url); } return; }
         if (act === "code") { const code = $("#xk-agy-code", box).value.trim(); if (!code) return; await api("/api/xk/agy/login/code", { method: "POST", body: { code } }); return agyPanel(box); }
       } catch (err) { fail(err); agyPanel(box); }
