@@ -10,7 +10,7 @@ import { findSessionFile } from "./sessions.mjs";
 import { roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { load, remove, today, update } from "./xk-memstore.mjs";
-import { INTERNAL, STATE, addRoute, httpError, internalRun, json, projectOf, saveState } from "./xk-core.mjs";
+import { ENGINE_RUN, INTERNAL, STATE, addRoute, httpError, internalRun, json, projectOf, saveState } from "./xk-core.mjs";
 
 // 停多久算「这段聊完了」：太短会把一段话拆成好几次整理，太长主人第二天回来时还没记
 const IDLE_MS = 10 * 60 * 1000;
@@ -34,7 +34,7 @@ function arm(sid, at) {
 
 export function consolidate(sid) {
   const role = roleOfSession(sid);
-  if (!role || role.engine !== "claude") { delete STATE.memDirty[sid]; saveState(); return null; }   // 哈基米的整理由 xk-agy 自己做
+  if (!role) { delete STATE.memDirty[sid]; saveState(); return null; }
   const since = STATE.memDone[sid] || 0;
   const talk = turns(sid, since);
   if (!talk.some((t) => t.role === "user")) { delete STATE.memDirty[sid]; saveState(); return null; }
@@ -45,10 +45,16 @@ export function consolidate(sid) {
     `2. 把以后用得上的事实、发生的事、计划、你自己的看法用 remember 记下来，日期都写成具体日期（"昨天""下周"换算好），who 写清是谁的事或看法。\n` +
     `3. 和旧记忆冲突、或事情变了的：记新的，并把旧记忆的 id 放进 ends。\n` +
     `4. 只记对话里真有的；闲聊客套、你刚才已经记过的就不用再记。做完回复"整理好了"。\n\n---\n${text}`;
-  const item = internalRun("memory", {
+  let item;
+  if (role.engine === "claude") item = internalRun("memory", {
     message, projectId: projectOf(role.id), permissionMode: "default",
     allowedTools: ["mcp__xk-memory__remember", "mcp__xk-memory__recall", "mcp__xk-memory__forget"], timeoutMs: 5 * 60000,
   }, { sid, until, role: role.id });
+  else {
+    item = { id: "xa" + Date.now().toString(36) + "m", message, sessionId: null };
+    INTERNAL.set(item.id, { kind: "memory", sid, until, role: role.id });
+    ENGINE_RUN[role.engine](item, { internal: true });
+  }
   log(`🧠 整理记忆：${role.name} 会话 ${String(sid).slice(0, 8)}（${talk.length} 段）`);
   return item;
 }

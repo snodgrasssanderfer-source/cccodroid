@@ -8,9 +8,10 @@ import { publish } from "./bus.mjs";
 import { enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
-import { PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
+import "./xk-agy.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {
@@ -50,6 +51,16 @@ addRoute(async (req, res, u, p) => {
     if (ctx.role && STATE.pending[ctx.role]) { ctx.carry = STATE.pending[ctx.role]; delete STATE.pending[ctx.role]; saveState(); }
   } else ctx.role = roleOfSession(b.sessionId)?.id || null;
   for (const plan of PLANNERS) await plan(b, ctx);
+  const role = roleById(ctx.role);
+  if (role && role.engine !== "claude") {
+    // 哈基米这类不走 Claude Code 的角色：交给它自己的驱动，界面收到的事件和普通轮次一样
+    if (!String(ctx.body.message || "").trim()) return sendJson(res, 400, { error: "empty message" });
+    const item = { id: "xa" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: String(ctx.body.message), sessionId: ctx.body.sessionId || null };
+    ctx.onQueued?.(item);
+    if (ctx.notice) publish({ type: "xk", op: "handover", runId: item.id, ...ctx.notice });
+    ENGINE_RUN[role.engine](item, { carry: ctx.carry ? carryText(ctx.carry.fromSid, ctx.carry.fromRole, role.id, ctx.carry.reason) : "" });
+    return sendJson(res, 200, { ok: true, id: item.id, injected: false, started: true, xk: ctx.notice });
+  }
   if (!ctx.carry) return routeQueue(fakeReq(req, JSON.stringify(ctx.body)), res, u, p);
   // 要带接班说明：自己入队，拿到 run 号立刻写说明（startRun 起进程前还有好几次 await，一定赶得上）
   if (!String(ctx.body.message || "").trim()) return sendJson(res, 400, { error: "empty message" });

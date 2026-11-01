@@ -143,8 +143,14 @@
         <button class="btn sm ghost" data-use="${r.id}">换成${esc(r.name)}</button></div></div>`).join("") +
       `<h3>世界书</h3><p class="tiny">三个角色共用。纯文本、Markdown 或 SillyTavern 世界书 JSON。</p>
        <label class="btn sm">导入世界书<input type="file" accept=".txt,.md,.json" hidden id="xk-wb"></label>
+       <h3>哈基米（Antigravity CLI）</h3><div id="xk-agy" class="tiny">查询中…</div>
        <h3>接班顺序</h3><p class="tiny">额度用完时按这个顺序换到下一个角色。</p>
        <input class="xk-in" id="xk-order" value="${esc(ROLES.order.join(", "))}"><button class="btn sm" id="xk-order-save">保存顺序</button>`;
+    api("/api/xk/agy").then((a) => {
+      $("#xk-agy", body).innerHTML = a.installed
+        ? `已装：${esc(a.version)}（${esc(a.path)}）。${a.auth ? "" : "<b>还没登录或登录过期。</b>"}登录：顶栏 ⋯ → 终端，输入 <code>agy</code> 回车，按提示用 Google 账号授权；登录只在 agy 自己的流程里完成，小克不读也不存凭据。 <button class="btn sm ghost" id="xk-agy-up">重新下载</button>`
+        : `还没装。从官方渠道下载（${esc(a.platform)}），按官方清单核对 sha512。 <button class="btn sm" id="xk-agy-up">下载安装</button>`;
+    }).catch((e) => { $("#xk-agy", body).textContent = e.message; });
     body.onchange = async (e) => {
       const f = e.target.files && e.target.files[0];
       if (!f) return;
@@ -158,6 +164,10 @@
     body.onclick = (e) => {
       const u = e.target.dataset && e.target.dataset.use;
       if (u) { $("#xk-panel").classList.add("hidden"); switchRole(u).catch(fail); }
+      if (e.target.id === "xk-agy-up") {
+        e.target.disabled = true; e.target.textContent = "下载中…";
+        api("/api/xk/agy/install", { method: "POST" }).then((r) => { toast(`agy ${r.version} 装好了`); openPanel("roles"); }).catch((err) => { fail(err); openPanel("roles"); });
+      }
       if (e.target.id === "xk-order-save") api("/api/xk/order", { method: "PUT", body: { order: $("#xk-order", body).value.split(/[,，\s]+/).filter(Boolean) } }).then(() => toast("已保存")).catch(fail);
     };
   });

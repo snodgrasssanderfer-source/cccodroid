@@ -50,6 +50,8 @@ export const roleOfProject = (pid) => ROLES.find((r) => STATE.projects[r.id] ===
 
 // 非 Claude Code 的角色引擎（哈基米的 agy）登记自己能不能用：ENGINES.agy = () => true/false
 export const ENGINES = {};
+// 非 Claude Code 引擎怎么跑一轮：ENGINE_RUN.agy(item, { internal, carry })
+export const ENGINE_RUN = {};
 
 // planners(b, ctx) 可以改 ctx：{ body, role, carry: {fromSid, fromRole, reason}, notice, onQueued(item) }。接班模块往这里加
 export const PLANNERS = [];

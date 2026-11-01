@@ -8,13 +8,14 @@ import { isLoginMode } from "./models.mjs";
 import { RATE_LIMITS } from "./stream.mjs";
 import { projectById } from "./projects.mjs";
 import { ROLES, roleById, roleOfDir } from "./xk-roles.mjs";
-import { ENGINES, INTERNAL, PLANNERS, STATE, carryText, projectOf, saveState, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, ENGINES, INTERNAL, PLANNERS, STATE, carryText, projectOf, saveState, writeCarry } from "./xk-core.mjs";
 
 STATE.originRun ||= {};   // run 号 → { from, reason }：接班开的新会话拿到会话号后转进 STATE.origin
 
 // 不知道什么时候重置（第三方接口的 429 不带重置时间）时，过一小时再让原角色试一次
 const RETRY_MS = 60 * 60 * 1000;
-const LIMIT_TEXT = /\b429\b|rate[ _-]?limit|usage limit|额度/i;
+// RESOURCE_EXHAUSTED / quota：agy（Gemini）额度用完时的说法
+const LIMIT_TEXT = /\b429\b|rate[ _-]?limit|usage limit|resource[ _-]?exhausted|quota|额度/i;
 
 const errors = new Map();   // run 号 → 这一轮报的错
 onPublish((ev) => {
@@ -68,8 +69,10 @@ const fmt = (t) => new Date(t).toLocaleString("zh-CN", { hour12: false, month: "
 
 /** 起一个接班轮：新角色的项目里开新会话，原话再发一遍，接班说明按 run 号注入一次 */
 function handOver(fromRole, toRole, fromSid, message, reason) {
-  const item = enqueue({ message, projectId: projectOf(toRole.id) });
-  writeCarry(toRole.id, item.id, carryText(fromSid, fromRole.id, toRole.id, reason));
+  const carry = carryText(fromSid, fromRole.id, toRole.id, reason);
+  let item;
+  if (toRole.engine === "claude") { item = enqueue({ message, projectId: projectOf(toRole.id) }); writeCarry(toRole.id, item.id, carry); }
+  else { item = { id: "xa" + Date.now().toString(36), message, sessionId: null }; setImmediate(() => ENGINE_RUN[toRole.engine](item, { carry })); }
   STATE.originRun[item.id] = { from: fromRole.id, reason, at: Date.now() };
   saveState();
   publish({ type: "xk", op: "handover", runId: item.id, from: fromRole.id, to: toRole.id, reason, fromSession: fromSid });
