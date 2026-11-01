@@ -3,7 +3,7 @@
 规矩看 CLAUDE.md，改过的上游文件看 XIAOKE.md，人设、世界书和调研资料在 `xk/`。每轮结束时更新这份。
 
 ## 版本
-- 已发布 **v0.1.1**（versionCode 2），对应提交 `522330c`（`claude/phase1-20261101` 分支）。Release 里有 `cccodroid-36.apk` 和 `cccodroid.apk`。
+- 代码里是 **0.2.0**（versionCode 3），还没发版；已发布的最新是 **v0.1.1**（versionCode 2），对应提交 `522330c`（`claude/phase1-20261101` 分支）。Release 里有 `cccodroid-36.apk` 和 `cccodroid.apk`。
 - 底座：fork 的 main 停在上游 v0.5.17（`88d7b8d`），上游已经到 v0.5.18（`5bd7f66`），还没同步。
 - 网关测试（上游的加上 xk-*）：452 项，失败 0，跳过 1。
 
@@ -17,7 +17,19 @@
 7. 暖橙色外观（浅色、深色）。
 8. GitHub 自动打包、签名、发布。
 
-## 正在做：界面重做（2026-11-01 和主人定的）
+## 界面重做：已写进 App，0.2.0 待发版（2026-11-01）
+- 代码只在 `gateway/web/xk.js`、`xk.css`，没改上游的界面文件；做法：
+  - 配色：`xk.js` 的 PAL 表（三人 × 浅深）写成上游变量表（`--bg`、`--fg`、`--accent`…），选择器 `html[data-xk-role][data-theme][data-skin]` 压过上游各外观，所以上游每一页都跟着换；外壳的状态栏走「拾色」通道（`CCApp.skinPal` + `skinPref("shise")`）。设置里的「风格」一行隐藏，存的别的风格会改回原生。
+  - 换人：View Transitions 从头像圆形铺开（820ms）+ bloom 音效；不支持时颜色变量（已注册 `<color>`）渐变。
+  - 底栏和四页（角色、记忆、日记、我的）是 `xk.js` 自己画的层，上游整页 / 设置 / 终端 / 抽屉盖上来时底栏让开（`html.xk-cover`）。
+  - 顶栏：头像（点开角色卡）、名字、新对话；上游的 ⋯ 工具条藏起来，开发工具在「我的」里。
+  - 跑着时新长出的思考块自动展开，一轮结束收起；输入框上方的小人按网关事件（run_start / thinking / tool_use / delta / run_end）换状态。
+  - 音效 Web Audio 合成，「我的」里能关（`localStorage xk.sound`），动效同理（`xk.motion`）。
+- 图标：`android/res/mipmap-*` 换成小橙花。标题字体站酷小薇已打包（OFL，NOTICE 已写）。
+- 验证：本机起真实网关 + 无头浏览器跑过五栏、换人、深色，无报错；网关测试 452 项失败 0。**还没在真机上装过**。
+- 本机看界面：临时目录里设好 CCAPP_HOME / HOME / CCAPP_WORKSPACE / CCAPP_PREFIX，`node gateway/server.mjs 8795`，浏览器开 `http://127.0.0.2:8795/?t=<home/.gateway-token>`。
+
+## 原定的界面方向（2026-11-01 和主人定的）
 - **不照搬旧版小克的美术**：旧版大部分被主人否决了，界面从零设计。
 - **底部五栏**：聊天（第一）、角色、记忆、日记、我的。开发功能（终端、文件、git、组件、插件、定时任务）收进「我的」里的二级入口，代码不删。
 - **agent 功能保留**：聊天里的思维过程和工具步骤不能隐藏，做成颜色区分、可以折叠的区域。
