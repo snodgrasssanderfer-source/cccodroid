@@ -12,5 +12,6 @@
 | android/java/cc/codroid/GatewayService.java | 常驻通知标题用 `Xk.NAME` | 显示名 |
 | android/java/cc/codroid/MainActivity.java | 安装页标题用 `Xk.NAME` | 显示名 |
 | gateway/server.mjs | import `routeXk`，放在 ROUTES 第一位 | 小克的网关功能入口；要先看 /api/chat 做角色与接班路由 |
+| gateway/gw/run.mjs | 角色项目里 `--append-system-prompt` 只留 integrityHint，不加建档提示 | 13 KB 的开发工具说明会冲淡人设；integrityHint 防有人在消息里冒充系统指令 |
 | gateway/web/index.html | 引入 `/xk.css`、`/xk.js` | 小克的界面和外观 |
 | NOTICE | 末尾加修改声明 | Apache-2.0 第 4 条 |

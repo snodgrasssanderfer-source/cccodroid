@@ -26,6 +26,7 @@ import { SPOOF_NOTE, checkSession, integrityHint, integrityNote, neutralizeMarke
 import { recordExtra } from "./lineage-store.mjs";
 import { refNote, refNoteSync } from "./merge.mjs";
 import { ensureManagedBridge } from "./managed-bridge.mjs";
+import { inXkRole } from "./xk-roles.mjs";   // xk: 角色项目不追加开发提示
 
 // 必须由人回答的工具：全部放行也照问（问题、计划审批）
 const HUMAN_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
@@ -200,8 +201,9 @@ export async function startRun(item) {
   const localHint = !P.local ? "" : lcust && lcust.systemPrompt ? lcust.systemPrompt
     : `You are ${model}, a small open model running locally on the user's Android device through llama.cpp (not Claude). Reply in the user's language; keep answers short.`;
   // 建档（脉络）：常驻规则 + 这一轮该不该先建档（见 archive.mjs）
-  const arch = P.local ? null : await archiveHint(run.sessionId).catch(() => null);
-  const appendPrompt = [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n");
+  const xkRole = inXkRole(cwd);   // xk
+  const arch = P.local || xkRole ? null : await archiveHint(run.sessionId).catch(() => null);
+  const appendPrompt = xkRole ? integrityHint() : [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n");
   if (appendPrompt) argv.push("--append-system-prompt", appendPrompt);
   // 子代理（连孙代理）统一的联络规矩：用 agentId 发消息、summary 写事由、长内容落文件只发路径（见 agents.mjs）
   if (!P.local && !message.trim().startsWith("/")) argv.push("--append-subagent-system-prompt", SUBAGENT_HINT + "\n\n" + integrityHint());

@@ -81,6 +81,86 @@
       .then((r) => toast("已保存：" + r.feed)).catch(fail);
   });
 
+
+  // ── 角色：顶栏显示这个会话是谁，点开可以换 ──
+  let ROLES = null;
+  async function loadRoles() { ROLES = await api("/api/xk/roles"); return ROLES; }
+  const roleName = (id) => (ROLES && ROLES.roles.find((r) => r.id === id) || {}).name || id || "—";
+  let chipSid;
+  async function paintChip(force) {
+    const cc = window.__cc;
+    if (!cc) return;
+    const sid = cc.view.sessionId || null;
+    if (!force && sid === chipSid && $("#xk-role")) return;
+    chipSid = sid;
+    let chip = $("#xk-role");
+    if (!chip) {
+      const tb = $("#title-block");
+      if (!tb) return;
+      chip = document.createElement("button");
+      chip.id = "xk-role"; chip.className = "xk-role";
+      chip.onclick = (e) => { e.stopPropagation(); roleMenu(chip); };
+      tb.after(chip);
+    }
+    if (!ROLES) await loadRoles();
+    const r = await api("/api/xk/session-role" + (sid ? "?sid=" + encodeURIComponent(sid) : ""));
+    chip.textContent = roleName(r.role || r.active) + (r.origin ? "（接班）" : "");
+    chip.title = r.origin ? `从${roleName(r.origin.from)}接过来的：${r.origin.reason}` : "当前角色，点一下可以换";
+  }
+  function roleMenu(anchor) {
+    $("#xk-role-menu")?.remove();
+    const m = document.createElement("div");
+    m.id = "xk-role-menu"; m.className = "xk-menu";
+    m.innerHTML = ROLES.roles.map((r) => `<button data-id="${r.id}">${esc(r.name)}${r.cooldown ? "（额度未恢复）" : ""}${r.imported ? "" : "（未导入人设）"}</button>`).join("");
+    document.body.appendChild(m);
+    const b = anchor.getBoundingClientRect();
+    m.style.top = b.bottom + 4 + "px"; m.style.left = Math.max(4, b.left) + "px";
+    m.onclick = async (e) => {
+      const id = e.target.closest("button")?.dataset.id;
+      m.remove();
+      if (id) await switchRole(id).catch(fail);
+    };
+    setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }), 0);
+  }
+  /** 手动换角色：开一个新会话落到那个角色，第一条消息带上刚才那段对话（网关 /api/xk/switch） */
+  async function switchRole(id) {
+    const cc = window.__cc, from = cc.view.sessionId || null;
+    const r = await api("/api/xk/switch", { method: "POST", body: { to: id, fromSessionId: from } });
+    cc.newConversation();
+    cc.view.projectId = r.projectId;
+    await loadRoles(); paintChip(true);
+    toast(`换成${roleName(id)}了` + (from ? "，下一条消息会带上刚才的对话" : ""));
+  }
+  XK.switchRole = switchRole;
+  setInterval(() => paintChip().catch(() => {}), 1000);
+
+  XK.tab("roles", "角色", async (body) => {
+    await loadRoles();
+    body.innerHTML = `<p class="tiny">人设文件是 .txt：「【一】system_prompt」「【二】post_history_instructions」「【三】mes_example」三段各占一行开头；没有这些标记就整篇当人设。内容只存在手机里。</p>` +
+      ROLES.roles.map((r) => `<div class="xk-card"><div class="xk-row"><b>${esc(r.name)}</b><span class="tiny">${r.id === ROLES.active ? "当前" : ""}
+        ${r.imported ? `人设 ${r.personaChars} 字` : "未导入人设"} · post_history ${r.postHistoryChars} 字${r.cooldown ? ` · 额度未恢复（${new Date(r.cooldown.until).toLocaleString()}）` : ""}</span></div>
+        <div class="xk-row"><label class="btn sm">导入人设<input type="file" accept=".txt,text/plain" hidden data-persona="${r.id}"></label>
+        <button class="btn sm ghost" data-use="${r.id}">换成${esc(r.name)}</button></div></div>`).join("") +
+      `<h3>世界书</h3><p class="tiny">三个角色共用。纯文本、Markdown 或 SillyTavern 世界书 JSON。</p>
+       <label class="btn sm">导入世界书<input type="file" accept=".txt,.md,.json" hidden id="xk-wb"></label>
+       <h3>接班顺序</h3><p class="tiny">额度用完时按这个顺序换到下一个角色。</p>
+       <input class="xk-in" id="xk-order" value="${esc(ROLES.order.join(", "))}"><button class="btn sm" id="xk-order-save">保存顺序</button>`;
+    body.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const text = await f.text();
+      try {
+        if (e.target.dataset.persona) { const r = await api(`/api/xk/roles/${e.target.dataset.persona}/persona`, { method: "PUT", body: { text } }); toast(`已导入：人设 ${r.personaChars} 字，post_history ${r.postHistoryChars} 字`); }
+        else if (e.target.id === "xk-wb") { const r = await api("/api/xk/worldbook", { method: "PUT", body: { text } }); toast(`世界书已导入：${r.chars} 字`); }
+        openPanel("roles");
+      } catch (err) { fail(err); }
+    };
+    body.onclick = (e) => {
+      const u = e.target.dataset && e.target.dataset.use;
+      if (u) { $("#xk-panel").classList.add("hidden"); switchRole(u).catch(fail); }
+      if (e.target.id === "xk-order-save") api("/api/xk/order", { method: "PUT", body: { order: $("#xk-order", body).value.split(/[,，\s]+/).filter(Boolean) } }).then(() => toast("已保存")).catch(fail);
+    };
+  });
   const boot = () => { mountEntry(); if (!$("#xk-entry")) setTimeout(boot, 500); };
   boot();
 })();
