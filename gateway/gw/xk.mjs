@@ -8,7 +8,7 @@ import { publish } from "./bus.mjs";
 import { START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
-import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, resumeSid, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
 import { effectiveModel, routeSessModel } from "./sessmodel.mjs";
@@ -39,11 +39,8 @@ function fakeReq(req, body) {
   const r = Readable.from([Buffer.from(body)]);
   return Object.assign(r, { method: req.method, url: req.url, headers: { ...req.headers, "content-length": String(Buffer.byteLength(body)) }, socket: req.socket, ccAuthed: req.ccAuthed });
 }
-addRoute(async (req, res, u, p) => {
-  if (p !== "/api/chat" || req.method !== "POST") return NEXT;
-  const raw = await readBody(req);
-  let b;
-  try { b = JSON.parse(raw || "{}"); } catch { return sendJson(res, 400, { error: "bad json" }); }
+/** 这条消息该落到哪个角色、哪段会话、要不要带接班说明（单拿出来，测试直接调） */
+export async function planChat(b) {
   const ctx = { body: { ...b }, role: null, carry: null, notice: null };
   if (!b.sessionId && !b.follow) {
     // 新会话首条带的模型选了另一家（输入栏里换了型号）：模型和人设绑定，落到那家对应的角色
@@ -52,15 +49,30 @@ addRoute(async (req, res, u, p) => {
     // 新会话没指定项目：落到当前角色
     if (!ctx.body.projectId && projectOf(STATE.active)) ctx.body.projectId = projectOf(STATE.active);
     ctx.role = roleOfProject(ctx.body.projectId)?.id || null;
-    // 主人手动切过来的：带上切换前那段对话
-    if (ctx.role && STATE.pending[ctx.role]) { ctx.carry = STATE.pending[ctx.role]; delete STATE.pending[ctx.role]; saveState(); }
+    // 主人手动切过来的：带上切换前那段对话；这段新会话也记下从哪来的，换回去时好接着原来那段（#1）
+    const pend = ctx.role && STATE.pending[ctx.role];
+    if (pend && !pend.resumeSid) {
+      ctx.carry = pend; delete STATE.pending[ctx.role]; saveState();
+      if (pend.fromSid) ctx.onQueued = (item) => { STATE.originRun[item.id] = { from: pend.fromRole, fromSid: pend.fromSid, reason: pend.reason, at: Date.now() }; saveState(); };
+    }
   } else {
     // 只带 follow（新会话还没拿到会话号时发的下一条）：前一轮是哈基米的，就是她那个会话
     const sid = b.sessionId || (b.follow ? sidOfAgyRun(b.follow) : null);
     if (sid && !b.sessionId) { ctx.body.sessionId = sid; ctx.body.follow = null; }
     ctx.role = roleOfSession(sid)?.id || null;
+    // 手动换回原角色、界面打开了她原来那段：回来后的第一条带上替班那会儿的对话
+    const pend = ctx.role && STATE.pending[ctx.role];
+    if (pend && pend.resumeSid === sid) { ctx.carry = pend; delete STATE.pending[ctx.role]; saveState(); }
   }
   for (const plan of PLANNERS) await plan(b, ctx);
+  return ctx;
+}
+addRoute(async (req, res, u, p) => {
+  if (p !== "/api/chat" || req.method !== "POST") return NEXT;
+  const raw = await readBody(req);
+  let b;
+  try { b = JSON.parse(raw || "{}"); } catch { return sendJson(res, 400, { error: "bad json" }); }
+  const ctx = await planChat(b);
   const role = roleById(ctx.role);
   if (role && role.engine !== "claude") {
     // 哈基米这类不走 Claude Code 的角色：交给它自己的驱动，界面收到的事件和普通轮次一样
@@ -68,14 +80,14 @@ addRoute(async (req, res, u, p) => {
     const item = { id: "xa" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: String(ctx.body.message), sessionId: ctx.body.sessionId || null };
     ctx.onQueued?.(item);
     if (ctx.notice) publish({ type: "xk", op: "handover", runId: item.id, ...ctx.notice });
-    ENGINE_RUN[role.engine](item, { carry: ctx.carry ? carryText(ctx.carry.fromSid, ctx.carry.fromRole, role.id, ctx.carry.reason) : "" });
+    ENGINE_RUN[role.engine](item, { carry: ctx.carry ? carryText(ctx.carry.fromSid, ctx.carry.fromRole, role.id, ctx.carry.reason, ctx.carry.back) : "" });
     return sendJson(res, 200, { ok: true, id: item.id, injected: false, started: true, xk: ctx.notice });
   }
   if (!ctx.carry) return routeQueue(fakeReq(req, JSON.stringify(ctx.body)), res, u, p);
   // 要带接班说明：自己入队，拿到 run 号立刻写说明（startRun 起进程前还有好几次 await，一定赶得上）
   if (!String(ctx.body.message || "").trim()) return sendJson(res, 400, { error: "empty message" });
   const item = enqueue({ ...ctx.body, internal: false, auto: undefined });
-  writeCarry(ctx.role, item.id, carryText(ctx.carry.fromSid, ctx.carry.fromRole, ctx.role, ctx.carry.reason));
+  writeCarry(ctx.role, item.id, carryText(ctx.carry.fromSid, ctx.carry.fromRole, ctx.role, ctx.carry.reason, ctx.carry.back));
   ctx.onQueued?.(item);
   if (ctx.notice) publish({ type: "xk", op: "handover", runId: item.id, ...ctx.notice });
   return sendJson(res, 200, { ok: true, id: item.id, injected: !!item.injected, started: RUNS.has(item.id), xk: ctx.notice });
@@ -96,12 +108,14 @@ START_GUARDS.push((q) => {
 
 // ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（开新会话，带上这段对话），原会话不动 ──
 const roleOfProvider = (pid) => (pid ? ROLES.find((r) => r.provider === pid) || null : null);
-function switchTo(to, fromSessionId, reason) {
+// 从接班会话换回原角色：resume 是她原来那段的会话号，界面打开它接着聊（#1）；没有就照旧新开
+export function switchTo(to, fromSessionId, reason) {
   STATE.active = to;
   const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
-  if (fromSessionId && fromRole !== to) STATE.pending[to] = { fromSid: fromSessionId, fromRole, reason };
+  const resume = fromSessionId && fromRole !== to ? resumeSid(fromSessionId, to) : null;
+  if (fromSessionId && fromRole !== to) STATE.pending[to] = resume ? { fromSid: fromSessionId, fromRole, reason: "主人把你换了回来", back: true, resumeSid: resume } : { fromSid: fromSessionId, fromRole, reason };
   saveState();
-  return { ok: true, active: to, projectId: projectOf(to) };
+  return { ok: true, active: to, projectId: projectOf(to), resume };
 }
 addRoute(async (req, res, u, p) => {
   if (p !== "/api/session-model" || req.method !== "POST") return NEXT;
