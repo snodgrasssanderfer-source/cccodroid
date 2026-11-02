@@ -239,3 +239,6 @@ html.xk #side-nav, html.xk #side-new, html.xk #side-acct { display: none; }
 .sr-g.xk-sg { display: flex; align-items: center; gap: 6px; color: var(--c); }
 .sr-g.xk-sg img { width: 18px; height: 18px; }
 .sr-item .xk-pin { font-size: 11px; color: var(--accent); margin-inline-end: 6px; }
+
+/* 「+」菜单去重（主人 11-02 定的）：新会话在顶栏，用量在我的，配置 / MCP / 子代理 / 能力在我的 → 开发者 */
+html.xk #sheet .sheet-item:is([data-act="new"], [data-act="cost"], [data-act="usage"], [data-act="config"], [data-act="mcp"], [data-act="agents"], [data-act="caps"]) { display: none; }
