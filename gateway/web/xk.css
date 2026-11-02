@@ -248,3 +248,9 @@ html.xk #sheet .sheet-item:is([data-act="new"], [data-act="cost"], [data-act="us
 .xk-help img { display: block; width: min(100%, 300px); aspect-ratio: 3 / 2; margin: 0 auto 4px; object-fit: contain; }
 .xk-help h3 { font: 400 19px var(--xk-title); letter-spacing: .03em; margin: 0 0 6px; }
 .xk-help p { margin: 0; font-size: 14px; line-height: 1.85; color: var(--fg2); }
+
+/* 上游整页盖住聊天顶栏，标题行前一个返回 */
+html.xk #pages { top: 0; z-index: 40; padding-top: var(--safe-tt, env(safe-area-inset-top, 0px)); }
+.xk-pback { flex: none; margin-inline-start: -8px; }
+html.xk #pages .xk-pback svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round !important; }
+.xk-pbar { margin: 0 0 4px !important; }

@@ -352,7 +352,25 @@
   addEventListener("resize", movePill);
   // 上游的整页、设置、终端、文件这些盖上来时，底栏让开
   const COVER = "#pages:not(.hidden), #set-ov:not(.hidden), #term:not(.hidden), #files:not(.hidden), #viewer:not(.hidden), #git:not(.hidden), #drawer:not(.hidden)";
-  setInterval(() => { const c = !!document.querySelector(COVER); if (root.classList.contains("xk-cover") !== c) root.classList.toggle("xk-cover", c); }, 300);
+  // 上游整页（定时任务、项目、脉络……）盖住聊天顶栏（主人 11-02 定的）：以前顶栏还在，小克名字下挂着各页的统计（走查 18 条）。
+  //    整页提到顶栏上面，标题行前加一个返回；没有标题行的页（脉络）补一行
+  function pageBack() {
+    const pane = document.querySelector("#pages:not(.hidden) .tab-pane:not(.hidden)");
+    if (!pane || pane.querySelector(".xk-pback")) return;
+    const b = document.createElement("button"); b.className = "xk-pback icon-btn"; b.setAttribute("aria-label", "返回"); b.innerHTML = svg("back");
+    b.onclick = () => window.__ccBack();
+    const head = pane.querySelector(".page-head");
+    if (head) head.prepend(b); else { const bar = document.createElement("div"); bar.className = "page-head xk-pbar"; bar.innerHTML = `<h2>${{ "tab-lineage": "脉络", "tab-bookmarks": "书签", "tab-changelog": "更新记录" }[pane.id] || ""}</h2>`; bar.prepend(b); pane.prepend(bar); }
+  }
+  setInterval(() => {
+    const c = !!document.querySelector(COVER);
+    if (root.classList.contains("xk-cover") !== c) {
+      root.classList.toggle("xk-cover", c);
+      // 脉络第一次打开时上游提一句「点右上怎么看」，离开了还挂着就收掉
+      const t = $("#toast"); if (!c && t && /脉络/.test(t.textContent)) t.classList.add("hidden");
+    }
+    pageBack();
+  }, 300);
 
   // 分段选择：三位住客
   function seg(cur0, onPick) {
