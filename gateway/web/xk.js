@@ -456,7 +456,7 @@
   }
 
   // ── 角色页 ──
-  function roleState(id) { return asleep(id) ? "睡着了" : id === cur.role ? "在聊" : "替班"; }
+  function roleState(id) { return asleep(id) ? "睡着了" : id === cur.role ? "在聊" : "休息"; }   // 主人 11-02 定的（#33）：没在聊的叫「休息」，「睡着了」只留给额度用完
   async function renderRoles() {
     await loadRoles();
     const b = body("roles"), order = ROLES.order.filter((id) => ROLE[id]);
