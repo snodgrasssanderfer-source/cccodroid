@@ -93,3 +93,18 @@ test("交回说明：说的是你回来了、接着原来的对话，不是换�
   assert.doesNotMatch(t, /现在换成你接着聊/);
   assert.match(carryText(X, "xiaoke", "hachimi", "主人手动换了角色"), /现在换成你接着聊/, "接班的措辞不变");
 });
+
+test("主人手动换过去：在她那段里接着发，不会被「额度恢复」自动拽回原角色（11-02 真机回归）", async () => {
+  reset();
+  switchTo("hachimi", X, "主人手动换了角色");
+  let c = await planChat({ message: "换你来", projectId: "p-h" });
+  c.onQueued({ id: "r3" });
+  publish({ type: "init", runId: "r3", sessionId: H });
+  assert.equal(STATE.origin[H].fromSid, X, "来源照样记着：主人手动换回去时要用");
+  c = await planChat({ message: "再说一句", sessionId: H });
+  assert.equal(c.role, "hachimi", "小克额度好好的，也不该把消息拽走");
+  assert.equal(c.body.sessionId, H);
+  assert.equal(c.notice, null);
+  // 主人手动换回小克：照样回到原来那段
+  assert.equal(switchTo("xiaoke", H, "主人手动换了角色").resume, X);
+});

@@ -105,7 +105,8 @@ PLANNERS.push((b, ctx) => {
   const sid = b.sessionId || null;
   const origin = sid && STATE.origin[sid];
   let to = null, reason = "";
-  if (origin && origin.from !== role.id && roleReady(roleById(origin.from))) {
+  // 自动交回只管额度用完被迫换的人；主人手动换的（manual）不管，否则下一条就被拽回原角色
+  if (origin && !origin.manual && origin.from !== role.id && roleReady(roleById(origin.from))) {
     to = roleById(origin.from);
     reason = `${to.name}的额度恢复了，交回给${to.name}`;
   } else if (cooling(role.id)) {

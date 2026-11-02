@@ -53,7 +53,8 @@ export async function planChat(b) {
     const pend = ctx.role && STATE.pending[ctx.role];
     if (pend && !pend.resumeSid) {
       ctx.carry = pend; delete STATE.pending[ctx.role]; saveState();
-      if (pend.fromSid) ctx.onQueued = (item) => { STATE.originRun[item.id] = { from: pend.fromRole, fromSid: pend.fromSid, reason: pend.reason, at: Date.now() }; saveState(); };
+      // manual：主人自己换的，额度恢复时别自动拽回去（11-02 真机回归），主人手动换回时照样接原来那段
+      if (pend.fromSid) ctx.onQueued = (item) => { STATE.originRun[item.id] = { from: pend.fromRole, fromSid: pend.fromSid, reason: pend.reason, manual: true, at: Date.now() }; saveState(); };
     }
   } else {
     // 只带 follow（新会话还没拿到会话号时发的下一条）：前一轮是哈基米的，就是她那个会话
