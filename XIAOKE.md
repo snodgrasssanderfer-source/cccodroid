@@ -9,7 +9,8 @@
 | android/res/values*/strings.xml | 无障碍服务名里的 cccodroid → 小克 | 系统设置里显示的名字 |
 | android/java/cc/codroid/Tr.java | `t()` 返回前过 `Xk.brand` | 外壳所有提示里的产品名一处换掉 |
 | android/java/cc/codroid/Updater.java | REPO/MIRROR/DL 和 `feed()` 改用 `Xk` | App 更新走我们的发布源，上游镜像只有上游的 APK |
-| android/java/cc/codroid/GatewayService.java | 常驻通知标题用 `Xk.NAME` | 显示名 |
+| android/java/cc/codroid/GatewayService.java | 常驻通知标题用 `Xk.NAME`；小图标用 `Xk.icon` | 显示名；状态栏的小橙花 |
+| android/java/cc/codroid/Notify.java | 跑完、定时任务、已更新三条通知的小图标用 `Xk.icon`（3 行） | 状态栏的小橙花 |
 | android/java/cc/codroid/WhatsNew.java | 说明目录用 `Xk.WHATSNEW`（assets/xk-whatsnew） | 上游 whatsnew/ 是上游各版说明，版本号和我们撞名 |
 | android/java/cc/codroid/MainActivity.java | 安装页标题用 `Xk.NAME` | 显示名 |
 | gateway/server.mjs | import `routeXk`，放在 ROUTES 第一位 | 小克的网关功能入口；要先看 /api/chat（角色与接班路由）和 /api/session-model（换型号即换人） |
@@ -20,4 +21,4 @@
 | gateway/gw/terminal.mjs | `ptyCommand` 加 export | 哈基米登录 Google 要在同一个伪终端里跑 agy（xk-agy.mjs） |
 | NOTICE | 末尾加修改声明、标题字体的许可 | Apache-2.0 第 4 条；站酷小薇是 OFL 1.1 |
 
-界面相关的新文件（不在上表，不会冲突）：`gateway/web/xk-art/`（美术素材 WebP）、`gateway/web/fonts/xk-zcool-xiaowei.woff2` 与 `OFL-ZCOOL-XiaoWei.txt`（标题字体）。
+界面相关的新文件（不在上表，不会冲突）：`android/res/drawable-*/ic_stat_xk.png`（通知小图标，白色剪影）、`gateway/web/xk-art/`（美术素材 WebP）、`gateway/web/fonts/xk-zcool-xiaowei.woff2` 与 `OFL-ZCOOL-XiaoWei.txt`（标题字体；26 个字的轮廓方向修过，见 `xk/tools/font-fix-contours.py`）。
