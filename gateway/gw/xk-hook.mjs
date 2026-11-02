@@ -1,10 +1,11 @@
 // Claude Code 的 hook（角色项目的 .claude/settings.json 里挂的）：node xk-hook.mjs <start|prompt> <角色目录>
 //   start  ：会话开始，带上这个角色记忆的要点
-//   prompt ：每条消息前，带上可能相关的记忆、接班说明（只带一次）、人设的 post_history_instructions（贴着最新那条消息）
+//   prompt ：每条消息前，带上可能相关的记忆、接班说明（只带一次）、留言板上给她的新便条、人设的 post_history_instructions（贴着最新那条消息）
 // 失败就非零退出、原因写 stderr：Claude Code 会把 hook 出错显示出来，这一轮照常进行。
 import fs from "node:fs";
 import path from "node:path";
 import { digest, line, search } from "./xk-memstore.mjs";
+import { unreadText } from "./xk-board.mjs";
 
 const [ev, dir] = process.argv.slice(2);
 let raw = "";
@@ -22,6 +23,9 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
       const run = process.env.CCAPP_RUN_ID;
       const carry = run && path.join(dir, ".xk", "carry", run + ".md");
       if (carry && fs.existsSync(carry)) { parts.push(fs.readFileSync(carry, "utf8").trim()); fs.rmSync(carry); }
+      // 留言板上给她的新便条：读一次就记成已读，之后想再看用 board_read
+      const board = unreadText(path.dirname(dir), path.basename(dir), run);
+      if (board) parts.push(board);
       // 这一轮实际用的模型：人设里写着「系统写了就照实说」，这里就是系统写的那句（run.mjs 起 claude 时设的环境变量）
       const model = process.env.ANTHROPIC_MODEL, prov = process.env.CCAPP_PROVIDER;
       if (model) parts.push(`（系统：你这一轮用的模型是 ${model}${prov ? "，接口 " + prov : ""}。主人问起就照这个答。）`);

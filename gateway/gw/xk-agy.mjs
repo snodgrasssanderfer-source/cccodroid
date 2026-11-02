@@ -17,6 +17,7 @@ import { projectSlug } from "./projects.mjs";
 import { rememberSession } from "./runs.mjs";
 import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
 import { line, search } from "./xk-memstore.mjs";
+import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_RUN, STATE, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 
 const DIR = roleDir("hachimi");
@@ -140,6 +141,8 @@ export function runAgy(item, extra = {}) {
   const hits = search(DIR, item.message, 6);
   if (hits.length) ctx.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准）：\n" + hits.map(line).join("\n"));
   if (extra.carry) ctx.push(extra.carry);
+  const board = extra.internal ? "" : unreadText(path.dirname(DIR), "hachimi");
+  if (board) ctx.push(board);
   ctx.push(`（系统：你这一轮经 Antigravity 用的是 Gemini，模型 ${STATE.agyModel || "是 agy 的默认"}。主人问起就照这个答。）`);
   if (fs.existsSync(postHistoryFile("hachimi"))) ctx.push(fs.readFileSync(postHistoryFile("hachimi"), "utf8").trim());
   const content = [...(ctx.length ? [{ type: "text", text: "（给你自己看的背景，不是主人说的话）\n" + ctx.join("\n\n") }] : []), { type: "text", text: item.message }];

@@ -9,13 +9,14 @@ import { publish } from "./bus.mjs";
 import { START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
-import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, resumeSid, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, shiftEnded, carryText, httpError, json, projectOf, resumeSid, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
 import { effectiveModel, routeSessModel } from "./sessmodel.mjs";
 import { sidOfAgyRun } from "./xk-agy.mjs";
 import "./xk-diary.mjs";
 import "./xk-health.mjs";
+import "./xk-board-gw.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {
@@ -115,6 +116,7 @@ const roleOfProvider = (pid) => (pid ? ROLES.find((r) => r.provider === pid) || 
 export function switchTo(to, fromSessionId, reason) {
   STATE.active = to;
   const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
+  if (fromRole && fromRole !== to) shiftEnded({ from: fromRole, to, sid: fromSessionId, reason });
   const resume = fromSessionId && fromRole !== to ? resumeSid(fromSessionId, to) : null;
   if (fromSessionId && fromRole !== to) STATE.pending[to] = resume ? { fromSid: fromSessionId, fromRole, reason: "主人把你换了回来", back: true, resumeSid: resume } : { fromSid: fromSessionId, fromRole, reason };
   saveState();

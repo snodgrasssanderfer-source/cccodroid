@@ -53,7 +53,7 @@ test("MCP 服务：工具清单、记住、回想、出错带原因", () => {
   const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), d],
     { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8", env: { ...process.env, CCAPP_RUN_ID: "r1" } });
   const out = Object.fromEntries(r.stdout.trim().split("\n").map((l) => JSON.parse(l)).map((m) => [m.id, m]));
-  assert.deepEqual(out[2].result.tools.map((t) => t.name), ["remember", "recall", "forget"]);
+  assert.deepEqual(out[2].result.tools.map((t) => t.name), ["remember", "recall", "forget", "board_write", "board_read"]);
   assert.match(out[3].result.content[0].text, /记下了/);
   assert.match(out[4].result.content[0].text, /热可可/);
   assert.equal(out[5].result.isError, true);
