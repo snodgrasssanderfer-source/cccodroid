@@ -32,6 +32,9 @@ function arm(sid, at) {
   timers.set(sid, t);
 }
 
+// 整理是格式化活：用便宜档，别为记笔记再跑一轮主模型、吃主人的订阅额度。看法带人设，留给角色在聊天里自己记。
+// 没列的那家用它自己的默认（DeepSeek 默认就是 flash）
+const CHEAP = { anthropic: "haiku" };
 export function consolidate(sid) {
   const role = roleOfSession(sid);
   if (!role) { delete STATE.memDirty[sid]; saveState(); return null; }
@@ -42,12 +45,12 @@ export function consolidate(sid) {
   const text = talk.map((t) => `${t.role === "user" ? "主人" : "你"}（${new Date(t.at).toLocaleString("zh-CN", { hour12: false })}）：${t.text}`).join("\n");
   const message = `今天是 ${today()}。下面是你和主人刚才的一段对话。整理你的长期记忆：\n` +
     `1. 先用 recall 查查相关的旧记忆，避免重复。\n` +
-    `2. 把以后用得上的事实、发生的事、计划、你自己的看法用 remember 记下来，日期都写成具体日期（"昨天""下周"换算好），who 写清是谁的事或看法。\n` +
+    `2. 把以后用得上的事实、发生的事、计划用 remember 记下来，日期都写成具体日期（"昨天""下周"换算好），who 写清是谁的事。你自己的看法这里不补记——那是你在聊天里亲口记的。\n` +
     `3. 和旧记忆冲突、或事情变了的：记新的，并把旧记忆的 id 放进 ends。\n` +
     `4. 只记对话里真有的；闲聊客套、你刚才已经记过的就不用再记。做完回复"整理好了"。\n\n---\n${text}`;
   let item;
   if (role.engine === "claude") item = internalRun("memory", {
-    message, projectId: projectOf(role.id), permissionMode: "default",
+    message, projectId: projectOf(role.id), permissionMode: "default", model: CHEAP[role.provider] || null,
     allowedTools: ["mcp__xk-memory__remember", "mcp__xk-memory__recall", "mcp__xk-memory__forget"], timeoutMs: 5 * 60000,
   }, { sid, until, role: role.id });
   else {
