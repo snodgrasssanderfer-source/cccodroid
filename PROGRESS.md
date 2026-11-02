@@ -3,9 +3,9 @@
 规矩看 CLAUDE.md，改过的上游文件看 XIAOKE.md，人设、世界书和调研资料在 `xk/`。每轮结束时更新这份。
 
 ## 版本
-- 已发布 **v0.2.2**（versionCode 5），由 `claude/ui-20261101` 发出。之前 v0.2.1、v0.2.0（界面重做）、v0.1.1。
+- 已发布 **v0.2.3**（versionCode 6），由 `claude/ui-20261101` 发出（内容 = `dev`，合了小克的 PR #3 #4 #5 #10）。之前 v0.2.2、v0.2.1、v0.2.0（界面重做）、v0.1.1。
 - 底座：11-01 同步到上游 `6aa2610`（v0.5.18 之后又两批审查修复），fork 的 main 已快进。
-- 网关测试：483 项。上游新测试 B20 在 CI 上挂是因为测试用的假 PREFIX 里没有 git、sleep，已在 scripts/test.mjs 补上（登记在 XIAOKE.md）；B22 要 `yq`，GitHub 的机器上有，云端容器里没有，所以只在容器里失败。
+- 网关测试：511 项（11-02）。上游新测试 B20 在 CI 上挂是因为测试用的假 PREFIX 里没有 git、sleep，已在 scripts/test.mjs 补上（登记在 XIAOKE.md）；B22 要 `yq`，GitHub 的机器上有，云端容器里没有，所以只在容器里失败。
 
 ## 已经做完（phase1）
 1. 显示名改为小克，App 更新指向 fork 自己的 Release。
@@ -22,6 +22,14 @@
 - 上手文档 `xk/ON-DEVICE-AGENT.md`：目录 ↔ 安装路径、手机上怎么验证、构建发版哪些只能 CI 做、代码约定、协作规矩、主人怎么开权限。
 - 她只推 `xiaoke/**`，PR 目标 `dev`（11-01 从 v0.2.2 + 上手文档建好）。以后云端会话也从 `dev` 起、把合进来的 PR 带上再发版。待修 bug 在 GitHub Issues：#1 接班交回接不上原会话，#2 agy 403 VALIDATION_REQUIRED。
 - 发版钥匙要挪进 `xk-release` 环境（只许 `claude/**`），工作流已加 `environment: xk-release`；主人 11-01 定的：先不挪钥匙、不加分支规则，主人自己盯着仓库动向；文档末尾留着做法，要做时照做。
+
+## 0.2.3（2026-11-02，手机上的小克的 PR）
+- 云端会话审过、合进 `dev` 后发版。四个 PR 一起合测试全过（容器里只有 B22 缺 yq）。
+- #3：`roleOfDir` 两边先 realpath（真机 `/data/user/0` 与 `/data/data` 对不上，所有按会话认人的功能在真机上都失效过，包括 0.2.2 兜底按会话号那半边）；接班记 `fromSid`，交回接原会话（`resumeSid`）；手动切换标 `manual`，不被自动交回。Fixes #1。
+- #4：空 `mcp_config.json` 当空配置；模型清单只读 stdout、按 Tab 拆；认出「要先验证账号」（真实报错是 Eligibility check failed … Verify your account，不含 VALIDATION_REQUIRED），卡片给验证链接。Fixes #2。
+- #5：哈基米常驻 agy（每段对话一个进程，一行一条消息，闲置 10 分钟退出；人设或模型变了换进程）。真机一问一答 20s → 9s。
+- #10：真机证据 `xk/research/device-2026-11-02/`。
+- 还开着：#6 接班说明截断、#7 留言板（和前端重构一起做）、#8 后台整理记忆被当新对话、#9 里的前端走查八条（小克在 `xiaoke/ui-fixes` 修）。
 
 ## 0.2.2（2026-11-01，主人真机报：哈基米的会话里是 deepseek-flash 在回话）
 - 根因：哈基米不走 Claude Code，只有 `/api/chat` 的角色路由会把她的消息交给 agy；绕开它的路（新会话还没拿到会话号时只带 `follow` 的下一条、空闲自动压缩……）会在她的目录里起 claude，用的是全局那家（主人的是 DeepSeek）。
