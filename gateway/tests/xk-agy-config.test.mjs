@@ -1,6 +1,6 @@
 // 哈基米开不了口的两处（11-02 真机）：agy 建的 mcp_config.json 是空文件；agy models 的 stderr 日志被当成模型
 import "../gw/config.mjs";
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,7 +8,8 @@ import { CFG } from "../gw/config.mjs";
 import { onPublish } from "../gw/bus.mjs";
 import { ensureRoles } from "../gw/xk-roles.mjs";
 import { STATE } from "../gw/xk-core.mjs";
-import { AGY, checkModels, parseModels, runAgy } from "../gw/xk-agy.mjs";
+import { AGY, checkModels, parseModels, runAgy, stopAgy } from "../gw/xk-agy.mjs";
+import { fakeAgy } from "./fixtures/xk-fake-agy.mjs";
 
 const MCP = path.join(CFG.home, ".gemini", "config", "mcp_config.json");
 // agy 1.4.12 真机原样：stdout 是「代号<Tab>名字」，stderr 是日志
@@ -21,13 +22,14 @@ const run = (item) => new Promise((ok) => {
   const off = onPublish((e) => { if (e.runId === item.id) { evs.push(e); if (e.type === "run_end") { off(); ok(evs); } } });
   runAgy(item);
 });
-const okAgy = () => fake(`process.stdin.on("data",()=>{}).on("end",()=>{process.stdout.write(JSON.stringify({event:"result",result:{conversation_id:"c1",status:"SUCCESS",response:"喵"}})+"\\n");});`);
+const okAgy = async () => { await stopAgy(); fakeAgy(AGY, { lines: [{ event: "result", result: { conversation_id: "c1", status: "SUCCESS", response: "喵" } }] }); };
+after(() => stopAgy());
 
 test("mcp_config.json 是 agy 建的空文件：当空配置，补上记忆服务，这一轮照常跑", async () => {
   ensureRoles(); delete STATE.agyVerify; delete STATE.agyAuth;
   fs.mkdirSync(path.dirname(MCP), { recursive: true });
   fs.writeFileSync(MCP, "");
-  okAgy();
+  await okAgy();
   const evs = await run({ id: "xc1", message: "在吗", sessionId: null });
   assert.equal(evs.find((e) => e.type === "error"), undefined, "不该报准备失败");
   assert.equal(evs.at(-1).isError, false);
@@ -36,7 +38,7 @@ test("mcp_config.json 是 agy 建的空文件：当空配置，补上记忆服�
 
 test("mcp_config.json 里有东西但不是 JSON：不覆盖主人的文件，报错说清楚", async () => {
   fs.writeFileSync(MCP, "{ 这不是 json");
-  okAgy();
+  await okAgy();
   const evs = await run({ id: "xc2", message: "在吗", sessionId: null });
   assert.match(evs.find((e) => e.type === "error").message, /读不了 .*mcp_config\.json/);
   assert.equal(fs.readFileSync(MCP, "utf8"), "{ 这不是 json");
