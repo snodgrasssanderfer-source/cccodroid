@@ -8,7 +8,7 @@ import { isLoginMode } from "./models.mjs";
 import { RATE_LIMITS } from "./stream.mjs";
 import { projectById } from "./projects.mjs";
 import { ROLES, roleById, roleOfDir } from "./xk-roles.mjs";
-import { ENGINE_RUN, ENGINES, INTERNAL, PLANNERS, STATE, carryText, projectOf, resumeSid, saveState, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, ENGINES, INTERNAL, PLANNERS, STATE, carryText, shiftEnded, projectOf, resumeSid, saveState, writeCarry } from "./xk-core.mjs";
 
 STATE.originRun ||= {};   // run 号 → { from, fromSid, reason }：接班开的新会话拿到会话号后转进 STATE.origin；fromSid 是交回时要接着的那段（#1）
 
@@ -114,6 +114,7 @@ PLANNERS.push((b, ctx) => {
     reason = `${role.name}的额度还没恢复（${fmt(STATE.cooldown[role.id].until)} 左右）`;
   }
   if (!to) return;
+  shiftEnded({ from: role.id, to: to.id, sid, reason });
   // 交回原角色：她原来那段还在就接着它（#1），没了才新开
   const back = origin && to.id === origin.from ? resumeSid(sid, to.id) : null;
   ctx.body = { ...ctx.body, sessionId: back, follow: null, projectId: projectOf(to.id) };

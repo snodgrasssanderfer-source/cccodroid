@@ -7,7 +7,8 @@ import { readBody } from "./http.mjs";
 import { TOKEN } from "./access.mjs";
 import { END_HOOKS, START_GUARDS, enqueue } from "./queue.mjs";
 import { LAST_SESSION, forgetSession, rememberSession } from "./runs.mjs";
-import { ROLES, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
+import { ROLES, ROLES_DIR, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
+import { quietFile } from "./xk-board.mjs";
 import { recentText } from "./xk-transcript.mjs";
 
 export const XK_HOME = path.join(CFG.home, ".config", "xiaoke");
@@ -54,6 +55,10 @@ export const ENGINES = {};
 // 非 Claude Code 引擎怎么跑一轮：ENGINE_RUN.agy(item, { internal, carry })
 export const ENGINE_RUN = {};
 
+// 有人下班（被换走、交回）时：SHIFT_END 里的每个都调一次 ({ from, to, sid, reason })。留言板往这里挂
+export const SHIFT_END = [];
+export const shiftEnded = (x) => { for (const h of SHIFT_END) h(x); };
+
 // planners(b, ctx) 可以改 ctx：{ body, role, carry: {fromSid, fromRole, reason}, notice, onQueued(item) }。接班模块往这里加
 export const PLANNERS = [];
 
@@ -88,9 +93,12 @@ START_GUARDS.push((q) => {
   if (q.internal || q.sched || q.auto) {
     PREV_LAST.set(q.id, LAST_SESSION ? LAST_SESSION.id : null);
     if (PREV_LAST.size > 200) PREV_LAST.delete(PREV_LAST.keys().next().value);
+    // 也不该把留言板上的便条「读掉」：给 hook 留个记号（xk-board.mjs）
+    const f = quietFile(ROLES_DIR, q.id); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, "");
   }
   return true;
 });
+END_HOOKS.push((run) => { fs.rmSync(quietFile(ROLES_DIR, run.id), { force: true }); });
 END_HOOKS.push((run) => {
   if (!PREV_LAST.has(run.id)) return;
   const prev = PREV_LAST.get(run.id); PREV_LAST.delete(run.id);

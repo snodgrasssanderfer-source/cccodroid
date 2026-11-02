@@ -290,6 +290,7 @@
       if (st.praise) { face("happy", 2400); petals(); }
     } else if (ev.type === "run_end") {
       runs.delete(ev.runId); live = Math.max(0, live - 1); peek(null); SFX.play("done");
+      loadBoard().then(() => { if ($("#xk-p-roles.on")) paintBoard(); }).catch(() => {});   // 她这一轮可能贴了便条
       if (!live) document.querySelectorAll("#chat details.think[data-xk]").forEach((d) => { d.open = false; });
     }
   }
@@ -320,6 +321,11 @@
         } else if (ev.op === "handover_none") { peek("sleeping"); toast(`${rname(ev.from)}睡着了`, ev.reason, sprite(ev.from, "sleeping"), true); }
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
         else if (ev.op === "diary") toast("日记", ev.text, art("xiaoke/10_diary"), !!ev.error);
+        else if (ev.op === "board") {
+          if (ev.error) toast("留言板", ev.error, stateArt("error"), true);
+          else if (ev.note && ev.note.from !== "owner") toast(`${noteWho(ev.note.from)}留了张便条`, ev.note.text.slice(0, 60), art("group/noteboard"));
+          loadBoard().then(() => { if ($("#xk-p-roles.on")) paintBoard(); }).catch(() => {});
+        }
         return;
       }
       if (ev.runId && ev.sessionId && follow.get(ev.runId)) {
@@ -394,12 +400,59 @@
     return el;
   }
 
+  // ── 留言板（#7，主人 11-02 定的）：角色页三张卡下面一块；三个人下班前留的、主人贴的都在这；有新的角色栏标个点 ──
+  const NOTE_C = (id) => (id === "owner" ? "var(--fg3)" : rc(id));
+  const noteWho = (id) => (id === "owner" ? "主人" : rname(id));
+  const noteWhen = (t) => { const d = new Date(t); return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  let notes = [], boardAll = false;
+  async function loadBoard() { notes = (await api("/api/xk/board")).notes || []; boardDot(); return notes; }
+  // 角色栏上的点：有我还没看过的、她们留的便条
+  function boardDot() {
+    const seen = LS.get("boardSeen", 0), on = notes.some((n) => n.from !== "owner" && n.at > seen);
+    tabsEl.querySelector('.xk-tab[data-i="1"]')?.classList.toggle("dot", on);
+  }
+  function boardHtml() {
+    if (!notes.length) return `<div class="xk-empty" style="padding:6px 0 4px"><img src="${art("group/noteboard")}" alt="">还没有便条<br>她们下班前会在这里留话；你也可以贴一张给她们</div>`;
+    const show = boardAll ? notes : notes.slice(0, 6);
+    return `<div class="xk-notes">${show.map((n, i) => `<button class="xk-note xk-press" data-id="${n.id}" style="--c:${NOTE_C(n.from)};--r:${[-1.6, 1.2, -.6, 1.8, -1.2, .8][i % 6]}deg">
+        <small>${noteWho(n.from)} → ${n.to ? noteWho(n.to) : "大家"}${n.auto ? " · 摘的" : ""}</small><span>${esc(n.text)}</span><em>${noteWhen(n.at)}${n.readBy.length ? " · " + n.readBy.map(rname).join("、") + "看过" : ""}</em></button>`).join("")}</div>` +
+      (notes.length > 6 ? `<button class="xk-mini xk-press" id="xk-b-all" style="margin-top:10px">${boardAll ? "收起" : `全部 ${notes.length} 张`}</button>` : "");
+  }
+  function paintBoard() {
+    const box = $("#xk-board"); if (!box) return;
+    box.innerHTML = boardHtml();
+    box.querySelectorAll(".xk-note").forEach((x) => x.onclick = () => noteSheet(notes.find((n) => n.id === x.dataset.id)));
+    const all = $("#xk-b-all", box); if (all) all.onclick = () => { boardAll = !boardAll; SFX.play("tap"); paintBoard(); };
+    if (notes.length) { LS.set("boardSeen", notes[0].at); boardDot(); }
+  }
+  function noteSheet(n) {
+    if (!n) return;
+    openSheet(`<h2>${noteWho(n.from)}留给${n.to ? noteWho(n.to) : "大家"}</h2><p class="sub">${noteWhen(n.at)}${n.auto ? " · 她额度用完时从对话里摘的" : ""}${n.readBy.length ? " · " + n.readBy.map(rname).join("、") + "看过" : " · 还没人看过"}</p>
+      <div class="xk-note-full" style="--c:${NOTE_C(n.from)}">${esc(n.text)}</div><button class="xk-wide xk-press xk-danger" id="xk-b-del">撕掉这张</button>`,
+      (s) => { $("#xk-b-del", s).onclick = async () => { try { await api("/api/xk/board/" + n.id, { method: "DELETE" }); SFX.play("toggle"); closeSheet(); await loadBoard(); paintBoard(); } catch (e) { fail(e); } }; });
+  }
+  function postSheet() {
+    let to = "";
+    openSheet(`<h2>贴一张便条</h2><p class="sub">她们下一条消息前会看到（只带一次）；三个人都能翻到</p>
+      <div class="xk-chips" id="xk-b-to">${[["", "大家"], ...(ROLES ? ROLES.order : Object.keys(ROLE)).map((id) => [id, rname(id)])].map(([k, l]) => `<button class="xk-mini xk-press${k === to ? " on" : ""}" data-k="${k}">${l}</button>`).join("")}</div>
+      <textarea id="xk-b-text" rows="4" placeholder="比如：明天早上八点提醒我带伞" style="width:100%;box-sizing:border-box;margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:10px;font:15px/1.6 var(--font-ui)"></textarea>
+      <button class="xk-wide xk-press" id="xk-b-post">贴上</button>`,
+      (s) => {
+        $("#xk-b-to", s).onclick = (e) => { const b = e.target.closest("[data-k]"); if (!b) return; to = b.dataset.k; s.querySelectorAll("#xk-b-to [data-k]").forEach((x) => x.classList.toggle("on", x === b)); SFX.play("tap"); };
+        $("#xk-b-post", s).onclick = async () => {
+          const text = $("#xk-b-text", s).value.trim(); if (!text) return $("#xk-b-text", s).focus();
+          try { await api("/api/xk/board", { method: "POST", body: { text, to } }); SFX.play("send"); closeSheet(); await loadBoard(); paintBoard(); } catch (e) { fail(e); }
+        };
+      });
+  }
+
   // ── 角色页 ──
   function roleState(id) { return asleep(id) ? "睡着了" : id === cur.role ? "在聊" : "替班"; }
   async function renderRoles() {
     await loadRoles();
     const b = body("roles"), order = ROLES.order.filter((id) => ROLE[id]);
     b.innerHTML = `<div class="xk-cards">${order.map((id) => `<button class="xk-card xk-press${id === cur.role ? " on" : ""}" data-id="${id}" style="--c:var(--xk-c-${id === "deepseek" ? "xiaoyu" : id});--s:var(--xk-s-${id === "deepseek" ? "xiaoyu" : id})"><img src="${sprite(id, asleep(id) ? "sleeping" : "idle")}" alt=""><b>${rname(id)}</b><span class="xk-tag">${roleState(id)}</span></button>`).join("")}</div>
+      <div class="xk-block"><h2 class="xk-bh">留言板<button class="xk-mini xk-press" id="xk-b-new">贴一张</button></h2><div id="xk-board"></div></div>
       <div class="xk-block"><h2>替班顺序</h2><div class="xk-order">${order.map((id, i) => `${i ? `<button class="xk-swap xk-press" data-i="${i}" aria-label="交换顺序">${svg("swap")}</button>` : ""}<div class="o"><i style="background-image:url('${sprite(id, "idle")}')"></i><span>${rname(id)}</span></div>`).join("")}</div>
         <p class="xk-hint">谁的额度用完，就由下一位接班，只带上刚才那段对话；额度恢复后交还。点中间的箭头换顺序。</p></div>
       <div class="xk-block"><h2>导入人设与世界书</h2><p class="xk-hint" style="margin:0 0 10px">一次可以选好几个文件，txt、md、SillyTavern 的 JSON 都行。按文件名猜它是谁的人设、还是世界书，导入前可以改。世界书三个人共用，每一轮都会读到。</p>
@@ -409,6 +462,8 @@
       const i = +x.dataset.i, o = order.slice(); [o[i - 1], o[i]] = [o[i], o[i - 1]];
       try { await api("/api/xk/order", { method: "PUT", body: { order: o } }); SFX.play("toggle"); renderRoles(); } catch (e) { fail(e); }
     });
+    $("#xk-b-new", b).onclick = () => { SFX.play("tap"); postSheet(); };
+    paintBoard(); loadBoard().then(paintBoard).catch(fail);
     $("#xk-imp", b).onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) importSheet(fs).catch(fail); };
   }
   // ── 批量导入：每个文件猜一个去处（世界书 / 谁的人设），主人可以改，再一起导入 ──
@@ -767,7 +822,7 @@
     async help(b) {
       const H = [
         ["chat", "聊天、思考与步骤", "消息发给正在聊的那位。她想事情、动手做事的过程会展开给你看，这一轮结束再收成一行，点一下还能翻开。输入框左边的「+」能附文件、拍照、截屏；输入框下的型号可以换，换成另一家的型号就是换人。顶栏右边开新对话，左上角是对话列表，按三个人分组，长按一段能置顶、重命名、导出、删除。"],
-        ["roles", "三位住客与替班", "小克用 Claude，哈基米用 Gemini（在她的卡片里登录 Google），小鱼用 DeepSeek。谁的额度用完了，就按角色页的「替班顺序」由下一位接着聊，接班的人会拿到前面几轮的说明；原来那位额度恢复后自动交回，接着原来那段。你手动换的人不会被自动换回去。"],
+        ["roles", "三位住客与替班", "小克用 Claude，哈基米用 Gemini（在她的卡片里登录 Google），小鱼用 DeepSeek。谁的额度用完了，就按角色页的「替班顺序」由下一位接着聊，接班的人会拿到前面几轮的说明；原来那位额度恢复后自动交回，接着原来那段。你手动换的人不会被自动换回去。下班前她们会在角色页的留言板上留张便条，写清事情办到哪了；你也可以贴一张给她们。"],
         ["memory", "记忆", "三个人各记各的，互相看不到；同一个人不管从哪儿聊都是同一套记忆。聊着聊着她自己会记，闲下来会自动整理。记忆页能看、能改、能标成「已过去」、能让她忘掉。"],
         ["diary", "日记", "每晚十点后，三个人各写一篇，素材是当天的对话。小克的日记走定时任务，要在「开发者 → 定时任务」底部打开「订阅账户」才写得了；哪天写不了，日记页和「我的」顶上的健康卡会说原因。"],
         ["developer", "开发者", "cccodroid 原本的完整设置、终端、文件、git、扩展、定时任务、项目、脉络和原版帮助，都收在「我的 → 开发者」。平时用不到，出了问题或者想折腾时再去。"],
@@ -925,6 +980,7 @@
     if (!mountHead() || !window.__cc) return setTimeout(boot, 300);
     movePill(); syncRole(true).catch(() => {});
     if (!LS.get("onboarded", false)) onboard();
+    loadBoard().catch(() => {});
   })();
   window.XK = { api, toast, go, switchRole, applyRole, SFX, petals };
 })();
