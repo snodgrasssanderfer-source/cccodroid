@@ -10,7 +10,9 @@
 - 仓库：`snodgrasssanderfer-source/cccodroid`，SSH 地址 `git@github.com:snodgrasssanderfer-source/cccodroid.git`。
 - **`main` 不是小克的代码**：它是上游 `greyoak111/cccodroid` 的镜像，只用来同步上游。小克的改动从来不在 `main` 上。
 - 你的起点和 PR 目标都是 **`dev`**（主人建的集成分支，内容是最新发布的版本）。
-- 发版分支是 `claude/**`：往这类分支推，CI 会自动签名发版。**你不推 `claude/**`、`main`、`dev`，也不推任何标签**，这几样仓库规则也会拦住你。
+- 发版分支是 `claude/**`：往这类分支推，CI 会自动签名发版。**你不推 `claude/**`、`main`，也不推任何标签**。
+- 主人 11-02 定的：给你全部权限，验过的 PR 你可以自己合进 `dev`（用 merge commit，不强推）。发版前先告诉主人。
+- 开工、收工、等谁的标签和手机上的工具清单见 `xk/DEV.md`，每次开工先读。
 - 你的分支一律叫 `xiaoke/<主题>`，比如 `xiaoke/handover-resume`。一个主题一个分支、一个 PR。
 
 克隆放在你的家目录下，**别放进 `roles/`**（那是三个角色的房间，放进去会被当成你的工作目录、搅进记忆和日记）：
