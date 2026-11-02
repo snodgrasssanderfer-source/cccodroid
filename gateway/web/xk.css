@@ -191,3 +191,10 @@ html.xk #composer { position: relative; }
 
 html[data-motion="off"] .xk-page, html[data-motion="off"] .xk-page *, html[data-motion="off"] #xk-tabs *, html[data-motion="off"] #xk-sheet, html[data-motion="off"] #xk-toast, html[data-motion="off"] #xk-peek, html[data-motion="off"] #xk-face * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 @media (prefers-reduced-motion: reduce) { .xk-page, .xk-leaf, #xk-peek, #xk-sheet, #xk-toast { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+
+/* 键盘弹起时让路（#14）：底栏、小人收起，输入框下那行不再折成两行 */
+html.xk-kb #xk-tabs, html.xk-kb #xk-peek { display: none !important; }
+html.xk-kb .xk-page { bottom: 0; }
+html.xk-kb #hint-row { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+html.xk-kb #hint-row::-webkit-scrollbar { display: none; }
+

@@ -120,6 +120,11 @@ export function switchTo(to, fromSessionId, reason) {
   return { ok: true, active: to, projectId: projectOf(to), resume };
 }
 addRoute(async (req, res, u, p) => {
+  // 新会话（还没会话号）问「用什么型号」又没带项目：按当前角色的项目答，别拿全局那家当成小克在用（#11）
+  if (p === "/api/session-model" && req.method === "GET" && !u.searchParams.get("id") && !u.searchParams.get("project") && projectOf(STATE.active)) {
+    const q = (k) => (u.searchParams.has(k) ? u.searchParams.get(k) : null);
+    return sendJson(res, 200, effectiveModel("", projectOf(STATE.active), { provider: q("provider"), model: q("model"), effort: q("effort") }));
+  }
   if (p !== "/api/session-model" || req.method !== "POST") return NEXT;
   const raw = await readBody(req);
   let b = {}; try { b = JSON.parse(raw || "{}"); } catch {}
