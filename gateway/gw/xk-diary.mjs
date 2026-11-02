@@ -3,8 +3,8 @@
 // 哈基米不走 Claude Code，上游定时任务起不了它，由这里的定时器交给 agy。
 import fs from "node:fs";
 import path from "node:path";
-import { LIVE, log } from "./config.mjs";
-import { NEXT, sendJson } from "./http.mjs";
+import { LIVE, CFG, log } from "./config.mjs";
+import { NEXT, readBodyBuf, sendJson } from "./http.mjs";
 import { publish } from "./bus.mjs";
 import { END_HOOKS } from "./queue.mjs";
 import { ROLES, roleById, roleDir, roleOfDir } from "./xk-roles.mjs";
@@ -13,6 +13,7 @@ import { today } from "./xk-memstore.mjs";
 import { ENGINE_RUN, INTERNAL, STATE, addRoute, httpError, projectOf, saveState, selfApi } from "./xk-core.mjs";
 
 const CH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
+const NICK = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" };   // 界面上的叫法，和角色名（DeepSeek）不一样，导出文件用这个
 const DIARY_TIME = "22:00";
 STATE.diaryTasks ||= {};   // 角色 → 上游定时任务号
 STATE.diaryRetry ||= {};   // 角色 → 额度恢复后补写的时刻
@@ -117,8 +118,40 @@ if (LIVE) {
   setTimeout(agyDiaryTick, 60000).unref();
 }
 
+// ── 界面：导出成图片 ──
+// 纸纹、横线、日期和签名由前端画成 PNG 传上来，这里只负责落盘（exports/ 在「保存到」允许的范围里）
+const EXPORT_MAX = 24 * 1024 * 1024;
+export function saveDiaryPng(roleId, date, buf) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw httpError(400, "日期不对");
+  const role = roleById(roleId);
+  if (!role) throw httpError(404, "没有这个角色");
+  if (!fs.existsSync(path.join(roleDir(role.id), "diary", date + ".md"))) throw httpError(404, "这天没有日记");
+  if (!Buffer.isBuffer(buf) || buf.length < 8 || buf.length > EXPORT_MAX || buf[0] !== 0x89 || buf.toString("latin1", 1, 4) !== "PNG")
+    throw httpError(400, "图片数据不对");
+  const dir = path.join(CFG.home, "exports");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `diary-${role.id}-${date}-${Date.now().toString(36)}.png`);
+  fs.writeFileSync(file, buf);
+  // 只留一天：存过的原图不长期堆在私有目录
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^diary-.*\.png$/.test(f)) continue;
+      const p = path.join(dir, f);
+      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.unlinkSync(p);
+    }
+  } catch {}
+  return { path: file, name: `${NICK[role.id] || role.name}的日记 ${date}.png` };
+}
+
 // ── 界面：按角色、日期看 ──
 addRoute(async (req, res, u, p) => {
+  if (p === "/api/xk/diary/export" && req.method === "POST") {
+    let buf;
+    // 只有超限才说「太大」；签名不符、连接断了照实报，别都说成太大
+    try { buf = await readBodyBuf(req, EXPORT_MAX + 4096); }
+    catch (e) { throw /too large/.test(e.message) ? httpError(413, "图片太大") : httpError(400, "图片没传完整：" + e.message); }
+    return sendJson(res, 200, { ok: true, ...saveDiaryPng(u.searchParams.get("role"), u.searchParams.get("date"), buf) });
+  }
   if (p === "/api/xk/diary" && req.method === "GET") {
     const role = roleById(u.searchParams.get("role"));
     if (!role) throw httpError(404, "没有这个角色");

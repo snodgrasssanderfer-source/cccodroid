@@ -122,7 +122,7 @@
   function applyRole(id, anim) {
     if (!ROLE[id]) id = "xiaoke";
     if (root.dataset.xkRole === id) return;
-    const set = () => { root.dataset.xkRole = id; paintHead(); paintShell(); };
+    const set = () => { root.dataset.xkRole = id; LS.set("role", id); paintHead(); paintShell(); };
     const pop = () => { const b = $("#xk-face img"); if (b) { b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop"); } };
     if (!anim || !root.dataset.xkRole || !document.startViewTransition || !moving() || document.hidden) { set(); pop(); return; }
     const f = ($("#xk-face") || document.body).getBoundingClientRect(), x = f.left + f.width / 2, y = f.top + f.height / 2;
@@ -194,6 +194,7 @@
     me: '<path d="M12 3.5c1.6 2 4.2 2.4 6 1.6.6 3.6-.3 7.4-2.4 10.1L12 20l-3.6-4.8C6.3 12.5 5.4 8.7 6 5.1c1.8.8 4.4.4 6-1.6Z"/>',
     go: '<path d="m9 6 6 6-6 6"/>', back: '<path d="m15 6-6 6 6 6"/>', swap: '<path d="M7 7h11l-3-3M17 17H6l3 3"/>', search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>', check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    export: '<path d="M12 15.5V4"/><path d="m7.5 9 4.5-4.5L16.5 9"/><path d="M5 14.5v4A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-4"/>',
   };
   const svg = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
@@ -348,6 +349,14 @@
     const p = document.createElement("section"); p.className = "xk-page"; p.id = "xk-p-" + k; p.setAttribute("aria-label", PAGES[k][0]);
     p.innerHTML = `<div class="xk-ph"><h1>${PAGES[k][0]}</h1><p>${PAGES[k][1]}</p></div><div class="xk-pb"></div>`;
     document.body.appendChild(p);
+    // 日记页右上角：把这一天导出成图片（纸纹、日期、签名一起带上）
+    if (k === "diary") {
+      const ex = document.createElement("button");
+      ex.id = "xk-diary-export"; ex.className = "xk-ph-act"; ex.disabled = true;
+      ex.setAttribute("aria-label", "把这篇日记导出成图片"); ex.innerHTML = svg("export");
+      ex.onclick = () => exportSheet();
+      p.querySelector(".xk-ph").appendChild(ex);
+    }
   }
   const body = (k) => $(`#xk-p-${k} .xk-pb`);
   function movePill() {
@@ -673,7 +682,7 @@
     const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     const days = $("#xk-days");
     days.innerHTML = diaryDays.map((d) => `<button class="xk-day xk-press${d === diaryDay ? " on" : ""}" data-d="${d}">${wd[new Date(d + "T12:00").getDay()]}<b>${+d.slice(8)}</b></button>`).join("");
-    days.onclick = (e) => { const b = e.target.closest(".xk-day"); if (!b || b.dataset.d === diaryDay) return; diaryDay = b.dataset.d; days.querySelectorAll(".xk-day").forEach((x) => x.classList.toggle("on", x === b)); SFX.play("tab"); drawLeaf(true); };
+    days.onclick = (e) => { const b = e.target.closest(".xk-day"); if (!b || b.dataset.d === diaryDay) return; diaryDay = b.dataset.d; days.querySelectorAll(".xk-day").forEach((x) => x.classList.toggle("on", x === b)); SFX.play("tab"); syncDiaryExport(); drawLeaf(true); };
     requestAnimationFrame(() => days.querySelector(".on")?.scrollIntoView({ inline: "center", block: "nearest" }));
     // 日记写不写得了按真实状态说（#15）：被挡住就写原因、给去处理的按钮
     let blk = null; try { const h = await api("/api/xk/health"); const r0 = h.roles.find((x) => x.id === diaryRole); blk = r0 && r0.diary; } catch {}
@@ -683,8 +692,10 @@
     diaryFix = blk && blk.fix;
     $("#xk-dwarn")?.remove();
     if (blk && diaryDays.length) days.insertAdjacentHTML("afterend", `<p class="xk-hint xk-warn" id="xk-dwarn">${esc(rname(diaryRole))}今晚写不了：${esc(blk.why)}</p>`);
+    syncDiaryExport();
     drawLeaf(flip);
   }
+  function syncDiaryExport() { const b = $("#xk-diary-export"); if (b) b.disabled = !diaryDay || exporting || !$("#xk-leaf .body"); }
   async function drawLeaf(flip) {
     const leaf = $("#xk-leaf");
     let html;
@@ -695,9 +706,186 @@
         html = `<span class="ribbon"></span><h3>${+diaryDay.slice(5, 7)}月${+diaryDay.slice(8)}日</h3><div class="body">${esc(String(t.text || "").replace(/^#.*\n+/, "").trim())}</div><img class="sign" src="${art(ROLE[diaryRole].mark)}" alt="">`;
       } catch (e) { html = `<div class="xk-empty">${esc(e.message)}</div>`; }
     }
-    const put = () => { leaf.innerHTML = html; leaf.classList.toggle("blank", !diaryDay); const f = $("#xk-dfix", leaf); if (f) f.onclick = () => doFix(diaryFix); };
+    const put = () => { leaf.innerHTML = html; leaf.classList.toggle("blank", !diaryDay); const f = $("#xk-dfix", leaf); if (f) f.onclick = () => doFix(diaryFix); syncDiaryExport(); };
     if (flip && moving()) { leaf.classList.remove("flip"); void leaf.offsetWidth; leaf.classList.add("flip"); setTimeout(put, 250); }
     else put();
+  }
+
+  // 日记导出成图片：照屏幕上的纸纹、日期、横线和签名画一张（不在页面里截屏，长日记也整篇放得下）
+  const imgOf = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("图片没读出来")); i.src = src; });
+  function roundPath(c, x, y, w, h) {
+    const [tl, tr, br, bl] = [6, 16, 16, 6];
+    c.beginPath();
+    c.moveTo(x + tl, y);
+    c.lineTo(x + w - tr, y); c.arcTo(x + w, y, x + w, y + tr, tr);
+    c.lineTo(x + w, y + h - br); c.arcTo(x + w, y + h, x + w - br, y + h, br);
+    c.lineTo(x + bl, y + h); c.arcTo(x, y + h, x, y + h - bl, bl);
+    c.lineTo(x, y + tl); c.arcTo(x, y, x + tl, y, tl);
+    c.closePath();
+  }
+  // 中文按字断，拉丁词尽量落在空格处
+  function wrapLines(c, text, maxW) {
+    const out = [];
+    for (const para of text.split("\n")) {
+      if (!para) { out.push(""); continue; }
+      let line = "";
+      for (const ch of para) {
+        if (!line || c.measureText(line + ch).width <= maxW) { line += ch; continue; }
+        const sp = line.lastIndexOf(" ");
+        if (sp > 0 && /[A-Za-z0-9,.;:!?'")\]}]/.test(ch)) { out.push(line.slice(0, sp)); line = line.slice(sp + 1) + ch; }
+        else if (line.length > 1 && /[，。！？、；：）》】」』”’…—,.!?;:)\]}%]/.test(ch)) {
+          // 别让标点落在行首：把上一个字一起挪到下一行
+          out.push(line.slice(0, -1)); line = line.slice(-1) + ch;
+        } else { out.push(line); line = ch; }
+      }
+      out.push(line);
+    }
+    return out;
+  }
+  const fontOf = (el, sizeFallback) => {
+    const s = getComputedStyle(el);
+    return `${s.fontStyle || "normal"} ${s.fontWeight || "400"} ${s.fontSize || sizeFallback} ${s.fontFamily || "serif"}`;
+  };
+  async function diaryCanvas(role, date, text) {
+    const leaf = $("#xk-leaf"), bodyEl = leaf?.querySelector(".body"), titleEl = leaf?.querySelector("h3");
+    if (!leaf || !bodyEl) throw new Error("日记还没画出来");
+    try { await document.fonts.ready; } catch {}
+    const cs = getComputedStyle(leaf), root2 = getComputedStyle(document.documentElement);
+    const titleFont = titleEl ? fontOf(titleEl, "20px") : "400 20px serif";
+    const bodyFont = fontOf(bodyEl, "15.5px");
+    try { await Promise.all([document.fonts.load(bodyFont, "你好"), document.fonts.load(titleFont, "日记")]); } catch {}
+    const fg = cs.color || "#333";
+    const line = root2.getPropertyValue("--line").trim() || "rgba(0,0,0,.12)";
+    const bg = root2.getPropertyValue("--bg").trim() || "#f3efe8";
+    const bg2 = root2.getPropertyValue("--bg2").trim() || "#fff";
+    let paperUrl = (cs.backgroundImage || "").match(/url\(["']?(.*?)["']?\)/)?.[1];
+    if (!paperUrl) {
+      const dir = ROLE[role]?.dir || role, dark = root.dataset.theme === "dark";
+      paperUrl = "/xk-art/" + (role === "xiaoke" ? (dark ? "deco/paper_dark" : "deco/paper_light")
+        : `diary/paper_${dir}_${dark ? "dark" : "light"}`) + ".webp";
+    }
+    const [paper, sign] = await Promise.all([
+      imgOf(paperUrl).catch(() => null),
+      imgOf(art(ROLE[role]?.mark || ROLE.xiaoke.mark)).catch(() => null),
+    ]);
+
+    const W = 440, M = 18;
+    const padT = parseFloat(cs.paddingTop) || 22, padR = parseFloat(cs.paddingRight) || 22;
+    const padB = parseFloat(cs.paddingBottom) || 26, padL = parseFloat(cs.paddingLeft) || 26;
+    const tcs = titleEl ? getComputedStyle(titleEl) : null;
+    const titleSize = parseFloat(tcs?.fontSize) || 20, titleLine = titleSize * 1.2, titleGap = 12;
+    const bcs = getComputedStyle(bodyEl);
+    const bodySize = parseFloat(bcs.fontSize) || 15.5, lineH = parseFloat(bcs.lineHeight) || bodySize * 2.05;
+    const bodyText = String(text || "").replace(/^#.*\n+/, "").trim();
+    const meter = document.createElement("canvas").getContext("2d");
+    meter.font = bodyFont;
+    const lines = wrapLines(meter, bodyText, W - padL - padR);
+    const bodyStart = padT + titleLine + titleGap;
+    const H = Math.max(360, bodyStart + Math.max(lineH, lines.length * lineH) + padB);
+
+    const totalW = W + M * 2, totalH = H + M * 2;
+    let scale = Math.min(2.5, 1080 / totalW);
+    if (totalH * scale > 10000) scale = 10000 / totalH;
+    if (scale < .75) throw new Error("这篇日记太长，一张图放不下");
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(totalW * scale); cv.height = Math.round(totalH * scale);
+    const c = cv.getContext("2d");
+    c.scale(scale, scale);
+
+    c.fillStyle = bg; c.fillRect(0, 0, totalW, totalH);
+    c.save();
+    c.shadowColor = "rgba(0,0,0,.18)"; c.shadowBlur = 18 * scale; c.shadowOffsetY = 5 * scale;
+    roundPath(c, M, M, W, H); c.fillStyle = bg2; c.fill();
+    c.restore();
+
+    c.save();
+    roundPath(c, M, M, W, H); c.clip();
+    c.translate(M, M);
+    c.fillStyle = bg2; c.fillRect(0, 0, W, H);
+    if (paper) {
+      const pat = c.createPattern(paper, "repeat");
+      if (pat) {
+        try { pat.setTransform(new DOMMatrix([256 / paper.width, 0, 0, 256 / paper.height, 0, 0])); } catch {}
+        c.fillStyle = pat; c.fillRect(0, 0, W, H);
+      }
+    }
+    const lgrad = c.createLinearGradient(0, 0, 30, 0);
+    lgrad.addColorStop(0, "rgba(0,0,0,.14)"); lgrad.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = lgrad; c.fillRect(0, 0, 30, H);
+    c.restore();
+
+    c.save();
+    c.globalAlpha = .85; c.fillStyle = fg;
+    const rx = M + W - 28 - 14, ry = M - 6;
+    c.beginPath(); c.moveTo(rx, ry); c.lineTo(rx + 14, ry); c.lineTo(rx + 14, ry + 64);
+    c.lineTo(rx + 7, ry + 52.5); c.lineTo(rx, ry + 64); c.closePath(); c.fill();
+    c.restore();
+
+    c.save();
+    c.textAlign = "left"; c.textBaseline = "middle"; c.fillStyle = fg;
+    c.font = titleFont;
+    c.fillText(`${+date.slice(5, 7)}月${+date.slice(8)}日`, M + padL, M + padT + titleLine / 2);
+    c.font = bodyFont;
+    const x0 = M + padL, x1 = M + W - padR, y0 = M + bodyStart;
+    c.strokeStyle = line; c.lineWidth = 1;
+    for (let i = 1; i <= lines.length; i++) {
+      c.beginPath(); c.moveTo(x0, y0 + i * lineH - 1); c.lineTo(x1, y0 + i * lineH - 1); c.stroke();
+    }
+    lines.forEach((ln, i) => { if (ln) c.fillText(ln, x0, y0 + i * lineH + lineH / 2); });
+    c.restore();
+
+    if (sign) c.drawImage(sign, M + W - 18 - 34, M + H - 14 - 34, 34, 34);
+    const blob = await new Promise((ok, no) => cv.toBlob((b) => (b ? ok(b) : no(new Error("图片没生成出来"))), "image/png"));
+    return blob;
+  }
+  function exportSheet() {
+    if (!diaryDay) return;
+    const d = diaryDay;
+    openSheet(`<h2>导出这篇日记</h2><p class="sub">${esc(rname(diaryRole))} · ${+d.slice(5, 7)}月${+d.slice(8)}日 · 纸纹、横线和签名一起做成一张图</p>
+      <button class="xk-wide xk-press" id="xk-dl-save">保存图片</button>
+      ${shell ? '<button class="xk-wide xk-soft xk-press" id="xk-dl-share">分享图片</button>' : ""}`,
+      (s) => {
+        $("#xk-dl-save", s).onclick = () => { closeSheet(); drawDiaryImage(false); };
+        const sh = $("#xk-dl-share", s); if (sh) sh.onclick = () => { closeSheet(); drawDiaryImage(true); };
+      });
+  }
+  let exporting = false;
+  async function drawDiaryImage(share) {
+    if (exporting || !diaryDay) return;
+    exporting = true; syncDiaryExport();
+    toast("正在做图", "纸纹、字和签名一起画，稍等");
+    try {
+      const role = diaryRole, date = diaryDay;
+      const t = await api(`/api/xk/diary/${role}/${date}`);
+      const blob = await diaryCanvas(role, date, String(t.text || ""));
+      const name = `${rname(role)}的日记 ${date}.png`;
+      const r = await fetch(`/api/xk/diary/export?role=${encodeURIComponent(role)}&date=${encodeURIComponent(date)}`,
+        { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+      let j;
+      if (r.status === 404) {
+        // 网关还没换上新版（导出接口是后加的）：退回附件上传，先把图存下来
+        const u = await fetch("/api/upload?name=" + encodeURIComponent(name), { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+        const uj = await u.json().catch(() => ({}));
+        if (!u.ok || uj.ok === false) throw new Error(uj.error || uj.message || "HTTP " + u.status);
+        j = { path: uj.path, name };
+      } else {
+        j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.message || j.error || "HTTP " + r.status);
+      }
+      if (share) {
+        const s = await api("/api/app/share_file", { method: "POST", body: { path: j.path } });
+        if (!s.ok) throw new Error(s.message || "分享失败");
+        toast("发出去了", j.name);
+      } else if (shell && shell.saveAs) {
+        shell.saveAs(j.path, j.name, "image/png");
+      } else {
+        const u = URL.createObjectURL(blob), a = document.createElement("a");
+        a.href = u; a.download = j.name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 10000);
+        toast("图片做好了", j.name);
+      }
+    } catch (e) { fail(e); }
+    exporting = false; syncDiaryExport();
   }
 
   // ── 我的页（主人 11-02 定的：伴侣设置；上游整套设置和工具收进「开发者」）──
@@ -824,7 +1012,7 @@
         ["chat", "聊天、思考与步骤", "消息发给正在聊的那位。她想事情、动手做事的过程会展开给你看，这一轮结束再收成一行，点一下还能翻开。输入框左边的「+」能附文件、拍照、截屏；输入框下的型号可以换，换成另一家的型号就是换人。顶栏右边开新对话，左上角是对话列表，按三个人分组，长按一段能置顶、重命名、导出、删除。"],
         ["roles", "三位住客与替班", "小克用 Claude，哈基米用 Gemini（在她的卡片里登录 Google），小鱼用 DeepSeek。谁的额度用完了，就按角色页的「替班顺序」由下一位接着聊，接班的人会拿到前面几轮的说明；原来那位额度恢复后自动交回，接着原来那段。你手动换的人不会被自动换回去。下班前她们会在角色页的留言板上留张便条，写清事情办到哪了；你也可以贴一张给她们。"],
         ["memory", "记忆", "三个人各记各的，互相看不到；同一个人不管从哪儿聊都是同一套记忆。聊着聊着她自己会记，闲下来会自动整理。记忆页能看、能改、能标成「已过去」、能让她忘掉。"],
-        ["diary", "日记", "每晚十点后，三个人各写一篇，素材是当天的对话。小克的日记走定时任务，要在「开发者 → 定时任务」底部打开「订阅账户」才写得了；哪天写不了，日记页和「我的」顶上的健康卡会说原因。"],
+        ["diary", "日记", "每晚十点后，三个人各写一篇，素材是当天的对话。小克的日记走定时任务，要在「开发者 → 定时任务」底部打开「订阅账户」才写得了；哪天写不了，日记页和「我的」顶上的健康卡会说原因。想留一份的话，点日记页右上角，可以连纸纹一起存成图片。"],
         ["developer", "开发者", "cccodroid 原本的完整设置、终端、文件、git、扩展、定时任务、项目、脉络和原版帮助，都收在「我的 → 开发者」。平时用不到，出了问题或者想折腾时再去。"],
       ];
       b.innerHTML = H.map(([k, t, p]) => `<section class="xk-help"><img src="${art("help/help_" + k)}" alt=""><h3>${t}</h3><p>${p}</p></section>`).join("");
@@ -975,7 +1163,8 @@
   }
 
   // ── 启动：等上游的顶栏和 __cc 就绪 ──
-  applyRole("xiaoke", false);
+  // 刷新时先按上次的角色上色，等 syncRole 查到当前会话再纠正；别先画成小克再跳（会像「试图切到小克」）
+  applyRole(LS.get("role", "xiaoke"), false);
   (function boot() {
     if (!mountHead() || !window.__cc) return setTimeout(boot, 300);
     movePill(); syncRole(true).catch(() => {});
