@@ -573,7 +573,7 @@
   }
 
   // ── 日记页 ──
-  let diaryRole = null, diaryDay = null, diaryDays = [];
+  let diaryRole = null, diaryDay = null, diaryDays = [], diaryFix = null;
   async function renderDiary() {
     if (!ROLES) await loadRoles();
     diaryRole = diaryRole || cur.role || "xiaoke";
@@ -588,26 +588,32 @@
     if (!diaryDay || !diaryDays.includes(diaryDay)) diaryDay = diaryDays[diaryDays.length - 1] || null;
     const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     const days = $("#xk-days");
-    days.innerHTML = diaryDays.map((d) => `<button class="xk-day xk-press${d === diaryDay ? " on" : ""}" data-d="${d}">${wd[new Date(d + "T12:00").getDay()]}<b>${+d.slice(8)}</b></button>`).join("")
-      || `<span class="xk-hint" style="margin:0">${r.pending?.length ? "素材攒着呢，今晚十点后写第一篇" : ""}</span>`;
+    days.innerHTML = diaryDays.map((d) => `<button class="xk-day xk-press${d === diaryDay ? " on" : ""}" data-d="${d}">${wd[new Date(d + "T12:00").getDay()]}<b>${+d.slice(8)}</b></button>`).join("");
     days.onclick = (e) => { const b = e.target.closest(".xk-day"); if (!b || b.dataset.d === diaryDay) return; diaryDay = b.dataset.d; days.querySelectorAll(".xk-day").forEach((x) => x.classList.toggle("on", x === b)); SFX.play("tab"); drawLeaf(true); };
     requestAnimationFrame(() => days.querySelector(".on")?.scrollIntoView({ inline: "center", block: "nearest" }));
-    const note = diaryRole === "xiaoke" ? "小克走订阅账号：要在定时任务页底部打开「订阅账户」，她才写得了日记。" : "";
-    $("#xk-leaf").dataset.note = note;
+    // 日记写不写得了按真实状态说（#15）：被挡住就写原因、给去处理的按钮
+    let blk = null; try { const h = await api("/api/xk/health"); const r0 = h.roles.find((x) => x.id === diaryRole); blk = r0 && r0.diary; } catch {}
+    const leaf = $("#xk-leaf");
+    leaf.dataset.r = ROLE[diaryRole].dir || diaryRole;
+    leaf.dataset.note = blk ? "现在写不了：" + blk.why : r.pending?.length ? "素材攒着呢，今晚十点后写第一篇" : "每晚十点后，她会根据当天的聊天写一篇";
+    diaryFix = blk && blk.fix;
+    $("#xk-dwarn")?.remove();
+    if (blk && diaryDays.length) days.insertAdjacentHTML("afterend", `<p class="xk-hint xk-warn" id="xk-dwarn">${esc(rname(diaryRole))}今晚写不了：${esc(blk.why)}</p>`);
     drawLeaf(flip);
   }
   async function drawLeaf(flip) {
     const leaf = $("#xk-leaf");
     let html;
-    if (!diaryDay) html = `<div class="xk-empty"><img src="${art("deco/empty_diary")}" alt="">${rname(diaryRole)}还没写过日记<br>${esc(leaf.dataset.note || "每晚十点后，她会根据当天的聊天写一篇")}</div>`;
+    if (!diaryDay) html = `<div class="xk-empty"><img class="xk-cover" src="${art("diary/cover_" + leaf.dataset.r)}" alt="">${rname(diaryRole)}还没写过日记<br>${esc(leaf.dataset.note)}${diaryFix ? '<button class="xk-mini xk-press" id="xk-dfix">去处理</button>' : ""}</div>`;
     else {
       try {
         const t = await api(`/api/xk/diary/${diaryRole}/${diaryDay}`);
         html = `<span class="ribbon"></span><h3>${+diaryDay.slice(5, 7)}月${+diaryDay.slice(8)}日</h3><div class="body">${esc(String(t.text || "").replace(/^#.*\n+/, "").trim())}</div><img class="sign" src="${art(ROLE[diaryRole].mark)}" alt="">`;
       } catch (e) { html = `<div class="xk-empty">${esc(e.message)}</div>`; }
     }
-    if (flip && moving()) { leaf.classList.remove("flip"); void leaf.offsetWidth; leaf.classList.add("flip"); setTimeout(() => { leaf.innerHTML = html; }, 250); }
-    else leaf.innerHTML = html;
+    const put = () => { leaf.innerHTML = html; leaf.classList.toggle("blank", !diaryDay); const f = $("#xk-dfix", leaf); if (f) f.onclick = () => doFix(diaryFix); };
+    if (flip && moving()) { leaf.classList.remove("flip"); void leaf.offsetWidth; leaf.classList.add("flip"); setTimeout(put, 250); }
+    else put();
   }
 
   // ── 我的页（主人 11-02 定的：伴侣设置；上游整套设置和工具收进「开发者」）──
