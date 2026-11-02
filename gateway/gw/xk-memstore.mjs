@@ -39,13 +39,41 @@ function locked(dir, fn) {
 export const today = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** 记一条。ends：这条让哪些旧记忆不再成立，旧的标成已过去（until = 这条的日期）留着 */
+// ── 时间锚兜底：提示词要她把「昨天」「下周六」换成日期，漏了的这里按记下那天换掉。旁边已经写了日期的不动 ──
+const ymd = (d) => today(d);
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const WD = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
+const DAYW = { 大前天: -3, 前天: -2, 昨天: -1, 今天: 0, 明天: 1, 后天: 2, 大后天: 3 };
+const NIGHT = { 昨晚: -1, 今晚: 0, 明晚: 1 };
+const REL = /(上|这|本|下)(?:个)?(?:周|星期|礼拜)([一二三四五六日天])|(上|这|本|下)(?:个)?(?:周|星期|礼拜)|(上|这|本|下)个月|大前天|大后天|前天|昨天|今天|明天|后天|昨晚|今晚|明晚/g;
+const DATED = /\d{4}-\d{1,2}-\d{1,2}|\d{4}年|\d{1,2}月\d{1,2}[日号]/;
+export function anchorDates(text, said = new Date()) {
+  const d0 = new Date(said.getFullYear(), said.getMonth(), said.getDate());
+  const monday = addDays(d0, -((d0.getDay() + 6) % 7));
+  const shift = (w) => (w === "上" ? -7 : w === "下" ? 7 : 0);
+  return String(text).replace(REL, (hit, w1, wd, w2, w3, at, src) => {
+    const near = src.slice(Math.max(0, at - 12), at + hit.length + 12);
+    if (DATED.test(near)) return hit;
+    if (wd) return ymd(addDays(monday, shift(w1) + WD[wd] - 1));
+    if (w2) return ymd(addDays(monday, shift(w2))) + " 那周";
+    if (w3) { const m = new Date(d0.getFullYear(), d0.getMonth() + (w3 === "上" ? -1 : w3 === "下" ? 1 : 0), 1); return `${m.getFullYear()}年${m.getMonth() + 1}月`; }
+    if (hit in NIGHT) return ymd(addDays(d0, NIGHT[hit])) + "晚上";
+    return ymd(addDays(d0, DAYW[hit]));
+  });
+}
+// 去重用：去掉空白和标点后一字不差，算同一条
+const norm = (s) => String(s).replace(/[\s\p{P}\p{S}]+/gu, "").toLowerCase();
+
+/** 记一条。ends：这条让哪些旧记忆不再成立，旧的标成已过去（until = 这条的日期）留着。
+ *  已经有一字不差、还没过去的同一条，就不再记一遍，返回那条（dup: true） */
 export function remember(dir, m) {
-  const text = String(m.text || "").trim();
+  const text = anchorDates(String(m.text || "").trim());
   if (!text) throw new Error("text 不能为空");
   const kind = KINDS.includes(m.kind) ? m.kind : "fact";
   const date = DATE.test(m.date || "") ? m.date : today();
   return locked(dir, (list) => {
+    const same = list.find((x) => !x.past && norm(x.text) === norm(text));
+    if (same && ![].concat(m.ends || []).length) return { ...same, dup: true };
     for (const id of [].concat(m.ends || [])) {
       const old = list.find((x) => x.id === id);
       if (!old) throw new Error("ends 里的 id 不存在：" + id);

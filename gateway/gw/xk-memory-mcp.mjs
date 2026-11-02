@@ -40,7 +40,7 @@ function call(name, a) {
   if (name === "remember") {
     const info = runInfo();
     const m = remember(dir, { ...a, channel: info.channel || "app", source: { runId: process.env.CCAPP_RUN_ID || null, sessionId: info.sessionId || null } });
-    return `记下了：${line(m)}`;
+    return m.dup ? `已经记着一模一样的了，没再记一遍：${line(m)}` : `记下了：${line(m)}`;
   }
   if (name === "recall") {
     const hits = search(dir, a.query, Number(a.limit) || 8);
