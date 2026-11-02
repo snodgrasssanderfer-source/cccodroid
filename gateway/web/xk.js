@@ -624,9 +624,10 @@
     await loadMem();
   }
   async function loadMem() { memItems = (await api("/api/xk/memory?role=" + memRole)).items || []; drawMem(); }
+  // 本地日期 YYYY-MM-DD（x 天前）：toISOString 是 UTC，每天 0–8 点会错一天（#16）
+  const localDay = (x = 0) => { const d = new Date(Date.now() - x * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
   function memGroup(d) {
-    // 按本地日期：toISOString 是 UTC，每天 0–8 点「今天 / 昨天」会错一天（#16）
-    const day = (x) => { const d = new Date(Date.now() - x * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+    const day = localDay;
     return d === day(0) ? "今天" : d === day(1) ? "昨天" : d >= day(7) ? "这一周" : d.slice(0, 7).replace("-", " 年 ") + " 月";
   }
   function drawMem() {
@@ -647,7 +648,7 @@
       el.querySelectorAll("[data-a]").forEach((b) => b.onclick = async () => {
         const url = `/api/xk/memory/${memRole}/${encodeURIComponent(m.id)}`;
         try {
-          if (b.dataset.a === "past") { await api(url, { method: "PATCH", body: { past: !m.past, until: m.past ? "" : new Date().toISOString().slice(0, 10) } }); m.past = !m.past; SFX.play("toggle"); drawMem(); }
+          if (b.dataset.a === "past") { await api(url, { method: "PATCH", body: { past: !m.past, until: m.past ? "" : localDay() } }); m.past = !m.past; SFX.play("toggle"); drawMem(); }
           else if (b.dataset.a === "del") {
             if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "再点一次就忘掉"; return; }
             await api(url, { method: "DELETE" }); SFX.play("sheet"); el.classList.add("gone");
