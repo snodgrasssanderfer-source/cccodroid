@@ -154,7 +154,8 @@ export function runAgy(item, extra = {}) {
     writeAgents(); ensureMcp();
     if (!extra.internal) parent = appendTurn(sid, "user", item.message, null);
   } catch (e) { emit({ type: "error", message: "哈基米准备失败：" + e.message }); finish({ failed: true }); return; }
-  if (isNew) { rememberSession(sid); emit({ type: "init", sessionId: sid, model: "antigravity" }); }
+  // 内部轮次（整理记忆）不记成「最近的会话」，不然开机会打开它（#8）
+  if (isNew) { if (!extra.internal) rememberSession(sid); emit({ type: "init", sessionId: sid, model: "antigravity" }); }
   const p = warmProc(sid, !!extra.internal, runId);
   clearTimeout(p.timer);
   if (!extra.internal) copyChannel(runId, p.runKey);

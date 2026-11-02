@@ -2,7 +2,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { LIVE, log } from "./config.mjs";
+import { CFG, LIVE, log } from "./config.mjs";
+import { findSessionFile, peekSession } from "./sessions.mjs";
 import { NEXT, readBody, sendJson } from "./http.mjs";
 import { publish } from "./bus.mjs";
 import { START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
@@ -143,7 +144,10 @@ addRoute(async (req, res, u, p) => {
   if (p === "/api/xk/session-role" && req.method === "GET") {
     const sid = u.searchParams.get("sid");
     const r = sid ? roleOfSession(sid) : roleById(STATE.active);
-    return sendJson(res, 200, { role: r ? r.id : null, active: STATE.active, origin: sid ? STATE.origin[sid] || null : null });
+    // cwd：这段会话在哪个目录跑的（「我的 → 开发工具 → git」打开它；没有会话就是工作区）
+    let cwd = null;
+    if (sid) { try { const f = findSessionFile(String(sid)); cwd = (f && peekSession(f.file).cwd) || null; } catch {} }
+    return sendJson(res, 200, { role: r ? r.id : null, active: STATE.active, origin: sid ? STATE.origin[sid] || null : null, cwd: cwd || (r ? roleDir(r.id) : CFG.workspace) });
   }
   if (p === "/api/xk/switch" && req.method === "POST") {
     // 手动切换：之后的新会话落到这个角色；从某个会话切过来的，第一条消息带上那段对话

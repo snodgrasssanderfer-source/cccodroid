@@ -5,7 +5,8 @@ import path from "node:path";
 import { CFG } from "./config.mjs";
 import { readBody } from "./http.mjs";
 import { TOKEN } from "./access.mjs";
-import { enqueue } from "./queue.mjs";
+import { END_HOOKS, START_GUARDS, enqueue } from "./queue.mjs";
+import { LAST_SESSION, forgetSession, rememberSession } from "./runs.mjs";
 import { ROLES, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { recentText } from "./xk-transcript.mjs";
 
@@ -80,6 +81,23 @@ export function writeCarry(role, runId, text) {
 
 // 网关自己发起的轮次（空闲整理、日记补写）：auto 非空，外壳就不发「跑完了」通知；结束后各模块按 kind 收尾
 export const INTERNAL = new Map();
+// 网关自己起的轮次（整理记忆、定时任务写日记、空闲压缩）开跑时会把「最近的会话」记成它，
+// 界面开机就照这个打开——主人一打开 App 看到的是一段整理记忆的对话（#8）。开跑前记下原来那段，跑完换回去
+const PREV_LAST = new Map();
+START_GUARDS.push((q) => {
+  if (q.internal || q.sched || q.auto) {
+    PREV_LAST.set(q.id, LAST_SESSION ? LAST_SESSION.id : null);
+    if (PREV_LAST.size > 200) PREV_LAST.delete(PREV_LAST.keys().next().value);
+  }
+  return true;
+});
+END_HOOKS.push((run) => {
+  if (!PREV_LAST.has(run.id)) return;
+  const prev = PREV_LAST.get(run.id); PREV_LAST.delete(run.id);
+  if (!LAST_SESSION || LAST_SESSION.id !== run.sessionId) return;   // 主人这期间自己开了别的会话：那才是最近的
+  if (prev) rememberSession(prev); else forgetSession();
+});
+
 export function internalRun(kind, body, extra = {}) {
   const item = enqueue({ internal: true, unattended: true, auto: "xk-" + kind, ...body });
   INTERNAL.set(item.id, { kind, ...extra });

@@ -20,6 +20,12 @@ html.xk-vt { transition: none !important; }
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 /* 角色配色盖住了外观风格，设置里「风格」那一行就不显示了；深浅照旧能选 */
 .sc:has(> #seg-skin), div:has(> .sc > #seg-skin) { display: none !important; }
+/* 上游设置里藏掉的（主人 11-02 定的，#16）：
+   失效的——顶栏按钮（工具条被我们藏了，15 个选项都不起作用）；
+   和「我的」重复的——深浅、界面动效（「我的」里的开关写的就是它们）；
+   重复的——Claude 行为里的「自动压缩窗口」（和接口与型号里的压缩线是同一个值，留滑杆）；
+   和角色配色、人设冲突的——强调色、头像与昵称 */
+.srow.tb-row, .srow.ac-row, .srow:has(#prof-av), .srow:has(#seg-mode), .srow:has(#seg-motion), .srow:has(#set-autocompact) { display: none !important; }
 
 /* ── 底部五栏 ── */
 #xk-tabs { display: grid; grid-template-columns: repeat(5, 1fr); position: relative; flex: none; z-index: 26; background: var(--bar-bg); border-top: 1px solid var(--line);
@@ -183,5 +189,5 @@ html.xk .msg.bot .bubble { font-family: var(--font-read); }
 @keyframes xk-bob { 50% { transform: translateY(-5px); } }
 html.xk #composer { position: relative; }
 
-html[data-xk-motion="off"] *, html[data-xk-motion="off"] *::before, html[data-xk-motion="off"] *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+html[data-motion="off"] .xk-page, html[data-motion="off"] .xk-page *, html[data-motion="off"] #xk-tabs *, html[data-motion="off"] #xk-sheet, html[data-motion="off"] #xk-toast, html[data-motion="off"] #xk-peek, html[data-motion="off"] #xk-face * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 @media (prefers-reduced-motion: reduce) { .xk-page, .xk-leaf, #xk-peek, #xk-sheet, #xk-toast { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
