@@ -241,8 +241,8 @@
   }
   setInterval(() => syncRole().catch(() => {}), 1000);
 
-  /** 手动换角色：开一个新会话落到那个角色，第一条消息带上刚才那段对话（网关 /api/xk/switch）；
-   *  从接班会话换回原角色时网关给 resume，打开她原来那段接着聊（#1） */
+  /** 手动换角色：网关给 resume 就打开她最近那段接着聊（交回原角色时是被替班前那段，#1），没有才开新会话；
+   *  第一条消息带上刚才那段对话（网关 /api/xk/switch） */
   async function switchRole(id) {
     const cc = window.__cc, from = cc.view.sessionId || null;
     const r = await api("/api/xk/switch", { method: "POST", body: { to: id, fromSessionId: from } });
@@ -251,7 +251,7 @@
     else { cc.newConversation(); cc.view.projectId = r.projectId; }
     await loadRoles();
     applyRole(id, true);
-    toast(r.resume ? `换回${rname(id)}了` : `换成${rname(id)}了`, r.resume ? "接着你们原来那段，下一条会带上她不在时聊的" : from ? "下一条消息会带上刚才的对话" : "", sprite(id, "wave"));
+    toast(r.resume ? `换回${rname(id)}了` : `换成${rname(id)}了`, r.resume ? "接着你们上回那段，下一条会带上刚才聊的" : from ? "下一条消息会带上刚才的对话" : "", sprite(id, "wave"));
     return r;
   }
 
@@ -453,7 +453,7 @@
       <div class="xk-facts"><div><b>${r.imported ? r.personaChars + " 字" : "还没导入"}</b>人设</div><div><b>共用</b>世界书</div><div><b>${mem.items.length} 条</b>记忆</div><div><b>${dia.days.length} 篇</b>日记</div></div>
       <div class="xk-list" style="margin-top:12px"><label class="xk-row xk-press" style="cursor:pointer"><span class="k">导入人设<small>.txt，「【一】system_prompt」那样分三段；没有标记就整篇当人设</small></span>${svg("go")}<input type="file" id="xk-pf" hidden></label>
       ${id === "hachimi" ? `<div id="xk-agy"><div class="xk-row"><span class="k">Google 账号（Antigravity）<small>查询中…</small></span></div></div>` : ""}</div>
-      <button class="xk-wide xk-press" id="xk-talk"${z ? " disabled" : ""}>${z ? "她睡着了" : id === cur.role ? "回去聊天" : `换${rname(id)}来聊（开新会话）`}</button>`, (s) => {
+      <button class="xk-wide xk-press" id="xk-talk"${z ? " disabled" : ""}>${z ? "她睡着了" : id === cur.role ? "回去聊天" : `换${rname(id)}来聊`}</button>`, (s) => {
       $("#xk-talk", s).onclick = () => { closeSheet(); go(0); if (id !== cur.role) setTimeout(() => switchRole(id).catch(fail), 380); };
       $("#xk-pf", s).onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
