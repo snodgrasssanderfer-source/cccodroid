@@ -9,8 +9,9 @@ import { publish } from "./bus.mjs";
 import { spawn } from "node:child_process";
 import { END_HOOKS } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
-import { providerById } from "./providers.mjs";
-import { claudeCmd, claudeEnv, killTree, settingsArgs } from "./claude.mjs";
+import { PROVIDER, providerById } from "./providers.mjs";
+import { isLoginMode } from "./models.mjs";
+import { claudeCmd, claudeEnv, ensureBridge, killTree, settingsArgs } from "./claude.mjs";
 import { roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { line, load, remember, remove, search, today, update } from "./xk-memstore.mjs";
@@ -49,9 +50,11 @@ export const cheapModel = (P) => CHEAP[P.id] || P.fastModel || P.defaultModel ||
 const WORK = path.join(XK_HOME, "ask");   // 一次性调用的工作目录：不在角色目录里，就不读人设、不跑 hook、不挂记忆工具
 /** 问一次、拿回文字：不给工具、不留会话。{ text } 或 { error } */
 export const ASK = {
-  claude(prompt, role) {
+  async claude(prompt, role) {
     const P = providerById(role.provider);
-    if (!P) return Promise.resolve({ error: `${role.name}的接口（${role.provider}）没配` });
+    if (!P) return { error: `${role.name}的接口（${role.provider}）没配` };
+    // 她那家正好是全局那家、又不是登录模式时，claude 走本地 DNS 桥（同 autotitle）
+    if (P.id === PROVIDER.id && !isLoginMode() && !(await ensureBridge())) return { error: "本地 DNS 桥启动失败，连不上接口" };
     const model = cheapModel(P);
     return new Promise((resolve) => {
       fs.mkdirSync(WORK, { recursive: true });
@@ -106,6 +109,7 @@ export function parse(text, known) {
   return o.memories.map((m) => {
     if (!m || typeof m.text !== "string" || !m.text.trim()) throw new Error("有一条没有 text：" + JSON.stringify(m).slice(0, 200));
     const ends = [].concat(m.ends ?? []).map((n) => {
+      if (typeof n === "string" && /^\d+$/.test(n)) n = Number(n);
       if (!Number.isInteger(n) || !known[n]) throw new Error(`ends 里的编号 ${JSON.stringify(n)} 不在旧记忆里（只有 0–${known.length - 1}）`);
       return known[n].id;
     });

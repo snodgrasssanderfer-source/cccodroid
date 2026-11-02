@@ -62,6 +62,7 @@ test("解析失败和没东西可记分得开", () => {
   assert.throws(() => parse("整理好了", []), /不是 JSON/);
   assert.throws(() => parse('{"ok":true}', []), /没有 memories/);
   assert.deepEqual(parse('{"memories":[]}', []), []);
+  assert.deepEqual(parse('{"memories":[{"text":"x","ends":["0"]}]}', [{ id: "ab12cd34" }])[0].ends, ["ab12cd34"], "编号写成字符串也认");
 });
 
 test("没东西可记：不报错，这段算整理过了", async () => {
