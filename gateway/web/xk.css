@@ -233,3 +233,9 @@ html.xk-kb .xk-page { bottom: 0; }
 html.xk-kb #hint-row { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
 html.xk-kb #hint-row::-webkit-scrollbar { display: none; }
 
+
+/* 侧栏只留对话，按三个人分组 */
+html.xk #side-nav, html.xk #side-new, html.xk #side-acct { display: none; }
+.sr-g.xk-sg { display: flex; align-items: center; gap: 6px; color: var(--c); }
+.sr-g.xk-sg img { width: 18px; height: 18px; }
+.sr-item .xk-pin { font-size: 11px; color: var(--accent); margin-inline-end: 6px; }

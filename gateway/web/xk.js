@@ -139,7 +139,7 @@
   // ── 产品名：上游界面框架里写「cccodroid」的地方显示成「小克」，路径和链接里的不动（和外壳 Xk.brand 同一条规则）。
   //    只认下面这几块界面框架；消息、记忆、日记、文件、帮助正文、开源声明这些内容一律不碰（#13：以前整页替换，把「基于 cccodroid 修改」也改了）
   const BRAND = /(?<![\/\w.-])cccodroid(?![\/\w.-])/g;
-  const UI_SCOPE = "#set-ov, #toast, #topbar, .drawer-head, .acct-row, #pages .page-head, .wn-head, #notice-pop .wn-head";
+  const UI_SCOPE = "#set-ov, #toast, #topbar, .drawer-head, #side-title, .acct-row, #pages .page-head, .wn-head, #notice-pop .wn-head";
   const CONTENT = "#chat, .msg, .xk-page, #xk-sheet, #help-body, #viewer, #files, #term, input, textarea, [contenteditable], code, pre";
   const inUi = (el) => el && el.closest && el.closest(UI_SCOPE) && !el.closest(CONTENT);
   // 只在真的换了时才写回：写回本身会再触发观察器，路径里的 cccodroid 换不掉，每次都写就成了死循环
@@ -794,6 +794,34 @@
     addEventListener("orientationchange", () => { base = 0; setTimeout(kb, 400); });
     kb();
   }
+
+  // ── 侧栏只留对话，按三个人分组（主人 11-02 定的）：导航、新对话、账户行和底栏 / 顶栏 / 我的重复，藏掉（CSS）。
+  //    上游每次重画最近对话，这里接着按会话目录归到三个人名下重画一遍；条目沿用上游的 .sr-item[data-sid]，
+  //    点开、长按菜单还是上游自己的委托处理；分组标题用上游的折叠（data-sgfold，记在 cc.sideFold）
+  const SIDE_MAX = 30;
+  const roleOfCwd = (cwd) => { const m = /\/roles\/(xiaoke|hachimi|deepseek)(\/|$)/.exec(cwd || ""); return m ? m[1] : ""; };
+  // 自动起名只剩标点、空白的（主人发一个「。」试反应），换成时间（#16 第 6 条）
+  const sideTitle = (x) => (/[\p{L}\p{N}]/u.test(x.title || "") ? x.title : ((d) => `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} 的对话`)(new Date(x.mtime)));
+  function paintSide() {
+    const box = $("#side-recent"), c = cc();
+    if (!box || !c || box.firstElementChild?.classList.contains("xk-side")) return;
+    const list = (c.state.sessions || []).filter((x) => !x.misc || x.id === c.view.sessionId);
+    if (!list.length) return;
+    const runs = c.srv.runs || [], live = new Set(runs.filter((x) => !x.idle).map((x) => x.sessionId)), ask = new Set(runs.filter((x) => x.perms && x.perms.length).map((x) => x.sessionId));
+    let shut = new Set(); try { shut = new Set(JSON.parse(localStorage.getItem("cc.sideFold") || "[]")); } catch {}
+    const ids = [...(ROLES ? ROLES.order : Object.keys(ROLE)), ""];
+    const row = (x) => `<button class="sr-item${x.id === c.view.sessionId ? " on" : ""}" data-sid="${esc(x.id)}" title="${esc(x.title)}">${ask.has(x.id) ? '<i class="sr-dot ask"></i>' : live.has(x.id) ? '<i class="sr-dot"></i>' : ""}<span>${x.pinned ? '<small class="xk-pin">置顶</small>' : ""}${esc(sideTitle(x))}</span></button>`;
+    box.innerHTML = `<div class="xk-side"></div>` + ids.map((id) => {
+      const l = list.filter((x) => roleOfCwd(x.cwd) === id).sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || b.mtime - a.mtime);
+      if (!l.length) return "";
+      const k = "xk-" + (id || "other"), s = shut.has(k);
+      return `<h4 class="sr-g xk-sg${s ? " shut" : ""}" data-sgfold="${k}" role="button" aria-expanded="${!s}" style="--c:${id ? rc(id) : "var(--fg3)"}"><svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>${id ? `<img src="${art(ROLE[id].mark)}" alt="">` : ""}<span>${id ? rname(id) : "其他"}</span>${s ? `<em>${l.length}</em>` : ""}</h4>`
+        + (s ? "" : l.slice(0, SIDE_MAX).map(row).join("") + (l.length > SIDE_MAX ? '<button class="sr-all" data-all>全部对话</button>' : ""));
+    }).join("") + `<div class="sr-hint">长按一段对话：置顶、重命名、导出、删除</div>`;
+  }
+  let sideQ = 0;
+  const sideObs = () => { const box = $("#side-recent"); if (!box) return setTimeout(sideObs, 500); new MutationObserver(() => { if (!sideQ) sideQ = requestAnimationFrame(() => { sideQ = 0; paintSide(); }); }).observe(box, { childList: true }); paintSide(); };
+  sideObs();
 
   // ── 启动：等上游的顶栏和 __cc 就绪 ──
   applyRole("xiaoke", false);
