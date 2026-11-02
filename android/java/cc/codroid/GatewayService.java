@@ -240,7 +240,7 @@ public class GatewayService extends Service {
             new Intent(this, GatewayService.class).setAction(ACTION_STOP).putExtra(MainActivity.IK, MainActivity.intentKey(this)),
             PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CH)
-            .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            .setSmallIcon(Xk.icon(this, android.R.drawable.stat_sys_upload_done))   // xk: 小橙花
             .setContentTitle(Xk.NAME)   // xk
             .setContentText(text)
             .setOngoing(true)

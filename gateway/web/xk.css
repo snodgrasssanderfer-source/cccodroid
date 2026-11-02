@@ -105,6 +105,16 @@ html.xk-cover #xk-tabs { display: none; }
 .xk-day.on b { color: var(--accent); }
 .xk-book { perspective: 1400px; }
 .xk-leaf { position: relative; background: var(--bg2); border-radius: 6px 16px 16px 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, .08), inset 10px 0 18px -14px rgba(0, 0, 0, .35); padding: 22px 22px 26px 26px; min-height: 360px; transform-origin: left center; }
+/* 每人一种纸纹（第 2 版美术）：小克是第 1 版的暖白纸 */
+.xk-leaf { background-size: 256px; background-image: url(/xk-art/deco/paper_light.webp); }
+.xk-leaf[data-r="hachimi"] { background-image: url(/xk-art/diary/paper_hachimi_light.webp); }
+.xk-leaf[data-r="xiaoyu"] { background-image: url(/xk-art/diary/paper_xiaoyu_light.webp); }
+html[data-theme="dark"] .xk-leaf { background-image: url(/xk-art/deco/paper_dark.webp); }
+html[data-theme="dark"] .xk-leaf[data-r="hachimi"] { background-image: url(/xk-art/diary/paper_hachimi_dark.webp); }
+html[data-theme="dark"] .xk-leaf[data-r="xiaoyu"] { background-image: url(/xk-art/diary/paper_xiaoyu_dark.webp); }
+.xk-leaf.blank { background: none; box-shadow: none; }
+.xk-empty img.xk-cover { width: 168px; height: 224px; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .12)); }
+.xk-empty .xk-mini { margin-top: 8px; background: var(--accent); color: var(--on-accent); }
 .xk-leaf.flip { animation: xk-flip .55s var(--xk-ease); }
 @keyframes xk-flip { 45%, 55% { transform: rotateY(-70deg); opacity: .4; } }
 .xk-leaf h3 { font: 400 20px var(--xk-title); margin: 0 0 12px; }
@@ -113,10 +123,35 @@ html.xk-cover #xk-tabs { display: none; }
 .xk-leaf .sign { position: absolute; inset-inline-end: 18px; bottom: 14px; width: 34px; height: 34px; }
 
 /* 我的页 */
-.xk-mecard { display: flex; align-items: center; gap: 14px; background: var(--bg2); border-radius: 18px; padding: 14px; }
-.xk-mecard img { width: 60px; height: 60px; }
-.xk-mecard b { font-size: 17px; }
-.xk-mecard p { margin: 2px 0 0; font-size: 12px; color: var(--fg3); }
+/* 我的：健康卡（#15）、六个分区、滑进来的一层 */
+.xk-health { display: flex; align-items: center; gap: 12px; background: var(--bg2); border-radius: 18px; padding: 10px 14px 10px 8px; }
+.xk-health img { width: 84px; height: 84px; flex: none; }
+.xk-health b { font-size: 16px; }
+.xk-health p { margin: 3px 0 0; font-size: 12px; color: var(--fg3); line-height: 1.5; }
+.xk-health:not(.ok) { border-radius: 18px 18px 0 0; }
+.xk-hlist { border-radius: 0 0 16px 16px; border-top: 1px solid var(--line); }
+.xk-hlist .xk-mini { flex: none; background: var(--accent); color: var(--on-accent); }
+.xk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.xk-sects { display: grid; gap: 10px; margin-top: 16px; }
+.xk-page .xk-sect { position: relative; height: 92px; border-radius: 18px; background-color: var(--bg2); background-repeat: no-repeat; background-position: right center; background-size: auto 100%; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 0 18px; text-align: start; overflow: hidden; }
+.xk-sect b { font: 400 19px var(--xk-title); letter-spacing: .03em; }
+.xk-sect small { font-size: 12px; color: var(--fg3); margin-top: 2px; max-width: 48%; }
+.xk-sub { position: absolute; inset: 0; z-index: 2; background: var(--bg); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .38s var(--xk-ease); }
+.xk-sub.on { transform: none; }
+.xk-subh { position: relative; flex: none; height: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 132px); background-color: var(--bg2); background-repeat: no-repeat; background-position: right bottom; background-size: auto 132px; display: flex; align-items: flex-end; padding: 0 16px 14px; }
+.xk-subh h2 { font: 400 26px var(--xk-title); letter-spacing: .04em; margin: 0; }
+.xk-back { position: absolute; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 8px); left: 8px; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--fg); }
+.xk-back svg { width: 22px; height: 22px; }
+.xk-subb { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 4px max(16px, env(safe-area-inset-right, 0px)) 28px max(16px, env(safe-area-inset-left, 0px)); }
+.xk-warn { color: var(--warn, #c77a1a); }
+.xk-ustats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.xk-ustat { background: var(--bg2); border-radius: 16px; padding: 12px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; border-top: 3px solid var(--c); }
+.xk-ustat img { width: 34px; height: 34px; }
+.xk-ustat b { font-size: 14px; margin: 4px 0 6px; }
+.xk-ustat dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px 8px; font-size: 12px; }
+.xk-ustat dt { color: var(--fg3); text-align: end; }
+.xk-ustat dd { margin: 0; text-align: start; font-variant-numeric: tabular-nums; }
+.xk-ustat .xk-hint { font-size: 11px; margin: 0; }
 .xk-list { background: var(--bg2); border-radius: 16px; overflow: hidden; }
 .xk-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; text-align: start; }
 .xk-row + .xk-row { border-top: 1px solid var(--line); }
@@ -198,3 +233,52 @@ html.xk-kb .xk-page { bottom: 0; }
 html.xk-kb #hint-row { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
 html.xk-kb #hint-row::-webkit-scrollbar { display: none; }
 
+
+/* 侧栏只留对话，按三个人分组 */
+html.xk #side-nav, html.xk #side-new, html.xk #side-acct { display: none; }
+.sr-g.xk-sg { display: flex; align-items: center; gap: 6px; color: var(--c); }
+.sr-g.xk-sg img { width: 18px; height: 18px; }
+.sr-item .xk-pin { font-size: 11px; color: var(--accent); margin-inline-end: 6px; }
+
+/* 「+」菜单去重（主人 11-02 定的）：新会话在顶栏，用量在我的，配置 / MCP / 子代理 / 能力在我的 → 开发者 */
+html.xk #sheet .sheet-item:is([data-act="new"], [data-act="cost"], [data-act="usage"], [data-act="config"], [data-act="mcp"], [data-act="agents"], [data-act="caps"]) { display: none; }
+
+/* 伴侣版帮助 */
+.xk-help { margin: 8px 0 22px; }
+.xk-help img { display: block; width: min(100%, 300px); aspect-ratio: 3 / 2; margin: 0 auto 4px; object-fit: contain; }
+.xk-help h3 { font: 400 19px var(--xk-title); letter-spacing: .03em; margin: 0 0 6px; }
+.xk-help p { margin: 0; font-size: 14px; line-height: 1.85; color: var(--fg2); }
+
+/* 上游整页盖住聊天顶栏，标题行前一个返回 */
+html.xk #pages { top: 0; z-index: 40; padding-top: var(--safe-tt, env(safe-area-inset-top, 0px)); }
+.xk-pback { flex: none; margin-inline-start: -8px; }
+html.xk #pages .xk-pback svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round !important; }
+.xk-pbar { margin: 0 0 4px !important; }
+
+/* 空对话：上游的标志换成正在聊的那位「坐着等你开口」（第 2 版 state/<人>/no_chat） */
+html.xk .wl-mark { display: none; }
+html.xk .wl-hero::before { content: ""; flex: 0 0 100%; height: min(32vh, 200px); background: no-repeat center / contain url(/xk-art/state/xiaoke/no_chat.webp); }
+html[data-xk-role="hachimi"] .wl-hero::before { background-image: url(/xk-art/state/hachimi/no_chat.webp); }
+html[data-xk-role="deepseek"] .wl-hero::before { background-image: url(/xk-art/state/xiaoyu/no_chat.webp); }
+
+/* 第一次打开的引导：图在中下，字在上面留白处 */
+#xk-ob { position: fixed; inset: 0; z-index: 120; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; opacity: 0; transition: opacity .4s var(--xk-ease); }
+#xk-ob.on { opacity: 1; }
+#xk-ob button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.xk-ob-skip { position: absolute; z-index: 2; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 10px); inset-inline-end: 12px; padding: 8px 12px; color: var(--fg3) !important; font-size: 14px !important; }
+.xk-ob-track { flex: 1; display: flex; transition: transform .5s var(--xk-ease); min-height: 0; }
+.xk-ob-track section { flex: 0 0 100%; position: relative; min-height: 0; }
+/* 图上方本来就留了白给字：字压在图的空白处，图能放到最大 */
+.xk-ob-tx { position: absolute; z-index: 1; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 60px); inset-inline: 28px; margin: 0 auto; text-align: center; max-width: 420px; }
+.xk-ob-tx h2 { font: 400 28px var(--xk-title); letter-spacing: .05em; margin: 0 0 10px; }
+.xk-ob-tx p { margin: 0; font-size: 15px; line-height: 1.8; color: var(--fg2); }
+.xk-ob-track img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+.xk-ob-foot { flex: none; padding: 14px 24px calc(env(safe-area-inset-bottom, 0px) + 22px); display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.xk-ob-dots { display: flex; gap: 7px; }
+.xk-ob-dots i { width: 7px; height: 7px; border-radius: 4px; background: var(--line); transition: width .35s var(--xk-spring), background .35s; }
+.xk-ob-dots i.on { width: 20px; background: var(--accent); }
+.xk-ob-btns { display: flex; gap: 10px; width: 100%; max-width: 420px; }
+.xk-ob-go { flex: 1; padding: 14px !important; border-radius: 16px; background: var(--accent) !important; color: var(--on-accent) !important; font-size: 16px !important; }
+.xk-ob-alt { display: none; padding: 14px 18px !important; border-radius: 16px; background: var(--bg2) !important; }
+.xk-ob-alt.on { display: block; }
+html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-duration: .01ms !important; }

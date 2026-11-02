@@ -207,7 +207,7 @@ final class Notify {
         String sid = sidOf(ev);
         // 每个会话各留最新一条：并行时几个会话先后跑完，不互相顶掉
         nm.notify(TAG_DONE, sid.isEmpty() ? ID_DONE : sid.hashCode(), new Notification.Builder(ctx, CH_DONE)
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setSmallIcon(Xk.icon(ctx, android.R.drawable.stat_notify_chat))   // xk: 小橙花
             .setContentTitle(failed ? Tr.t("出错了") : Tr.t("已完成"))
             .setContentText(clip(text == null || text.isEmpty() ? Tr.t("这一轮跑完了") : text, 80))
             .setContentIntent(openIntent(sid, 0))
@@ -221,7 +221,7 @@ final class Notify {
         String sid = ev.optString("sessionId");
         String key = "sched:" + ev.optString("taskId");
         nm.notify(TAG_DONE, key.hashCode(), new Notification.Builder(ctx, CH_DONE)
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setSmallIcon(Xk.icon(ctx, android.R.drawable.stat_notify_chat))   // xk: 小橙花
             .setContentTitle(clip(ev.optString("title"), 60))
             .setContentText(clip(ev.optString("text"), 80))
             .setStyle(new Notification.BigTextStyle().bigText(clip(ev.optString("text"), 400)))
@@ -282,7 +282,7 @@ final class Notify {
         String v = "";
         try { v = c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName; } catch (Exception ignored) {}
         n.nm.notify(TAG_DONE, 0x5eed, new Notification.Builder(c, CH_DONE)
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setSmallIcon(Xk.icon(c, android.R.drawable.stat_notify_chat))   // xk: 小橙花
             .setContentTitle(Tr.f("cccodroid 已更新到 v{0}", v))
             .setContentText(Tr.t("点此打开即可继续使用"))
             .setContentIntent(n.openIntent("", 5))
