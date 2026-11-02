@@ -61,6 +61,11 @@ node scripts/test.mjs            # 全部网关测试；只跑一部分：node s
 
 测试在临时目录里跑，碰不到真数据。`scripts/test.mjs` 会自己避开写不进的 `/tmp`，改用 `~/.cache`。
 
+手机上跑测试的坑（11-02 小克实测）：
+- 要写成 `TMPDIR=$(realpath "$TMPDIR") node scripts/test.mjs`：手机上同一个目录有 `/data/user/0/…` 和 `/data/data/…` 两种写法，不 realpath 的话 `registry-flock` 夹具对不上路径直接退出。代码里比较路径也要先 realpath（`roleOfDir` 就栽过）。
+- `audit1101` 的 B20 在手机上必挂（测试临时目录里的 git 钩子 Permission denied），干净的 `dev` 也一样；B22 要 `yq`，装了命令行增强模块就能过。
+- WebView 调试口（`~/.webdebug`）连得上，可以直接试连 `webview_devtools_remote_<pid>`；用它截图别带缩放参数，不然界面会临时缩到左上角。
+
 要看界面或接口，就用克隆里的代码另起一个网关，换端口、换家目录，跟正在用的 App 互不干扰：
 
 ```sh
@@ -79,7 +84,7 @@ cat $S/home/.gateway-token        # 令牌
 
 1. **先备份**：`cp files/app/gw/xk-agy.mjs files/app/gw/xk-agy.mjs.orig`。
 2. 改 `web/` 下的文件：重载界面就生效（长按顶栏标题重建页面）。
-3. 改 `gw/` 或 `server.mjs`：要重启网关。找到网关进程 `pgrep -f files/app/server.mjs`，`kill` 它，外壳的前台服务过几秒会自动重新拉起。
+3. 改 `gw/` 或 `server.mjs`：要重启网关。找网关进程别用 `pgrep -f files/app/server.mjs`（会把命令行里带这串字的 shell 也抓到、连自己一起杀），按「命令行第一项是 linker64 或 node、后面跟着 files/app/server.mjs」过滤出 PID 再 `kill`，外壳的前台服务过几秒会自动重新拉起。重启会把网关拉起的子进程一起收走，后台脚本要另找托管。
    - **你自己就是网关拉起来的子进程**：重启网关会把你这一轮一起结束，界面上会出现「被中断 · 继续」。所以重启放在一轮的最后一步做，并先跟主人说一声。
    - 确认生效：看 `files/home/gateway.log` 的启动行，或者请求一下你改的那个接口。
 4. **网关起不来了怎么办**：拿 `.orig` 换回去再 kill 一次。实在不行，让主人删掉 `files/app/TAG`、在系统设置里强行停止 App 再打开，App 会从 APK 里重新部署一份原样的。
