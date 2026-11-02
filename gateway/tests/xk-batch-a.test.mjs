@@ -52,3 +52,9 @@ test("#8 网关自己起的轮次跑完，「最近的会话」换回原来那�
   end({ id: "int-2", sessionId: "diary-sid" });
   assert.equal(LAST_SESSION.id, "user-sid-2");
 });
+
+test("#8 网关自己起的轮次开跑时就不记成「最近的会话」：中途被清后台也不会停在它上面", () => {
+  const src = fs.readFileSync(new URL("../gw/run.mjs", import.meta.url), "utf8");
+  assert.match(src, /if \(!\(item\.internal \|\| item\.sched \|\| item\.auto\)\) rememberSession\(run\.sessionId\)/);
+  assert.doesNotMatch(src, /^\s*rememberSession\(run\.sessionId\);/m);
+});
