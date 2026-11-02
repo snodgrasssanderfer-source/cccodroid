@@ -9,7 +9,7 @@ import { trashSession } from "./sessionops.mjs";
 import { findSessionFile } from "./sessions.mjs";
 import { roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
-import { load, remove, today, update } from "./xk-memstore.mjs";
+import { line, load, remove, search, today, update } from "./xk-memstore.mjs";
 import { ENGINE_RUN, INTERNAL, STATE, addRoute, httpError, internalRun, json, projectOf, saveState } from "./xk-core.mjs";
 
 // 停多久算「这段聊完了」：太短会把一段话拆成好几次整理，太长主人第二天回来时还没记
@@ -43,11 +43,14 @@ export function consolidate(sid) {
   if (!talk.some((t) => t.role === "user")) { delete STATE.memDirty[sid]; saveState(); return null; }
   const until = talk[talk.length - 1].at;
   const text = talk.map((t) => `${t.role === "user" ? "主人" : "你"}（${new Date(t.at).toLocaleString("zh-CN", { hour12: false })}）：${t.text}`).join("\n");
+  // 相关的旧记忆网关先挑好放进来：便宜档不用一条条 recall 就能去重、判断哪条不再成立（旧项目 MemoryConsolidator 的做法）
+  const known = search(roleDir(role.id), text, 15).map(line).join("\n");
   const message = `今天是 ${today()}。下面是你和主人刚才的一段对话。整理你的长期记忆：\n` +
-    `1. 先用 recall 查查相关的旧记忆，避免重复。\n` +
-    `2. 把以后用得上的事实、发生的事、计划用 remember 记下来，日期都写成具体日期（"昨天""下周"换算好），who 写清是谁的事。你自己的看法这里不补记——那是你在聊天里亲口记的。\n` +
-    `3. 和旧记忆冲突、或事情变了的：记新的，并把旧记忆的 id 放进 ends。\n` +
-    `4. 只记对话里真有的；闲聊客套、你刚才已经记过的就不用再记。做完回复"整理好了"。\n\n---\n${text}`;
+    `1. 下面附了可能相关的旧记忆；不够再用 recall 查。旧记忆里已经有的同一件事不要再记。\n` +
+    `2. 把以后用得上的事实、发生的事、计划用 remember 记下来，每条写成单独看得懂的一句话；日期按那句话是哪天说的，换成具体日期（"昨天""下周六"换算好），who 写清是谁的事。你自己的看法这里不补记——那是你在聊天里亲口记的。\n` +
+    `3. 新内容让某条旧记忆明确不再成立（改了主意、换了安排、事情结束了）：记新的，并把旧记忆的 id 放进 ends。只是补充进展、两条能同时成立的，不要写 ends。\n` +
+    `4. 只记对话里真有的；闲聊客套、你刚才已经记过的就不用再记。做完回复"整理好了"。\n\n` +
+    `可能相关的旧记忆（只用来去重和判断，不从这里摘）：\n${known || "（没有）"}\n\n---\n${text}`;
   let item;
   if (role.engine === "claude") item = internalRun("memory", {
     message, projectId: projectOf(role.id), permissionMode: "default", model: CHEAP[role.provider] || null,

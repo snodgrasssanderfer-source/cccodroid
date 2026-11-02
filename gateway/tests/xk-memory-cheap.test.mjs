@@ -9,6 +9,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { consolidate } from "../gw/xk-memory.mjs";
+import { remember } from "../gw/xk-memstore.mjs";
 
 ensureRoles();
 STATE.projects = { xiaoke: "p-x", hachimi: "p-h", deepseek: "p-d" };
@@ -26,10 +27,12 @@ const session = (role, sid) => {
 };
 
 test("小克的整理轮用 haiku；DeepSeek 用她自己的默认（本来就是 flash）", () => {
+  const old = remember(roleDir("xiaoke"), { text: "主人周六想去爬山", kind: "plan" });
   const x = consolidate(session("xiaoke", "dddddddd-4444-4444-8444-000000000001"));
   assert.ok(x, "有内容就起一轮");
   assert.equal(x.model, "haiku");
   assert.doesNotMatch(x.message, /你自己的看法用 remember/);
+  assert.ok(x.message.includes(old.id), "相关旧记忆先挑好放进提示，便宜档不用一条条 recall");
   const d = consolidate(session("deepseek", "dddddddd-4444-4444-8444-000000000002"));
   assert.equal(d.model, null);
 });
