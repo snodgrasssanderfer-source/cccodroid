@@ -38,6 +38,10 @@ final class Xk {
         }
     }
 
+    /** 备用的发布列表：发版时传进最新那个 Release 的 releases.json（形状同 API）。
+     *  走 github.com 的下载地址，不受 api.github.com 对未登录请求每小时 60 次的限流——开着 VPN 时出口 IP 很多人共用，额度常被用光（11-02 真机 HTTP 403） */
+    static String backupFeed() { return "https://github.com/" + repo() + "/releases/latest/download/releases.json"; }
+
     /** 发布列表对应的 owner/repo，拼 Release 下载地址用 */
     static String repo() {
         Matcher m = Pattern.compile("api\\.github\\.com/repos/([^/]+/[^/?]+)/releases").matcher(feed());

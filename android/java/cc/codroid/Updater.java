@@ -384,7 +384,7 @@ final class Updater {
             else devkit.set("error", lastError);
         }
         if (rels != null) {
-            try { checkApp(rels); if (mirror && !"error".equals(app.state)) app.message = app.message.isEmpty() ? Tr.t("来自 cccodroid.net 镜像") : app.message + Tr.t(" · 来自 cccodroid.net 镜像"); }
+            try { checkApp(rels); if (mirror && !"error".equals(app.state)) app.message = app.message.isEmpty() ? Tr.t("GitHub 接口被限流，看的是 Release 里附带的列表") : app.message + Tr.t(" · GitHub 接口被限流，看的是 Release 里附带的列表"); }   // xk:
             catch (Exception e) { app.set("error", e.getMessage()); }
             // 首装还没完成（工具包没装好）就别查工具包：那时读不到已装的模块，planModules 会按「整包用户」规划成全部模块，
             // 自动更新在 Wi‑Fi 下把它们全下好，首装刚按勾选装完，启动流程又把这份「已下载的更新」装上 —— 勾了两个、装了八个（群友 10-24）
@@ -404,7 +404,7 @@ final class Updater {
      * 返回 {GitHub 的列表, 镜像的列表}，没取到的是 null
      */
     private JSONArray[] fetchLists(String[] ghErr) {
-        final String[] urls = { feed(), MIRROR + "/dl/releases.json", DL + "/dl/releases.json" };
+        final String[] urls = { feed(), Xk.backupFeed(), DL + "/dl/releases.json" };   // xk: 镜像那条换成 Release 里附带的列表
         final JSONArray[] got = new JSONArray[3];
         final String[] err = new String[3];
         final boolean[] fin = new boolean[3];

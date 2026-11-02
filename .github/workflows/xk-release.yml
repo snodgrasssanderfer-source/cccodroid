@@ -105,3 +105,7 @@ jobs:
             echo "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"; } > "$notes"
           gh release create "$TAG" dist/cccodroid-36.apk dist/cccodroid.apk --target "$GITHUB_SHA" \
             --title "小克 $TAG" --notes-file "$notes"
+          # App 的备用发布列表（Xk.backupFeed）：api.github.com 被限流时，它从 releases/latest/download/releases.json 读这份。
+          # 建好 Release 之后再取，列表里才有这一版和它的两个 APK
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" > "$RUNNER_TEMP/releases.json"
+          gh release upload "$TAG" "$RUNNER_TEMP/releases.json"
