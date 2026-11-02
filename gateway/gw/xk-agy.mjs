@@ -89,7 +89,8 @@ function writeAgents() {
 function ensureMcp() {
   const f = path.join(CFG.home, ".gemini", "config", "mcp_config.json");
   let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
+  // agy 第一次跑会建一个 0 字节的空文件（11-02 真机）：当空配置；里面有东西却不是 JSON 才报错，不覆盖主人的文件
+  try { const t = fs.readFileSync(f, "utf8"); if (t.trim()) cfg = JSON.parse(t); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
   cfg.mcpServers ||= {};
   const want = { command: process.execPath, args: [MEM_MCP, DIR] };
   if (JSON.stringify(cfg.mcpServers["xk-memory"]) === JSON.stringify(want)) return;
@@ -228,17 +229,20 @@ export function agyLoginUrl(raw) {
 }
 /** agy models：登录了就列出能用的模型，没登录只回一句「Please sign in」；不花额度，拿来当登录状态 */
 let MODELS = { at: 0, auth: null, list: [] };
-function checkModels(force) {
+/** agy models 的 stdout → [{ id, label }]。1.4.12 实测每行「代号<Tab>名字」；没 Tab 的行按「代号 名字」拆。
+ *  只认 stdout：stderr 里是「ERROR: logging before google.Init…」「Fetching available models...」这类日志，以前混进来当成了模型 */
+export function parseModels(out) {
+  return plain(String(out || "")).split("\n").map((l) => l.replace(/^[-*•>\s]+/, "").trimEnd()).filter((l) => l && !/^fetching|^available|^[-─=]+$/i.test(l))
+    .map((l) => { const [id, ...rest] = l.includes("\t") ? l.split("\t") : l.split(/\s+/); return { id: id.trim(), label: rest.join(l.includes("\t") ? "\t" : " ").trim() || id.trim() }; })
+    .filter((m) => /^[A-Za-z0-9._/-]+$/.test(m.id));
+}
+export function checkModels(force) {
   if (!force && Date.now() - MODELS.at < 60000) return Promise.resolve(MODELS);
   return new Promise((ok) => execFile(AGY, ["models"], { encoding: "utf8", timeout: 45000, env: agyEnv(), maxBuffer: 1 << 20 }, (e, out, err) => {
     const text = plain(String(out || "") + "\n" + String(err || ""));
     if (/sign in|not signed in|log ?in/i.test(text)) MODELS = { at: Date.now(), auth: false, list: [] };
     else if (e && !text.trim()) MODELS = { at: Date.now(), auth: null, list: [], error: e.message };
-    else {
-      const list = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^fetching|^available|^[-─=]+$/i.test(l))
-        .map((l) => ({ id: l.replace(/^[-*•>\s]+/, "").split(/\s+/)[0], label: l.replace(/^[-*•>\s]+/, "") })).filter((m) => /^[A-Za-z0-9._:/-]+$/.test(m.id));
-      MODELS = { at: Date.now(), auth: true, list };
-    }
+    else MODELS = { at: Date.now(), auth: true, list: parseModels(out) };
     if (MODELS.auth === false) { STATE.agyAuth = false; saveState(); } else if (MODELS.auth && STATE.agyAuth === false) { delete STATE.agyAuth; saveState(); }
     ok(MODELS);
   }));
