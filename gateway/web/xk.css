@@ -113,10 +113,35 @@ html.xk-cover #xk-tabs { display: none; }
 .xk-leaf .sign { position: absolute; inset-inline-end: 18px; bottom: 14px; width: 34px; height: 34px; }
 
 /* 我的页 */
-.xk-mecard { display: flex; align-items: center; gap: 14px; background: var(--bg2); border-radius: 18px; padding: 14px; }
-.xk-mecard img { width: 60px; height: 60px; }
-.xk-mecard b { font-size: 17px; }
-.xk-mecard p { margin: 2px 0 0; font-size: 12px; color: var(--fg3); }
+/* 我的：健康卡（#15）、六个分区、滑进来的一层 */
+.xk-health { display: flex; align-items: center; gap: 12px; background: var(--bg2); border-radius: 18px; padding: 10px 14px 10px 8px; }
+.xk-health img { width: 84px; height: 84px; flex: none; }
+.xk-health b { font-size: 16px; }
+.xk-health p { margin: 3px 0 0; font-size: 12px; color: var(--fg3); line-height: 1.5; }
+.xk-health:not(.ok) { border-radius: 18px 18px 0 0; }
+.xk-hlist { border-radius: 0 0 16px 16px; border-top: 1px solid var(--line); }
+.xk-hlist .xk-mini { flex: none; background: var(--accent); color: var(--on-accent); }
+.xk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.xk-sects { display: grid; gap: 10px; margin-top: 16px; }
+.xk-page .xk-sect { position: relative; height: 92px; border-radius: 18px; background-color: var(--bg2); background-repeat: no-repeat; background-position: right center; background-size: auto 100%; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding: 0 18px; text-align: start; overflow: hidden; }
+.xk-sect b { font: 400 19px var(--xk-title); letter-spacing: .03em; }
+.xk-sect small { font-size: 12px; color: var(--fg3); margin-top: 2px; max-width: 48%; }
+.xk-sub { position: absolute; inset: 0; z-index: 2; background: var(--bg); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .38s var(--xk-ease); }
+.xk-sub.on { transform: none; }
+.xk-subh { position: relative; flex: none; height: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 132px); background-color: var(--bg2); background-repeat: no-repeat; background-position: right bottom; background-size: auto 132px; display: flex; align-items: flex-end; padding: 0 16px 14px; }
+.xk-subh h2 { font: 400 26px var(--xk-title); letter-spacing: .04em; margin: 0; }
+.xk-back { position: absolute; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 8px); left: 8px; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--fg); }
+.xk-back svg { width: 22px; height: 22px; }
+.xk-subb { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 4px max(16px, env(safe-area-inset-right, 0px)) 28px max(16px, env(safe-area-inset-left, 0px)); }
+.xk-warn { color: var(--warn, #c77a1a); }
+.xk-ustats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.xk-ustat { background: var(--bg2); border-radius: 16px; padding: 12px 8px; display: flex; flex-direction: column; align-items: center; text-align: center; border-top: 3px solid var(--c); }
+.xk-ustat img { width: 34px; height: 34px; }
+.xk-ustat b { font-size: 14px; margin: 4px 0 6px; }
+.xk-ustat dl { margin: 0; display: grid; grid-template-columns: auto auto; gap: 2px 8px; font-size: 12px; }
+.xk-ustat dt { color: var(--fg3); text-align: end; }
+.xk-ustat dd { margin: 0; text-align: start; font-variant-numeric: tabular-nums; }
+.xk-ustat .xk-hint { font-size: 11px; margin: 0; }
 .xk-list { background: var(--bg2); border-radius: 16px; overflow: hidden; }
 .xk-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; text-align: start; }
 .xk-row + .xk-row { border-top: 1px solid var(--line); }
