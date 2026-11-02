@@ -14,7 +14,7 @@ import { shiftEnd } from "../gw/xk-board-gw.mjs";
 const GW = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "gw");
 const BOARD = path.join(ROLES_DIR, ".board");
 ensureRoles();
-beforeEach(() => { fs.rmSync(BOARD, { recursive: true, force: true }); for (const k of Object.keys(STATE.cooldown)) delete STATE.cooldown[k]; });
+beforeEach(() => { fs.rmSync(BOARD, { recursive: true, force: true }); STATE.boardAsked = {}; for (const k of Object.keys(STATE.cooldown)) delete STATE.cooldown[k]; });
 
 test("贴、列、已读：给大家的三个人都收得到，自己贴的自己收不到，读过一次就不再带", () => {
   post(ROLES_DIR, { from: "owner", text: "晚上记得提醒我收快递" });
@@ -93,6 +93,8 @@ test("下班补一张：还有额度就补跑一轮让她自己写；这一班�
     assert.equal(ran.length, 1);
     assert.equal(ran[0][1].internal, true);
     assert.match(ran[0][0].message, /board_write[\s\S]*还差一家/);
+    assert.equal(shiftEnd({ from: "hachimi", to: "xiaoke", sid: sid(2) }), null, "问过了、主人之后没再说话：不再问");
+    STATE.boardAsked = {};
     post(ROLES_DIR, { from: "hachimi", to: "xiaoke", text: "票还差一家没比" });
     assert.equal(shiftEnd({ from: "hachimi", to: "xiaoke", sid: sid(2) }), null, "这一班写过了");
     assert.equal(ran.length, 1);

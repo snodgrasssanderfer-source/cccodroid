@@ -9,7 +9,7 @@ import { END_HOOKS } from "./queue.mjs";
 import { trashSession } from "./sessionops.mjs";
 import { findSessionFile } from "./sessions.mjs";
 import { ROLES_DIR, roleById } from "./xk-roles.mjs";
-import { ENGINE_RUN, INTERNAL, SHIFT_END, addRoute, httpError, internalRun, json, projectOf } from "./xk-core.mjs";
+import { ENGINE_RUN, INTERNAL, SHIFT_END, STATE, addRoute, httpError, internalRun, json, projectOf, saveState } from "./xk-core.mjs";
 import { cooling } from "./xk-handover.mjs";
 import { recentText, turns } from "./xk-transcript.mjs";
 import { WHO, list, post, remove, toId } from "./xk-board.mjs";
@@ -18,8 +18,12 @@ import { WHO, list, post, remove, toId } from "./xk-board.mjs";
 export function shiftEnd({ from, to, sid, reason }) {
   const role = roleById(from);
   if (!role || !sid || from === to) return null;
-  const last = Math.max(0, ...list(ROLES_DIR).filter((n) => n.from === from).map((n) => n.at));
-  if (!turns(sid, last + 1).some((t) => t.role === "user")) return null;   // 上一张便条之后主人没跟她说过话：没什么好交代的
+  // 上一张便条（或上回问过她）之后主人没跟她说过话：没什么好交代的。
+  // 问过她、她说没什么要交代的，也算数——不然主人来回换人，每换一次都多跑一轮
+  STATE.boardAsked ||= {};
+  const last = Math.max(STATE.boardAsked[from] || 0, ...list(ROLES_DIR).filter((n) => n.from === from).map((n) => n.at));
+  if (!turns(sid, last + 1).some((t) => t.role === "user")) return null;
+  STATE.boardAsked[from] = Date.now(); saveState();
   const toName = to ? roleById(to)?.name || "下一位" : "下一位";
   if (cooling(from)) {
     const talk = recentText(sid, 2, { assistant: role.name }, 1200);
