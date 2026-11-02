@@ -282,3 +282,17 @@ html[data-xk-role="deepseek"] .wl-hero::before { background-image: url(/xk-art/s
 .xk-ob-alt { display: none; padding: 14px 18px !important; border-radius: 16px; background: var(--bg2) !important; }
 .xk-ob-alt.on { display: block; }
 html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-duration: .01ms !important; }
+
+/* 留言板：便条按留言人的颜色，微微歪着贴 */
+.xk-bh { display: flex; align-items: center; justify-content: space-between; }
+.xk-notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; padding: 4px 2px; }
+.xk-page .xk-note { display: flex; flex-direction: column; gap: 6px; text-align: start; padding: 12px 12px 10px; min-height: 110px; border-radius: 4px 4px 14px 4px;
+  background: color-mix(in srgb, var(--c) 14%, var(--bg)); border-top: 4px solid var(--c); box-shadow: 0 4px 12px rgba(0, 0, 0, .07); transform: rotate(var(--r)); }
+.xk-page .xk-note:active { transform: rotate(0deg) scale(.96); }
+.xk-note small { font-size: 11.5px; color: var(--c); font-weight: 600; }
+.xk-note span { font-size: 13.5px; line-height: 1.6; color: var(--fg); display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+.xk-note em { margin-top: auto; font-style: normal; font-size: 11px; color: var(--fg3); }
+.xk-note-full { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.8; padding: 14px; border-radius: 6px 6px 16px 6px; background: color-mix(in srgb, var(--c) 14%, var(--bg)); border-top: 4px solid var(--c); }
+#xk-sheet .xk-danger { background: var(--bg3); color: var(--err); }
+#xk-tabs .xk-tab.dot { position: relative; }
+#xk-tabs .xk-tab.dot::after { content: ""; position: absolute; top: 8px; left: calc(50% + 9px); width: 7px; height: 7px; border-radius: 50%; background: var(--err, #d9534f); box-shadow: 0 0 0 2px var(--bg); }
