@@ -214,11 +214,12 @@
     paintHead(); return true;
   }
   let faceState = "idle";
+  /** 顶栏小字：只有额度用完被迫换人才写「替谁接班」；主人手动换的（origin.manual）不算接班 */
   function paintHead() {
     const id = root.dataset.xkRole || "xiaoke", f = $("#xk-face"); if (!f) return;
     f.style.backgroundImage = `url("${sprite(id, asleep(id) ? "sleeping" : faceState)}")`;
     f.querySelector("img").src = art(ROLE[id].mark);
-    $("#xk-name").innerHTML = `${esc(rname(id))}<small>${esc(ROLE[id].sub)}${cur.origin ? " · 替" + esc(rname(cur.origin.from)) + "接班" : ""}</small>`;
+    $("#xk-name").innerHTML = `${esc(rname(id))}<small>${esc(ROLE[id].sub)}${cur.origin && !cur.origin.manual ? " · 替" + esc(rname(cur.origin.from)) + "接班" : ""}</small>`;
     const inp = $("#input"); if (inp && !inp.dataset.xkPh) inp.placeholder = `和${rname(id)}说说话…`;
   }
   function face(st, ms) { faceState = st; paintHead(); clearTimeout(face.h); if (ms) face.h = setTimeout(() => { faceState = "idle"; paintHead(); }, ms); }
