@@ -166,7 +166,9 @@
     toastEl.classList.add("on"); if (err) SFX.play("error");
     clearTimeout(toast.h); toast.h = setTimeout(() => toastEl.classList.remove("on"), err ? 5000 : 3400);
   }
-  const fail = (e) => toast("没成功", e.message || String(e), null, true);
+  // 出错、断线、搜不到：用正在聊的那位那一套（第 2 版 state/<人>/）
+  const stateArt = (k, id) => { const r = id || root.dataset.xkRole || "xiaoke"; return art("state/" + (ROLE[r]?.dir || r) + "/" + k); };
+  const fail = (e) => toast("没成功", e.message || String(e), stateArt("error"), true);
   const veil = document.createElement("div"); veil.id = "xk-veil";
   const sheet = document.createElement("div"); sheet.id = "xk-sheet"; sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-modal", "true");
   document.body.append(veil, sheet);
@@ -296,6 +298,13 @@
   const follow = new Map();   // run 号 → 新会话一拿到会话号就打开（只在主人正看着被接班的那个会话时）
   (function listen() {
     const es = new EventSource("/api/events");
+    // 断了 4 秒还没连回来才说（EventSource 自己会重连，短暂抖一下不吵人）；一次断线只说一次
+    let offT = 0, offSaid = false;
+    // 断线时图也是网关给的：先取到内存里留着
+    const OFF = {};
+    for (const r of Object.keys(ROLE)) fetch(stateArt("offline", r)).then((x) => x.blob()).then((bl) => { OFF[r] = URL.createObjectURL(bl); }).catch(() => {});
+    es.onerror = () => { if (!offT) offT = setTimeout(() => { offT = 0; if (es.readyState !== 1 && !offSaid) { offSaid = true; toast("连不上了", "小屋的网关没应答，正在重连", OFF[root.dataset.xkRole] || OFF.xiaoke, true); } }, 4000); };
+    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } };
     es.onmessage = (m) => {
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
@@ -560,7 +569,7 @@
     const box = $("#xk-ml"); if (!box) return;
     const q = ($("#xk-mq")?.value || "").trim();
     const list = memItems.filter((m) => !q || m.text.includes(q) || (m.who || "").includes(q)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    if (!list.length) { box.innerHTML = `<div class="xk-empty"><img src="${art(memRole === "xiaoke" ? "xiaoke/11_memory" : "deco/empty_memory")}" alt="">${q ? "没找到相关的记忆" : `${rname(memRole)}还没有记忆<br>聊过的事停下 10 分钟后，她会自己整理进来`}</div>`; return; }
+    if (!list.length) { box.innerHTML = `<div class="xk-empty"><img src="${q ? stateArt("search_empty", memRole) : art(memRole === "xiaoke" ? "xiaoke/11_memory" : "deco/empty_memory")}" alt="">${q ? "没找到相关的记忆" : `${rname(memRole)}还没有记忆<br>聊过的事停下 10 分钟后，她会自己整理进来`}</div>`; return; }
     let html = "", last = "";
     for (const m of list) {
       const g = memGroup(m.date || ""); if (g !== last) { html += `<div class="xk-gt">${g}</div>`; last = g; }
@@ -744,11 +753,13 @@
     },
     async about(b) {
       let feed = null, ver = ""; try { feed = await api("/api/xk/update-feed"); } catch {}
-      try { ver = ((await api("/api/app/upd_status")).items || []).find((i) => i.id === "app")?.current || ""; } catch {}
-      b.innerHTML = `<div class="xk-list">${meRow("xk-a-ver", "版本", "", `<span class="v">${esc(ver || "—")}</span>`)}${meRow("xk-a-upd", "检查更新", "")}${meRow("xk-a-feed", "更新源", feed ? esc(feed.feed) : "")}</div>
+      let app = null; try { app = ((await api("/api/app/upd_status")).items || []).find((i) => i.id === "app") || null; ver = app?.current || ""; } catch {}
+      const fresh = app && app.latest && app.latest !== app.current && app.state !== "uptodate";
+      b.innerHTML = (fresh ? `<div class="xk-health xk-press" id="xk-a-new" role="button"><img src="${stateArt("update")}" alt=""><div><b>有新版本 ${esc(app.latest)}</b><p>点这里去更新</p></div></div><div style="height:12px"></div>` : "") + `<div class="xk-list">${meRow("xk-a-ver", "版本", "", `<span class="v">${esc(ver || "—")}</span>`)}${meRow("xk-a-upd", "检查更新", "")}${meRow("xk-a-feed", "更新源", feed ? esc(feed.feed) : "")}</div>
         <div class="xk-gt">开源</div><div class="xk-list">${meRow("xk-a-lic", "源代码", "小克基于 cccodroid（Apache-2.0）修改，开源声明在仓库的 NOTICE")}</div>`;
       $("#xk-a-lic", b).onclick = () => { SFX.play("tap"); openUrl("https://github.com/snodgrasssanderfer-source/cccodroid"); };
       $("#xk-a-upd", b).onclick = () => { SFX.play("tap"); cc()?.openPage("settings", "update"); };
+      $("#xk-a-new", b)?.addEventListener("click", () => $("#xk-a-upd", b).click());
       $("#xk-a-feed", b).onclick = () => openSheet(`<h2>更新源</h2><p class="sub">GitHub releases API 形状的地址，留空用默认：${esc(feed?.default || "")}</p><textarea id="xk-feed" rows="2" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:10px;font:14px var(--font-ui)">${esc(feed?.feed || "")}</textarea><button class="xk-wide xk-press" id="xk-feed-save">保存</button>`,
         (s) => { $("#xk-feed-save", s).onclick = async () => { try { const r = await api("/api/xk/update-feed", { method: "PUT", body: { feed: $("#xk-feed", s).value.trim() } }); closeSheet(); toast("保存好了", r.feed); SUB.about(b); } catch (e) { fail(e); } }; });
     },
