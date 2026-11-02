@@ -124,6 +124,10 @@ export async function consolidate(sid) {
   if (!role) { delete STATE.memDirty[sid]; saveState(); return null; }
   const talk = turns(sid, STATE.memDone[sid] || 0);
   if (!talk.some((t) => t.role === "user")) { delete STATE.memDirty[sid]; saveState(); return null; }
+  // 主人只说了一两个字、一个标点（「？」「嗯」）：没东西可记，不花一次调用；算整理过了，后面再聊照常整理（#34）
+  if (!talk.some((t) => t.role === "user" && t.text.replace(/[\s\p{P}\p{S}]/gu, "").length >= 3)) {
+    STATE.memDone[sid] = talk[talk.length - 1].at; delete STATE.memDirty[sid]; saveState(); return null;
+  }
   if (BUSY.has(sid)) return null;
   BUSY.add(sid);
   const dir = roleDir(role.id), until = talk[talk.length - 1].at;

@@ -67,7 +67,7 @@ test("解析失败和没东西可记分得开", () => {
 
 test("没东西可记：不报错，这段算整理过了", async () => {
   ASK.claude = reply('{"memories":[]}').fn;
-  const sid = session("deepseek", "eeeeeeee-0000-4000-8000-000000000003", [["user", "哈哈", now - 60000]]);
+  const sid = session("deepseek", "eeeeeeee-0000-4000-8000-000000000003", [["user", "今天天气还行哈哈", now - 60000]]);
   assert.equal(await consolidate(sid), 0);
   assert.equal(STATE.memDirty[sid], undefined);
 });
@@ -93,4 +93,18 @@ test("看法不在整理里记；哈基米走 agy 那条一次调用", async () 
   const list = load(roleDir("hachimi"));
   assert.ok(list.some((m) => m.text.includes("3 月 5 日")));
   assert.ok(!list.some((m) => m.kind === "opinion"));
+});
+
+test("主人只说了「？」「嗯嗯」：不调用模型，算整理过了；后面说了正经话照常整理（#34）", async () => {
+  const r = reply('{"memories":[]}');
+  ASK.claude = r.fn;
+  const sid = session("xiaoke", "eeeeeeee-0000-4000-8000-0000000000aa", [["user", "？", now - 90000], ["assistant", "怎么了？想聊点什么", now - 80000], ["user", "嗯嗯！", now - 70000], ["assistant", "我在呢", now - 60000]]);
+  assert.equal(await consolidate(sid), null);
+  assert.equal(r.asked.length, 0);
+  assert.equal(STATE.memDirty[sid], undefined);
+  assert.equal(STATE.memDone[sid], now - 60000);
+  session("xiaoke", sid, [["user", "？", now - 90000], ["assistant", "怎么了？想聊点什么", now - 80000], ["user", "嗯嗯！", now - 70000], ["assistant", "我在呢", now - 60000], ["user", "下周三要去体检", now - 30000], ["assistant", "记得空腹", now - 20000]]);
+  await consolidate(sid);
+  assert.equal(r.asked.length, 1);
+  assert.doesNotMatch(r.asked[0].p, /嗯嗯/);
 });
