@@ -260,3 +260,25 @@ html.xk .wl-mark { display: none; }
 html.xk .wl-hero::before { content: ""; flex: 0 0 100%; height: min(32vh, 200px); background: no-repeat center / contain url(/xk-art/state/xiaoke/no_chat.webp); }
 html[data-xk-role="hachimi"] .wl-hero::before { background-image: url(/xk-art/state/hachimi/no_chat.webp); }
 html[data-xk-role="deepseek"] .wl-hero::before { background-image: url(/xk-art/state/xiaoyu/no_chat.webp); }
+
+/* 第一次打开的引导：图在中下，字在上面留白处 */
+#xk-ob { position: fixed; inset: 0; z-index: 120; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; opacity: 0; transition: opacity .4s var(--xk-ease); }
+#xk-ob.on { opacity: 1; }
+#xk-ob button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.xk-ob-skip { position: absolute; z-index: 2; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 10px); inset-inline-end: 12px; padding: 8px 12px; color: var(--fg3) !important; font-size: 14px !important; }
+.xk-ob-track { flex: 1; display: flex; transition: transform .5s var(--xk-ease); min-height: 0; }
+.xk-ob-track section { flex: 0 0 100%; position: relative; min-height: 0; }
+/* 图上方本来就留了白给字：字压在图的空白处，图能放到最大 */
+.xk-ob-tx { position: absolute; z-index: 1; top: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 60px); inset-inline: 28px; margin: 0 auto; text-align: center; max-width: 420px; }
+.xk-ob-tx h2 { font: 400 28px var(--xk-title); letter-spacing: .05em; margin: 0 0 10px; }
+.xk-ob-tx p { margin: 0; font-size: 15px; line-height: 1.8; color: var(--fg2); }
+.xk-ob-track img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+.xk-ob-foot { flex: none; padding: 14px 24px calc(env(safe-area-inset-bottom, 0px) + 22px); display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.xk-ob-dots { display: flex; gap: 7px; }
+.xk-ob-dots i { width: 7px; height: 7px; border-radius: 4px; background: var(--line); transition: width .35s var(--xk-spring), background .35s; }
+.xk-ob-dots i.on { width: 20px; background: var(--accent); }
+.xk-ob-btns { display: flex; gap: 10px; width: 100%; max-width: 420px; }
+.xk-ob-go { flex: 1; padding: 14px !important; border-radius: 16px; background: var(--accent) !important; color: var(--on-accent) !important; font-size: 16px !important; }
+.xk-ob-alt { display: none; padding: 14px 18px !important; border-radius: 16px; background: var(--bg2) !important; }
+.xk-ob-alt.on { display: block; }
+html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-duration: .01ms !important; }

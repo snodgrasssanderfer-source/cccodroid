@@ -793,6 +793,7 @@
   const upBack = window.__ccBack;
   window.__ccBack = function () {
     try {
+      if (obEl) { if (obI) obTo(obI - 1); else obDone(); return true; }
       if (sheet.classList.contains("on")) { closeSheet(); return true; }
       if (tab === 4 && !root.classList.contains("xk-cover") && closeMeSub()) return true;
       if (typeof upBack === "function" && upBack()) return true;
@@ -877,11 +878,53 @@
   const sideObs = () => { const box = $("#side-recent"); if (!box) return setTimeout(sideObs, 500); new MutationObserver(() => { if (!sideQ) sideQ = requestAnimationFrame(() => { sideQ = 0; paintSide(); }); }).observe(box, { childList: true }); paintSide(); };
   sideObs();
 
+  // ── 第一次打开的引导（第 2 版美术 onboard/）：五页，能左右滑、能跳过；看过一次就不再出（记在本机）──
+  const OB = [
+    ["1_welcome", "欢迎回家", "这是小克的小屋。你说的话、交给她的事，她都接着。"],
+    ["2_trio", "三位住客", "小克、哈基米、小鱼，各有各的脾气，也各用各的模型。「角色」页能看她们、换人。"],
+    ["3_handover", "谁累了谁歇着", "谁的额度用完了就睡一会儿，下一位接着陪你；她醒了再接回来，话题不断。"],
+    ["4_memory", "记得你说过的", "三个人各记各的，每晚还会写一篇日记。「记忆」「日记」两页随时翻。"],
+    ["5_stay", "让她们留在后台", "系统会把后台的小克冻住，夜里的日记、闲时的整理就停了。请在系统设置里允许小克在后台运行、不做电池优化。"],
+  ];
+  let obEl = null, obI = 0;
+  function onboard() {
+    if (obEl) return;
+    obEl = document.createElement("div"); obEl.id = "xk-ob"; obEl.setAttribute("role", "dialog"); obEl.setAttribute("aria-label", "引导");
+    obEl.innerHTML = `<button class="xk-ob-skip">跳过</button><div class="xk-ob-track">${OB.map(([k, t, p]) => `<section><div class="xk-ob-tx"><h2>${t}</h2><p>${p}</p></div><img src="${art("onboard/onboard_" + k)}" alt=""></section>`).join("")}</div>
+      <div class="xk-ob-foot"><div class="xk-ob-dots">${OB.map(() => "<i></i>").join("")}</div><div class="xk-ob-btns"><button class="xk-ob-alt">进去吧</button><button class="xk-ob-go xk-press">下一步</button></div></div>`;
+    document.body.appendChild(obEl);
+    $(".xk-ob-skip", obEl).onclick = obDone;
+    $(".xk-ob-alt", obEl).onclick = obDone;
+    $(".xk-ob-go", obEl).onclick = () => {
+      if (obI < OB.length - 1) return obTo(obI + 1);
+      api("/api/app/open_app_settings", { method: "POST", body: {} }).catch(fail); obDone();
+    };
+    let x0 = null;
+    obEl.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+    obEl.addEventListener("touchend", (e) => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 50) obTo(obI + (dx < 0 ? 1 : -1)); });
+    requestAnimationFrame(() => { obEl.classList.add("on"); obTo(0); });
+  }
+  function obTo(i) {
+    obI = Math.max(0, Math.min(OB.length - 1, i));
+    $(".xk-ob-track", obEl).style.transform = `translateX(${-obI * 100}%)`;
+    obEl.querySelectorAll(".xk-ob-dots i").forEach((d, k) => d.classList.toggle("on", k === obI));
+    const last = obI === OB.length - 1;
+    $(".xk-ob-go", obEl).textContent = last ? "去允许后台运行" : "下一步";
+    $(".xk-ob-alt", obEl).classList.toggle("on", last);
+    SFX.play("tab");
+  }
+  function obDone() {
+    LS.set("onboarded", true);
+    const el = obEl; obEl = null; if (!el) return;
+    el.classList.remove("on"); setTimeout(() => el.remove(), moving() ? 400 : 0);
+  }
+
   // ── 启动：等上游的顶栏和 __cc 就绪 ──
   applyRole("xiaoke", false);
   (function boot() {
     if (!mountHead() || !window.__cc) return setTimeout(boot, 300);
     movePill(); syncRole(true).catch(() => {});
+    if (!LS.get("onboarded", false)) onboard();
   })();
   window.XK = { api, toast, go, switchRole, applyRole, SFX, petals };
 })();
