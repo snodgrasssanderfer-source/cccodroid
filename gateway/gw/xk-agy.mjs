@@ -26,7 +26,20 @@ const MANIFESTS = "https://antigravity-cli-auto-updater-974169037036.us-central1
 const MEM_MCP = fileURLToPath(new URL("./xk-memory-mcp.mjs", import.meta.url));
 STATE.agyConv ||= {};   // 我们的会话号 → agy 的 conversation_id
 
-ENGINES.agy = () => fs.existsSync(AGY) && STATE.agyAuth !== false;
+// 账号要先验证（agyVerify）时也接不了班：交给她只会再撞一次同样的错
+ENGINES.agy = () => fs.existsSync(AGY) && STATE.agyAuth !== false && !STATE.agyVerify;
+
+// Google 要求先验证账号（#2；11-01 真机 agy 1.4.12 实测）：stream-json 的 result.error 和 stderr 里是
+// 「Eligibility check failed: … not eligible for Antigravity. Verify your account to continue. … 链接」，没有 VALIDATION_REQUIRED 字样，
+// 那个词和 403 只在 agy 自己的日志里（带 validation_url）。登录本身是好的，agy models 照常列模型，所以只能在跑一轮时认出来
+const VERIFY = /verify your account|not eligible for antigravity|eligibility check failed|VALIDATION_REQUIRED/i;
+/** 是不是「要先验证账号」；是就返回 { url }（取不到链接时 url 为 null），不是返回 null */
+export function agyValidation(text) {
+  const t = String(text || "");
+  if (!VERIFY.test(t)) return null;
+  const m = /"validation_url"\s*:\s*"([^"]+)"/.exec(t) || /https:\/\/accounts\.google\.com\/[^\s"'<>]+/.exec(t);
+  return { url: m ? m[1] || m[0] : null };
+}
 
 const platform = () => (process.platform === "android" ? "android_arm64" : `linux_${process.arch === "arm64" ? "arm64" : "amd64"}`);
 
@@ -76,7 +89,8 @@ function writeAgents() {
 function ensureMcp() {
   const f = path.join(CFG.home, ".gemini", "config", "mcp_config.json");
   let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
+  // agy 第一次跑会建一个 0 字节的空文件（11-02 真机）：当空配置；里面有东西却不是 JSON 才报错，不覆盖主人的文件
+  try { const t = fs.readFileSync(f, "utf8"); if (t.trim()) cfg = JSON.parse(t); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
   cfg.mcpServers ||= {};
   const want = { command: process.execPath, args: [MEM_MCP, DIR] };
   if (JSON.stringify(cfg.mcpServers["xk-memory"]) === JSON.stringify(want)) return;
@@ -176,11 +190,17 @@ export function runAgy(item, extra = {}) {
     const ok = result && result.status === "SUCCESS";
     const reply = (result && result.response) || text;
     if (ok && reply.trim() && !extra.internal) appendTurn(sid, "assistant", reply.trim(), parent);
-    if (!ok) {
+    const verify = !ok && (agyValidation(result && result.error) || agyValidation(stderr));
+    if (verify) {
+      // 先认这个：原文里有「signing in」，别落进下面的「没登录」
+      STATE.agyVerify = { url: verify.url, at: Date.now() }; saveState();
+      emit({ type: "error", message: "哈基米：Google 要求先验证这个账号，验证之前用不了 Gemini（登录本身没问题）。" +
+        (verify.url ? `在浏览器里打开这个链接验证：${verify.url}` : "到哈基米的卡片里看看。") + " 验证完回来再发一次就行。" });
+    } else if (!ok) {
       const why = (result && result.error) || stderr.trim().split("\n").slice(-3).join(" ") || `退出码 ${code}`;
       if (/authenticat|login|sign in|未登录/i.test(why)) { STATE.agyAuth = false; saveState(); }
       emit({ type: "error", message: "哈基米（agy）：" + why });
-    } else if (STATE.agyAuth === false) { delete STATE.agyAuth; saveState(); }
+    } else if (STATE.agyAuth === false || STATE.agyVerify) { delete STATE.agyAuth; delete STATE.agyVerify; saveState(); }
     finish({ isError: !ok, subtype: result ? String(result.status) : "no_result", ...(extra.internal ? { finalText: reply } : {}) });
   });
 }
@@ -209,17 +229,20 @@ export function agyLoginUrl(raw) {
 }
 /** agy models：登录了就列出能用的模型，没登录只回一句「Please sign in」；不花额度，拿来当登录状态 */
 let MODELS = { at: 0, auth: null, list: [] };
-function checkModels(force) {
+/** agy models 的 stdout → [{ id, label }]。1.4.12 实测每行「代号<Tab>名字」；没 Tab 的行按「代号 名字」拆。
+ *  只认 stdout：stderr 里是「ERROR: logging before google.Init…」「Fetching available models...」这类日志，以前混进来当成了模型 */
+export function parseModels(out) {
+  return plain(String(out || "")).split("\n").map((l) => l.replace(/^[-*•>\s]+/, "").trimEnd()).filter((l) => l && !/^fetching|^available|^[-─=]+$/i.test(l))
+    .map((l) => { const [id, ...rest] = l.includes("\t") ? l.split("\t") : l.split(/\s+/); return { id: id.trim(), label: rest.join(l.includes("\t") ? "\t" : " ").trim() || id.trim() }; })
+    .filter((m) => /^[A-Za-z0-9._/-]+$/.test(m.id));
+}
+export function checkModels(force) {
   if (!force && Date.now() - MODELS.at < 60000) return Promise.resolve(MODELS);
   return new Promise((ok) => execFile(AGY, ["models"], { encoding: "utf8", timeout: 45000, env: agyEnv(), maxBuffer: 1 << 20 }, (e, out, err) => {
     const text = plain(String(out || "") + "\n" + String(err || ""));
     if (/sign in|not signed in|log ?in/i.test(text)) MODELS = { at: Date.now(), auth: false, list: [] };
     else if (e && !text.trim()) MODELS = { at: Date.now(), auth: null, list: [], error: e.message };
-    else {
-      const list = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^fetching|^available|^[-─=]+$/i.test(l))
-        .map((l) => ({ id: l.replace(/^[-*•>\s]+/, "").split(/\s+/)[0], label: l.replace(/^[-*•>\s]+/, "") })).filter((m) => /^[A-Za-z0-9._:/-]+$/.test(m.id));
-      MODELS = { at: Date.now(), auth: true, list };
-    }
+    else MODELS = { at: Date.now(), auth: true, list: parseModels(out) };
     if (MODELS.auth === false) { STATE.agyAuth = false; saveState(); } else if (MODELS.auth && STATE.agyAuth === false) { delete STATE.agyAuth; saveState(); }
     ok(MODELS);
   }));
@@ -284,8 +307,10 @@ function submitCode(code) {
 addRoute(async (req, res, u, p) => {
   if (p === "/api/xk/agy" && req.method === "GET") {
     const installed = fs.existsSync(AGY), m = installed ? await checkModels(u.searchParams.has("fresh")) : { auth: null, list: [] };
-    return sendJson(res, 200, { installed, path: AGY, version: installed ? version() : null, auth: m.auth, models: m.list, model: STATE.agyModel || "", platform: platform(), login: loginState() });
+    return sendJson(res, 200, { installed, path: AGY, version: installed ? version() : null, auth: m.auth, models: m.list, model: STATE.agyModel || "", platform: platform(), login: loginState(), verify: STATE.agyVerify || null });
   }
+  // 主人说验证好了：先放开，下一轮真跑时还不行会再认出来（agy models 认不出这个，没有不花额度的检查办法）
+  if (p === "/api/xk/agy/verified" && req.method === "POST") { delete STATE.agyVerify; saveState(); return sendJson(res, 200, { ok: true }); }
   if (p === "/api/xk/agy/install" && req.method === "POST") {
     try { return sendJson(res, 200, { ok: true, ...(await install()) }); }
     catch (e) { throw httpError(502, "装 agy 失败：" + e.message); }
