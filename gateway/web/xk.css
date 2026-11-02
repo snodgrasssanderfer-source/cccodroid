@@ -242,3 +242,9 @@ html.xk #side-nav, html.xk #side-new, html.xk #side-acct { display: none; }
 
 /* 「+」菜单去重（主人 11-02 定的）：新会话在顶栏，用量在我的，配置 / MCP / 子代理 / 能力在我的 → 开发者 */
 html.xk #sheet .sheet-item:is([data-act="new"], [data-act="cost"], [data-act="usage"], [data-act="config"], [data-act="mcp"], [data-act="agents"], [data-act="caps"]) { display: none; }
+
+/* 伴侣版帮助 */
+.xk-help { margin: 8px 0 22px; }
+.xk-help img { display: block; width: min(100%, 300px); aspect-ratio: 3 / 2; margin: 0 auto 4px; object-fit: contain; }
+.xk-help h3 { font: 400 19px var(--xk-title); letter-spacing: .03em; margin: 0 0 6px; }
+.xk-help p { margin: 0; font-size: 14px; line-height: 1.85; color: var(--fg2); }

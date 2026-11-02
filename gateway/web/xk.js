@@ -654,8 +654,10 @@
 
   async function renderMe() {
     const b = body("me");
-    if (!b.querySelector(".xk-sects")) b.innerHTML = `<div id="xk-hcard"></div><div class="xk-sects">${SECTS.map(([k, t, s]) => `<button class="xk-sect xk-press" data-k="${k}" style="background-image:url('${art("me/me_" + k)}')"><b>${t}</b><small>${s}</small></button>`).join("")}</div>`;
+    if (!b.querySelector(".xk-sects")) b.innerHTML = `<div id="xk-hcard"></div><div class="xk-sects">${SECTS.map(([k, t, s]) => `<button class="xk-sect xk-press" data-k="${k}" style="background-image:url('${art("me/me_" + k)}')"><b>${t}</b><small>${s}</small></button>`).join("")}</div>
+      <div class="xk-list" style="margin-top:10px">${meRow("xk-m-help", "怎么用", "聊天、替班、记忆、日记，一页说清")}</div>`;
     b.querySelector(".xk-sects").onclick = (e) => { const s = e.target.closest(".xk-sect"); if (s) openMeSub(s.dataset.k); };
+    $("#xk-m-help", b).onclick = () => openMeSub("help");
     const items = healthItems(await api("/api/xk/health"));
     const box = $("#xk-hcard", b); box.innerHTML = healthHtml(items);
     box.querySelectorAll("[data-fix]").forEach((el) => el.onclick = () => doFix(items[+el.dataset.fix].fix));
@@ -664,9 +666,9 @@
   // 分区：一层从右边滑进来的页，顶上是这一区的头图；返回键先关它
   function openMeSub(k) {
     closeMeSub(true);
-    const [, title] = SECTS.find((s) => s[0] === k);
+    const [title, head] = k === "help" ? ["怎么用", "help/help_roles"] : [SECTS.find((s) => s[0] === k)[1], "me/me_" + k];
     const el = document.createElement("section"); el.className = "xk-sub"; el.dataset.k = k;
-    el.innerHTML = `<div class="xk-subh" style="background-image:url('${art("me/me_" + k)}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>${title}</h2></div><div class="xk-subb"></div>`;
+    el.innerHTML = `<div class="xk-subh" style="background-image:url('${art(head)}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>${title}</h2></div><div class="xk-subb"></div>`;
     $("#xk-p-me").appendChild(el); void el.offsetWidth; el.classList.add("on"); SFX.play("sheet");
     $(".xk-back", el).onclick = () => closeMeSub();
     meSub = el; SUB[k](el.querySelector(".xk-subb")).catch(fail);
@@ -729,6 +731,17 @@
       $("#xk-a-upd", b).onclick = () => { SFX.play("tap"); cc()?.openPage("settings", "update"); };
       $("#xk-a-feed", b).onclick = () => openSheet(`<h2>更新源</h2><p class="sub">GitHub releases API 形状的地址，留空用默认：${esc(feed?.default || "")}</p><textarea id="xk-feed" rows="2" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:10px;font:14px var(--font-ui)">${esc(feed?.feed || "")}</textarea><button class="xk-wide xk-press" id="xk-feed-save">保存</button>`,
         (s) => { $("#xk-feed-save", s).onclick = async () => { try { const r = await api("/api/xk/update-feed", { method: "PUT", body: { feed: $("#xk-feed", s).value.trim() } }); closeSheet(); toast("保存好了", r.feed); SUB.about(b); } catch (e) { fail(e); } }; });
+    },
+    // 伴侣版帮助（主人 11-02 定的）：上游原版进「开发者 → 帮助（原版）」
+    async help(b) {
+      const H = [
+        ["chat", "聊天、思考与步骤", "消息发给正在聊的那位。她想事情、动手做事的过程会展开给你看，这一轮结束再收成一行，点一下还能翻开。输入框左边的「+」能附文件、拍照、截屏；输入框下的型号可以换，换成另一家的型号就是换人。顶栏右边开新对话，左上角是对话列表，按三个人分组，长按一段能置顶、重命名、导出、删除。"],
+        ["roles", "三位住客与替班", "小克用 Claude，哈基米用 Gemini（在她的卡片里登录 Google），小鱼用 DeepSeek。谁的额度用完了，就按角色页的「替班顺序」由下一位接着聊，接班的人会拿到前面几轮的说明；原来那位额度恢复后自动交回，接着原来那段。你手动换的人不会被自动换回去。"],
+        ["memory", "记忆", "三个人各记各的，互相看不到；同一个人不管从哪儿聊都是同一套记忆。聊着聊着她自己会记，闲下来会自动整理。记忆页能看、能改、能标成「已过去」、能让她忘掉。"],
+        ["diary", "日记", "每晚十点后，三个人各写一篇，素材是当天的对话。小克的日记走定时任务，要在「开发者 → 定时任务」底部打开「订阅账户」才写得了；哪天写不了，日记页和「我的」顶上的健康卡会说原因。"],
+        ["developer", "开发者", "cccodroid 原本的完整设置、终端、文件、git、扩展、定时任务、项目、脉络和原版帮助，都收在「我的 → 开发者」。平时用不到，出了问题或者想折腾时再去。"],
+      ];
+      b.innerHTML = H.map(([k, t, p]) => `<section class="xk-help"><img src="${art("help/help_" + k)}" alt=""><h3>${t}</h3><p>${p}</p></section>`).join("");
     },
     async developer(b) {
       const T = [["settings", "完整设置", "cccodroid 原版的全部设置"], ["term", "终端", ""], ["files", "文件", ""], ["git", "git", "当前会话的目录"], ["ext", "组件、插件与 MCP", ""], ["sched", "定时任务", "她们的日记也在这里"], ["projects", "项目", "三个人各是一个项目"], ["lineage", "脉络", ""], ["help", "帮助（原版）", ""]];
