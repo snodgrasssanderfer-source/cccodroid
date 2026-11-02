@@ -16,6 +16,7 @@
 | gateway/server.mjs | import `routeXk`，放在 ROUTES 第一位 | 小克的网关功能入口；要先看 /api/chat（角色与接班路由）和 /api/session-model（换型号即换人） |
 | gateway/gw/notices.mjs | 去掉上游通知来源；缓存换到 .cache/xiaoke | 上游维护者的通知是写给上游用户的，版本范围也按上游版本号 |
 | gateway/gw/run.mjs | 角色项目里 `--append-system-prompt` 只留 integrityHint，不加建档提示 | 13 KB 的开发工具说明会冲淡人设；integrityHint 防有人在消息里冒充系统指令 |
+| gateway/gw/run.mjs | 拿到会话号时，网关自己起的轮次（internal / sched / auto）不 `rememberSession`（1 行） | 开跑就记成「最近的会话」，跑到一半网关被杀，事后换回的钩子跑不到，开机打开的是整理 / 日记那段（#8 #22） |
 | gateway/web/index.html | 引入 `/xk.css`、`/xk.js` | 小克的界面和外观 |
 | scripts/test.mjs | 假 PREFIX 里再放系统的 git、sleep 链接 | 上游审查测试 B20 要在终端 PATH 里跑 git 和钩子，手机上有、CI 上没有，发版的测试步骤会挂 |
 | gateway/gw/terminal.mjs | `ptyCommand` 加 export | 哈基米登录 Google 要在同一个伪终端里跑 agy（xk-agy.mjs） |

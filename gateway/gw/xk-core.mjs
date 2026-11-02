@@ -54,6 +54,8 @@ export const roleOfProject = (pid) => ROLES.find((r) => STATE.projects[r.id] ===
 export const ENGINES = {};
 // 非 Claude Code 引擎怎么跑一轮：ENGINE_RUN.agy(item, { internal, carry })
 export const ENGINE_RUN = {};
+// 非 Claude Code 引擎问一次、拿回文字（不留会话、不给工具）：ENGINE_ASK.agy(prompt) → { text } | { error }
+export const ENGINE_ASK = {};
 
 // 有人下班（被换走、交回）时：SHIFT_END 里的每个都调一次 ({ from, to, sid, reason })。留言板往这里挂
 export const SHIFT_END = [];

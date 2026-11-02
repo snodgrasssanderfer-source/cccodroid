@@ -6,9 +6,9 @@ import { CFG, LIVE, log } from "./config.mjs";
 import { findSessionFile, peekSession } from "./sessions.mjs";
 import { NEXT, readBody, sendJson } from "./http.mjs";
 import { publish } from "./bus.mjs";
-import { START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
+import { END_HOOKS, START_GUARDS, enqueue, routeQueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
-import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
+import { ROLES, ensureRoles, importPersona, importWorldbook, personaStatus, roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { ENGINE_RUN, PLANNERS, ROUTES, STATE, XK_HOME, addRoute, shiftEnded, carryText, httpError, json, projectOf, resumeSid, roleOfProject, saveState, selfApi, writeCarry } from "./xk-core.mjs";
 import "./xk-memory.mjs";
 import { handoverRoles } from "./xk-handover.mjs";
@@ -110,14 +110,28 @@ START_GUARDS.push((q) => {
   return false;
 });
 
-// ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（开新会话，带上这段对话），原会话不动 ──
+// ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（接她最近那段，没有才新开；带上这段对话），原会话不动 ──
 const roleOfProvider = (pid) => (pid ? ROLES.find((r) => r.provider === pid) || null : null);
 // 从接班会话换回原角色：resume 是她原来那段的会话号，界面打开它接着聊（#1）；没有就照旧新开
+// 每个角色最近一段主人自己聊的会话（网关自己起的整理记忆、日记、空闲压缩不算）：换人时接着她这段，不再次次新开
+END_HOOKS.push((run) => {
+  if (!run || run.sched || run.auto || run.internal || !run.sessionId) return;
+  const r = roleOfDir(run.cwd);
+  if (!r) return;
+  STATE.lastByRole = { ...(STATE.lastByRole || {}), [r.id]: String(run.sessionId) };
+  saveState();
+});
+/** 角色 to 最近那段、还在而且确实是她的会话号 */
+export function lastSidOf(to) {
+  const sid = STATE.lastByRole && STATE.lastByRole[to];
+  return sid && roleOfSession(sid)?.id === to ? sid : null;
+}
 export function switchTo(to, fromSessionId, reason) {
   STATE.active = to;
   const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
   if (fromRole && fromRole !== to) shiftEnded({ from: fromRole, to, sid: fromSessionId, reason });
-  const resume = fromSessionId && fromRole !== to ? resumeSid(fromSessionId, to) : null;
+  // 先看是不是交回原角色（接她被替班前那段），否则接她自己最近那段；从空的新对话换过去的照旧新开
+  const resume = fromSessionId && fromRole !== to ? resumeSid(fromSessionId, to) || lastSidOf(to) : null;
   if (fromSessionId && fromRole !== to) STATE.pending[to] = resume ? { fromSid: fromSessionId, fromRole, reason: "主人把你换了回来", back: true, resumeSid: resume } : { fromSid: fromSessionId, fromRole, reason };
   saveState();
   return { ok: true, active: to, projectId: projectOf(to), resume };
