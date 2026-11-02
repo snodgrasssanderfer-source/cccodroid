@@ -33,9 +33,25 @@ export function turns(sessionId, since = 0) {
 }
 
 /** 最近 n 轮（一问一答算一轮）的纯文本，给接班的角色看 */
-export function recentText(sessionId, n, names = {}) {
+// 接班 / 交回说明用的最近几轮（#6）：按总字数分，最近一轮给得最多、越早越少。
+// 小克（Claude Code）一轮往往很长，先说打算、中间是工具步骤、结论在最后；只留开头会把结论砍掉——她的长回复留「开头一小段 + 结尾」，主人的话留开头
+export const CARRY_BUDGET = 4000;
+export function recentText(sessionId, n, names = {}, budget = CARRY_BUDGET) {
   const all = turns(sessionId);
   let users = 0, i = all.length;
   while (i > 0 && users < n) if (all[--i].role === "user") users++;
-  return all.slice(i).map((t) => `${t.role === "user" ? names.user || "主人" : names.assistant || "她"}：${t.text.length > 600 ? t.text.slice(0, 600) + "…" : t.text}`).join("\n");
+  const picked = all.slice(i), out = [];
+  let left = budget;
+  for (let k = picked.length - 1; k >= 0 && left > 0; k--) {
+    const t = picked[k], who = t.role === "user" ? names.user || "主人" : names.assistant || "她";
+    const cap = Math.max(200, Math.floor(left * (k === picked.length - 1 ? 0.5 : 0.35)));
+    let s = t.text;
+    if (s.length > cap) {
+      if (t.role === "user") s = s.slice(0, cap) + "…";
+      else { const head = Math.min(160, Math.floor(cap / 4)); s = s.slice(0, head) + "……" + s.slice(-(cap - head)); }
+    }
+    left -= s.length;
+    out.unshift(`${who}：${s}`);
+  }
+  return out.join("\n");
 }

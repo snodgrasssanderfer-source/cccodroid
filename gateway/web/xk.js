@@ -17,8 +17,9 @@
   }
   const root = document.documentElement;
   root.classList.add("xk");
-  const P = { sound: LS.get("sound", true), motion: LS.get("motion", true) };
-  const moving = () => P.motion && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const P = { sound: LS.get("sound", true) };
+  // 动效只有一个开关：上游的「界面动效」（html[data-motion]，跟随系统 / 开 / 关），「我的 → 动效」写的也是它（#16）
+  const moving = () => root.dataset.motion !== "off" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ── 三位住客 ──
   const ROLE = {
@@ -134,17 +135,18 @@
     }).catch(() => {});
     vt.finished.finally(() => { root.classList.remove("xk-vt"); pop(); });
   }
-  root.dataset.xkMotion = P.motion ? "on" : "off";
 
-  // ── 产品名：只换作为名字出现的 cccodroid，路径和链接里的不动（和外壳 Xk.brand 同一条规则） ──
+  // ── 产品名：上游界面框架里写「cccodroid」的地方显示成「小克」，路径和链接里的不动（和外壳 Xk.brand 同一条规则）。
+  //    只认下面这几块界面框架；消息、记忆、日记、文件、帮助正文、开源声明这些内容一律不碰（#13：以前整页替换，把「基于 cccodroid 修改」也改了）
   const BRAND = /(?<![\/\w.-])cccodroid(?![\/\w.-])/g;
+  const UI_SCOPE = "#set-ov, #toast, #topbar, .drawer-head, .acct-row, #pages .page-head, .wn-head, #notice-pop .wn-head";
+  const CONTENT = "#chat, .msg, .xk-page, #xk-sheet, #help-body, #viewer, #files, #term, input, textarea, [contenteditable], code, pre";
+  const inUi = (el) => el && el.closest && el.closest(UI_SCOPE) && !el.closest(CONTENT);
   // 只在真的换了时才写回：写回本身会再触发观察器，路径里的 cccodroid 换不掉，每次都写就成了死循环
-  const fix = (n) => { if (n.nodeValue.includes("cccodroid")) { const v = n.nodeValue.replace(BRAND, "小克"); if (v !== n.nodeValue) n.nodeValue = v; } };
+  const fix = (n) => { if (n.nodeValue.includes("cccodroid") && inUi(n.parentElement)) { const v = n.nodeValue.replace(BRAND, "小克"); if (v !== n.nodeValue) n.nodeValue = v; } };
   function brand(r) {
     const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) fix(n);
-    if (r.querySelectorAll) for (const el of r.querySelectorAll("[title],[aria-label],[placeholder]"))
-      for (const a of ["title", "aria-label", "placeholder"]) { const v = el.getAttribute(a); if (v && v.includes("cccodroid")) { const w2 = v.replace(BRAND, "小克"); if (w2 !== v) el.setAttribute(a, w2); } }
   }
   new MutationObserver((ms) => {
     for (const m of ms) {
@@ -530,7 +532,8 @@
   }
   async function loadMem() { memItems = (await api("/api/xk/memory?role=" + memRole)).items || []; drawMem(); }
   function memGroup(d) {
-    const day = (x) => new Date(Date.now() - x * 864e5).toISOString().slice(0, 10);
+    // 按本地日期：toISOString 是 UTC，每天 0–8 点「今天 / 昨天」会错一天（#16）
+    const day = (x) => { const d = new Date(Date.now() - x * 864e5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
     return d === day(0) ? "今天" : d === day(1) ? "昨天" : d >= day(7) ? "这一周" : d.slice(0, 7).replace("-", " 年 ") + " 月";
   }
   function drawMem() {
@@ -616,7 +619,7 @@
     let feed = null; try { feed = await api("/api/xk/update-feed"); } catch {}
     body("me").innerHTML = `<div class="xk-mecard"><img src="${art("icon/flower_open")}" alt=""><div><b>主人</b><p>三位住客的房东</p></div></div>
       <div class="xk-gt">连接</div><div class="xk-list">${row("xk-m-prov", "接口与账户", "小克的 Claude 账户、小鱼的 DeepSeek Key")}${row("xk-m-usage", "用量", "额度、余额和每月的月报")}</div>
-      <div class="xk-gt">偏好</div><div class="xk-list">${row("xk-m-theme", "外观", "", `<span class="v">${{ auto: "跟随系统", light: "浅色", dark: "深色" }[mode] || "跟随系统"}</span>`)}${row("xk-m-sound", "音效", "点按、翻页、发送时的轻响", sw(P.sound))}${row("xk-m-motion", "动效", "关掉后切换不再滑动、铺开", sw(P.motion))}${row("xk-m-set", "更多设置", "字体、字号、语言、通知")}</div>
+      <div class="xk-gt">偏好</div><div class="xk-list">${row("xk-m-theme", "外观", "", `<span class="v">${{ auto: "跟随系统", light: "浅色", dark: "深色" }[mode] || "跟随系统"}</span>`)}${row("xk-m-sound", "音效", "点按、翻页、发送时的轻响", sw(P.sound))}${row("xk-m-motion", "动效", "关掉后切换不再滑动、铺开", sw(root.dataset.motion !== "off"))}${row("xk-m-set", "更多设置", "字体、字号、语言、通知")}</div>
       <div class="xk-gt">工具</div><div class="xk-list">${row("xk-m-dev", "开发工具", "终端、文件、git、组件、插件、定时任务")}</div>
       <div class="xk-gt">关于</div><div class="xk-list">${row("xk-m-feed", "App 更新源", feed ? esc(feed.feed || feed.default) : "")}${row("xk-m-about", "小克", "基于 cccodroid（Apache-2.0）修改", "")}</div>`;
     const on = (id, fn) => { const el = $("#" + id); if (el) el.onclick = fn; };
@@ -624,18 +627,33 @@
     on("xk-m-usage", () => { SFX.play("tap"); cc()?.openPage("usage"); });
     on("xk-m-set", () => { SFX.play("tap"); cc()?.openPage("settings"); });
     on("xk-m-sound", () => { P.sound = !P.sound; LS.set("sound", P.sound); SFX.play("toggle"); renderMe(); });
-    on("xk-m-motion", () => { P.motion = !P.motion; LS.set("motion", P.motion); root.dataset.xkMotion = P.motion ? "on" : "off"; SFX.play("toggle"); renderMe(); });
+    on("xk-m-motion", () => { document.querySelector(`#seg-motion [data-mo="${root.dataset.motion === "off" ? "on" : "off"}"]`)?.click(); SFX.play("toggle"); setTimeout(renderMe, 50); });
     on("xk-m-theme", () => openSheet(`<h2>外观</h2><p class="sub">浅色像白天的纸，深色像夜里的台灯；颜色跟着正在聊的人走</p><div class="xk-list">${["auto", "light", "dark"].map((k) => `<button class="xk-row xk-press" data-k="${k}"><span class="k">${{ auto: "跟随系统", light: "浅色", dark: "深色" }[k]}</span>${mode === k ? `<span style="color:var(--accent)">${svg("check")}</span>` : ""}</button>`).join("")}</div>`,
       (s) => s.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => { window.Theme?.set(b.dataset.k); SFX.play("toggle"); closeSheet(); renderMe(); })));
     on("xk-m-dev", () => openSheet(`<h2>开发工具</h2><p class="sub">cccodroid 原本的家什都在这里，平时用不到</p><div class="xk-list">${[["term", "终端"], ["files", "文件"], ["git", "git"], ["ext", "组件、插件与 MCP"], ["sched", "定时任务"], ["projects", "项目"], ["lineage", "脉络"], ["help", "帮助"]].map(([k, l]) => `<button class="xk-row xk-press" data-k="${k}"><span class="k">${l}</span>${svg("go")}</button>`).join("")}</div>`,
       (s) => s.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
         const k = b.dataset.k, c = cc(); closeSheet(); SFX.play("tap");
-        if (k === "term") $("#btn-term")?.click(); else if (k === "files") c?.openFiles(); else if (k === "git") c?.openGit(); else c?.openPage(k);
+        if (k === "term") $("#btn-term")?.click(); else if (k === "files") c?.openFiles();
+        // git 要给目录：当前会话在哪跑的就开哪（没有会话时是当前角色的目录）。以前不给，上游拿 undefined 当路径（#16）
+        else if (k === "git") api("/api/xk/session-role" + (c?.view.sessionId ? "?sid=" + encodeURIComponent(c.view.sessionId) : "")).then((r) => c?.openGit(r.cwd)).catch(fail);
+        else c?.openPage(k);
       })));
     on("xk-m-feed", () => openSheet(`<h2>App 更新源</h2><p class="sub">GitHub releases API 形状的地址，留空用默认：${esc(feed?.default || "")}</p><textarea id="xk-feed" rows="2" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);padding:10px;font:14px var(--font-ui)">${esc(feed?.feed || "")}</textarea><button class="xk-wide xk-press" id="xk-feed-save">保存</button>`,
       (s) => { $("#xk-feed-save", s).onclick = async () => { try { const r = await api("/api/xk/update-feed", { method: "PUT", body: { feed: $("#xk-feed", s).value.trim() } }); closeSheet(); toast("保存好了", r.feed); renderMe(); } catch (e) { fail(e); } }; }));
   }
   const RENDER = { roles: renderRoles, mem: renderMem, diary: renderDiary, me: renderMe };
+
+  // ── 返回键：外壳调 window.__ccBack()，返回 false 就把 App 退到后台。我们的卡片和四页也登记进去（#12）：
+  //    先关我们的卡片 → 再让上游关它的浮层（整页、设置、侧栏……一层层退）→ 不在聊天页就回聊天页 → 都没有才退到后台
+  const upBack = window.__ccBack;
+  window.__ccBack = function () {
+    try {
+      if (sheet.classList.contains("on")) { closeSheet(); return true; }
+      if (typeof upBack === "function" && upBack()) return true;
+      if (tab !== 0) { go(0); return true; }
+    } catch (e) { console.error("[xk] back", e); }
+    return false;
+  };
 
   // 普通按钮也给一声轻响（我们自己的部件各有各的声，不重复）
   document.addEventListener("click", (e) => {
