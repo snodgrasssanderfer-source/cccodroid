@@ -1,6 +1,7 @@
 # 小克（基于 cccodroid 的私人陪伴 App）
 
 做到哪了、还缺什么，看 PROGRESS.md；每轮结束时顺手更新它。
+开工、收工、谁在等谁，照 `xk/DEV.md`：每个开着的 issue / PR 挂 `等主人` / `等云端` / `等小克` 之一，交手就换标签并留一句评论。
 
 新会话动手前先对一遍账，免得重复干活：
 1. `git fetch origin` 后看所有分支谁最新（`git for-each-ref --sort=-committerdate refs/remotes`），PROGRESS.md 写的分支不一定是最新的。
