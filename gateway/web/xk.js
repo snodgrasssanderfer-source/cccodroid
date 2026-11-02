@@ -644,6 +644,37 @@
     if (e.target.closest("button, .btn, summary, [role=button]")) SFX.play("tap");
   }, true);
 
+  // ── 服务商按角色显示（#11，主人 11-02 定的）：上游只有一个「全局在用」，我们三个人各绑一家。
+  //    侧栏账户行写当前角色用的那家；设置 → 接口与型号的「当前在用」改成「全局默认」，下面说明三个人各用各的
+  const PROV_LABEL = { anthropic: "Claude", deepseek: "DeepSeek" };
+  const roleProv = (id) => (id === "hachimi" ? "Gemini · Antigravity" : PROV_LABEL[(R(id) || {}).provider] || (R(id) || {}).provider || "");
+  function paintProv() {
+    const id = cur.role || root.dataset.xkRole || "xiaoke";
+    const sub = $("#acct-sub"), want = roleProv(id);
+    if (sub && want && sub.textContent !== want) sub.textContent = want;
+    const info = $("#provider-info");
+    if (info && info.textContent.startsWith("当前在用：")) info.textContent = info.textContent.replace("当前在用：", "全局默认：");
+    if (info && !$("#xk-prov-note")) {
+      const n = document.createElement("p"); n.id = "xk-prov-note"; n.className = "xk-hint";
+      n.textContent = "三个人各用各的：小克用 Claude，哈基米用 Gemini（Antigravity），小鱼用 DeepSeek。这里是全局默认，只影响不属于她们的会话。";
+      info.after(n);
+    }
+  }
+  // 流式输出时 DOM 每秒变很多次：合并到下一帧再看一次，别每次变动都查
+  let provQ = 0;
+  new MutationObserver(() => { if (!provQ) provQ = requestAnimationFrame(() => { provQ = 0; paintProv(); }); }).observe(document.body, { subtree: true, childList: true, characterData: true });
+
+  // ── 键盘弹起时让路（#14，主人 11-02 定的：平时一直摆着，只在键盘弹起这段时间让）：
+  //    收起底栏和输入框上方的小人，输入框下那行合成一行（放不下就横着滑）
+  const vv = window.visualViewport;
+  if (vv) {
+    let base = 0;
+    const kb = () => { base = Math.max(base, vv.height); const up = base - vv.height > 150; if (root.classList.contains("xk-kb") !== up) { root.classList.toggle("xk-kb", up); movePill(); } };
+    vv.addEventListener("resize", kb);
+    addEventListener("orientationchange", () => { base = 0; setTimeout(kb, 400); });
+    kb();
+  }
+
   // ── 启动：等上游的顶栏和 __cc 就绪 ──
   applyRole("xiaoke", false);
   (function boot() {
