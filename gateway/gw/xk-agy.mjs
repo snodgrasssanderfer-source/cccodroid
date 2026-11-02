@@ -155,21 +155,34 @@ export function runAgy(item, extra = {}) {
     if (!extra.internal) parent = appendTurn(sid, "user", item.message, null);
   } catch (e) { emit({ type: "error", message: "哈基米准备失败：" + e.message }); finish({ failed: true }); return; }
   if (isNew) { rememberSession(sid); emit({ type: "init", sessionId: sid, model: "antigravity" }); }
-  // 主人本人在 App 里发的才会走到这里（QQ 接入时再按渠道收紧）：没法把 agy 的权限请求转给界面，所以不逐条确认
-  // stream-json 输入时不能再给 -p（它会把下一个参数当成提示词）
-  const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions"];
-  if (STATE.agyConv[sid]) args.push("--conversation", STATE.agyConv[sid]);
-  if (STATE.agyModel) args.push("--model", STATE.agyModel);   // 主人在哈基米的卡片里选的 Gemini 模型
-  const child = spawn(AGY, args, { cwd: DIR, env: { ...agyEnv(), CCAPP_RUN_ID: runId }, stdio: ["pipe", "pipe", "pipe"] });
-  child.stdin.end(JSON.stringify({ event: "user", message: { content } }) + "\n");
-  let buf = "", stderr = "", text = "", result = null;
-  child.stdout.on("data", (d) => {
-    buf += d;
-    let i;
-    while ((i = buf.indexOf("\n")) >= 0) {
-      const l = buf.slice(0, i); buf = buf.slice(i + 1);
-      if (!l.trim()) continue;
-      let raw; try { raw = JSON.parse(l); } catch { continue; }
+  const p = warmProc(sid, !!extra.internal, runId);
+  clearTimeout(p.timer);
+  if (!extra.internal) copyChannel(runId, p.runKey);
+  let text = "", result = null, done = false, turnErr = "";
+  const end = (code, crash) => {
+    if (done) return; done = true; p.turn = null;
+    if (result?.conversation_id && STATE.agyConv[sid] !== result.conversation_id) { STATE.agyConv[sid] = result.conversation_id; saveState(); }
+    const ok = result && result.status === "SUCCESS";
+    const reply = (result && result.response) || text;
+    if (ok && reply.trim() && !extra.internal) appendTurn(sid, "assistant", reply.trim(), parent);
+    const verify = !ok && (agyValidation(result && result.error) || agyValidation(turnErr));
+    if (verify) {
+      // 先认这个：原文里有「signing in」，别落进下面的「没登录」
+      STATE.agyVerify = { url: verify.url, at: Date.now() }; saveState();
+      emit({ type: "error", message: "哈基米：Google 要求先验证这个账号，验证之前用不了 Gemini（登录本身没问题）。" +
+        (verify.url ? `在浏览器里打开这个链接验证：${verify.url}` : "到哈基米的卡片里看看。") + " 验证完回来再发一次就行。" });
+    } else if (!ok) {
+      const why = crash || (result && result.error) || turnErr.trim().split("\n").slice(-3).join(" ") || `agy 没答完就退出了（退出码 ${code}）`;
+      if (/authenticat|login|sign in|未登录/i.test(why)) { STATE.agyAuth = false; saveState(); }
+      emit({ type: "error", message: "哈基米（agy）：" + why });
+    } else if (STATE.agyAuth === false || STATE.agyVerify) { delete STATE.agyAuth; delete STATE.agyVerify; saveState(); }
+    // 常驻的这一轮答完了：闲置计时重新开始
+    if (!p.dead && !extra.internal) { p.timer = setTimeout(() => endWarm(sid), AGY_IDLE.ms); p.timer.unref?.(); }
+    finish({ isError: !ok, subtype: result ? String(result.status) : "no_result", ...(extra.internal ? { finalText: reply } : {}) });
+  };
+  p.turn = {
+    err(d) { turnErr += d; if (turnErr.length > 20000) turnErr = turnErr.slice(-20000); },
+    event(raw) {
       // 实测 1.4.12：内容嵌在以事件名命名的键里，{"event":"result","result":{...}}
       const ev = raw[raw.event] && typeof raw[raw.event] === "object" ? raw[raw.event] : raw;
       if (raw.event === "step_update") {
@@ -180,29 +193,71 @@ export function runAgy(item, extra = {}) {
           emit({ type: "tool_use", id, name: ev.tool_info.name, input: ev.tool_info.parameters || {} });
           emit({ type: "tool_result", id, ok: !ev.tool_info.error, text: String(ev.tool_info.error ? ev.tool_info.error.message : ev.tool_info.output || "").slice(0, 20000) });
         }
-      } else if (raw.event === "result") result = ev;
+      } else if (raw.event === "result") { result = ev; end(0); }   // 多轮时一轮一个 result，不等进程退出
+    },
+    exit(code, crash) { end(code, crash); },
+  };
+  try { p.child.stdin.write(JSON.stringify({ event: "user", message: { content } }) + "\n"); if (extra.internal) p.child.stdin.end(); }
+  catch (e) { end(null, "写给 agy 失败：" + e.message); }
+}
+
+// ── 常驻：每段对话一个 agy 进程，stdin 不关，一行一条消息（agy 的 --input-format stream-json 本来就一行跑一轮）。
+// 11-02 真机实测：首条 10.2s，同一进程第二条 3.2s——每条新起 agy 都要重走登录检查、模型清单、额度、实验开关那一整套（约 5.7s）。
+// 网关退出时管道一断，agy 读到 EOF 自己退出，不留孤儿。
+export const WARM = new Map();                     // 我们的会话号 → { child, model, agents, runKey, turn, timer, dead }
+export const AGY_IDLE = { ms: 10 * 60 * 1000 };    // 多久没新消息就让它退出：常驻省的是启动时间，不值得一直占着内存
+// 按内容比：writeAgents 每轮都重写 AGENTS.md，按修改时间比会每轮都当成「换了人设」
+const agentsMark = () => { try { return crypto.createHash("sha1").update(fs.readFileSync(path.join(DIR, "AGENTS.md"))).digest("hex"); } catch { return ""; } };
+function warmProc(sid, oneShot, runId) {
+  const model = STATE.agyModel || "", agents = agentsMark();
+  let p = oneShot ? null : WARM.get(sid);
+  // 人设、世界书只在 agy 启动时读：AGENTS.md 变了（导入了新人设）或换了模型，就换个新进程
+  if (p && (p.dead || p.model !== model || p.agents !== agents)) { endWarm(sid); p = null; }
+  if (p) return p;
+  // 主人本人在 App 里发的才会走到这里（QQ 接入时再按渠道收紧）：没法把 agy 的权限请求转给界面，所以不逐条确认
+  // stream-json 输入时不能再给 -p（它会把下一个参数当成提示词）
+  const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions"];
+  if (STATE.agyConv[sid]) args.push("--conversation", STATE.agyConv[sid]);
+  if (model) args.push("--model", model);   // 主人在哈基米的卡片里选的 Gemini 模型
+  // 常驻进程的 run 号用会话级的固定值，每轮把渠道记录抄过去（copyChannel）；一次性的照旧用本轮 run 号
+  const runKey = oneShot ? runId : "agyw-" + sid;
+  const child = spawn(AGY, args, { cwd: DIR, env: { ...agyEnv(), CCAPP_RUN_ID: runKey }, stdio: ["pipe", "pipe", "pipe"] });
+  p = { child, model, agents, runKey, turn: null, timer: null, dead: false };
+  let buf = "";
+  child.stdout.on("data", (d) => {
+    buf += d; let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const l = buf.slice(0, i); buf = buf.slice(i + 1);
+      if (!l.trim()) continue;
+      let raw; try { raw = JSON.parse(l); } catch { continue; }
+      p.turn?.event(raw);
     }
   });
-  child.stderr.on("data", (d) => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-20000); });
-  child.on("error", (e) => { emit({ type: "error", message: "agy 起不来：" + e.message }); finish({ failed: true }); });
-  child.on("close", (code) => {
-    if (result?.conversation_id && STATE.agyConv[sid] !== result.conversation_id) { STATE.agyConv[sid] = result.conversation_id; saveState(); }
-    const ok = result && result.status === "SUCCESS";
-    const reply = (result && result.response) || text;
-    if (ok && reply.trim() && !extra.internal) appendTurn(sid, "assistant", reply.trim(), parent);
-    const verify = !ok && (agyValidation(result && result.error) || agyValidation(stderr));
-    if (verify) {
-      // 先认这个：原文里有「signing in」，别落进下面的「没登录」
-      STATE.agyVerify = { url: verify.url, at: Date.now() }; saveState();
-      emit({ type: "error", message: "哈基米：Google 要求先验证这个账号，验证之前用不了 Gemini（登录本身没问题）。" +
-        (verify.url ? `在浏览器里打开这个链接验证：${verify.url}` : "到哈基米的卡片里看看。") + " 验证完回来再发一次就行。" });
-    } else if (!ok) {
-      const why = (result && result.error) || stderr.trim().split("\n").slice(-3).join(" ") || `退出码 ${code}`;
-      if (/authenticat|login|sign in|未登录/i.test(why)) { STATE.agyAuth = false; saveState(); }
-      emit({ type: "error", message: "哈基米（agy）：" + why });
-    } else if (STATE.agyAuth === false || STATE.agyVerify) { delete STATE.agyAuth; delete STATE.agyVerify; saveState(); }
-    finish({ isError: !ok, subtype: result ? String(result.status) : "no_result", ...(extra.internal ? { finalText: reply } : {}) });
-  });
+  child.stderr.on("data", (d) => p.turn?.err(String(d)));
+  child.stdin.on("error", () => {});   // 进程先退了还在写：交给 close 处理
+  const gone = (code, crash) => { p.dead = true; clearTimeout(p.timer); if (WARM.get(sid) === p) WARM.delete(sid); p.turn?.exit(code, crash); };
+  child.on("error", (e) => gone(null, "agy 起不来：" + e.message));
+  child.on("close", (code) => gone(code));
+  if (!oneShot) WARM.set(sid, p);
+  return p;
+}
+/** 让常驻的 agy 收工：关 stdin 它自己退；5 秒还没退就强杀 */
+function endWarm(sid) {
+  const p = WARM.get(sid); if (!p) return;
+  WARM.delete(sid); clearTimeout(p.timer);
+  try { p.child.stdin.end(); } catch {}
+  setTimeout(() => { if (!p.dead) p.child.kill(); }, 5000).unref?.();
+}
+/** 全部收工，等它们真退出（测试、以后网关退出时用） */
+export async function stopAgy() {
+  const ps = [...WARM.values()]; for (const sid of [...WARM.keys()]) endWarm(sid);
+  await Promise.all(ps.map((p) => p.dead ? null : new Promise((r) => p.child.once("close", r))));
+}
+const runFile = (id) => path.join(DIR, ".xk", "runs", id + ".json");
+function copyChannel(runId, runKey) {
+  // 渠道记录（QQ 接入时由 markRun 写）按 run 号放；常驻进程的 MCP 服务只认它启动时的 run 号，所以每轮抄一份过去，没有就删（= App）
+  try { if (fs.existsSync(runFile(runId))) fs.copyFileSync(runFile(runId), runFile(runKey)); else fs.rmSync(runFile(runKey), { force: true }); }
+  catch (e) { log("哈基米渠道记录没抄成：" + e.message); }
 }
 ENGINE_RUN.agy = runAgyQueued;
 
