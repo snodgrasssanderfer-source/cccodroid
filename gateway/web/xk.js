@@ -300,7 +300,9 @@
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
         if (ev.op === "handover") {
-          const pic = ev.from === "xiaoke" && ev.to === "hachimi" ? art("group/handover_1") : ev.from === "hachimi" && ev.to === "deepseek" ? art("group/handover_2") : sprite(ev.to, "wave");
+          // 接班四张、回来三张（第 2 版美术）；没画到的组合用接班那位挥手
+          const HO = { "xiaoke>hachimi": 1, "hachimi>deepseek": 2, "xiaoke>deepseek": 3, "deepseek>xiaoke": 4 };
+          const pic = ev.back ? art("group/back_" + (ROLE[ev.to].dir || ev.to)) : HO[ev.from + ">" + ev.to] ? art("group/handover_" + HO[ev.from + ">" + ev.to]) : sprite(ev.to, "wave");
           SFX.play("sleep"); peek("sleeping");
           toast(ev.back ? `${rname(ev.to)}回来了` : `${rname(ev.to)}来接班`, ev.reason, pic);
           const now = window.__cc && window.__cc.view.sessionId;
@@ -788,6 +790,13 @@
     return false;
   };
 
+  // 空对话下的「使用提示」开伴侣版帮助，不开上游原版
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".wl-tips")) return;
+    e.stopPropagation(); e.preventDefault();
+    go(4); setTimeout(() => openMeSub("help"), 60);
+  }, true);
+
   // 普通按钮也给一声轻响（我们自己的部件各有各的声，不重复）
   document.addEventListener("click", (e) => {
     if (e.target.closest("#xk-tabs, #xk-sheet, .xk-page, #xk-face, #xk-new")) return;
@@ -800,6 +809,9 @@
   const PROV_LABEL = { anthropic: "Claude", deepseek: "DeepSeek" };
   const roleProv = (id) => (id === "hachimi" ? "Gemini · Antigravity" : PROV_LABEL[(R(id) || {}).provider] || (R(id) || {}).provider || "");
   function paintProv() {
+    // 空对话的接入指引说「☰ → 设置 → 接口」：侧栏已经只剩对话，改成现在的去处
+    const tip = [...document.querySelectorAll(".setup-guide .tiny")].find((x) => x.textContent.includes("☰"));
+    if (tip) tip.textContent = "两条路都在「我的 → 账号与接口」，以后随时能换。";
     const id = cur.role || root.dataset.xkRole || "xiaoke";
     const sub = $("#acct-sub"), want = roleProv(id);
     if (sub && want && sub.textContent !== want) sub.textContent = want;

@@ -254,3 +254,9 @@ html.xk #pages { top: 0; z-index: 40; padding-top: var(--safe-tt, env(safe-area-
 .xk-pback { flex: none; margin-inline-start: -8px; }
 html.xk #pages .xk-pback svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round !important; }
 .xk-pbar { margin: 0 0 4px !important; }
+
+/* 空对话：上游的标志换成正在聊的那位「坐着等你开口」（第 2 版 state/<人>/no_chat） */
+html.xk .wl-mark { display: none; }
+html.xk .wl-hero::before { content: ""; flex: 0 0 100%; height: min(32vh, 200px); background: no-repeat center / contain url(/xk-art/state/xiaoke/no_chat.webp); }
+html[data-xk-role="hachimi"] .wl-hero::before { background-image: url(/xk-art/state/hachimi/no_chat.webp); }
+html[data-xk-role="deepseek"] .wl-hero::before { background-image: url(/xk-art/state/xiaoyu/no_chat.webp); }
