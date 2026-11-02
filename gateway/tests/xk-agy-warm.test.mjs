@@ -105,3 +105,16 @@ test("人设没变：每轮重写 AGENTS.md 也不换进程；导入了新人设
   try { await run({ id: "w15", message: "三", sessionId: sid }); } finally { old == null ? fs.rmSync(f) : fs.writeFileSync(f, old); }
   assert.equal(starts().length, 2, "人设变了就换新进程");
 });
+
+test("整理记忆问一次（askAgy）：不在哈基米目录、不放行工具、不留会话记录，拿回文字；失败带原因", async () => {
+  const { askAgy } = await import("../gw/xk-agy.mjs");
+  fakeAgy(AGY, { lines: ok("c9", '{"memories":[]}'), log: LOG });
+  assert.deepEqual(await askAgy("整理"), { text: '{"memories":[]}' });
+  const s = starts().at(-1);
+  assert.ok(!s.args.includes("--dangerously-skip-permissions"));
+  assert.ok(!s.args.includes("--conversation"));
+  fakeAgy(AGY, { lines: [{ event: "result", result: { status: "ERROR", error: "quota exhausted" } }], log: LOG });
+  assert.match((await askAgy("整理")).error, /quota exhausted/);
+  fakeAgy(AGY, { lines: [], code: 2, stderr: "boom\n", log: LOG });
+  assert.match((await askAgy("整理")).error, /boom/);
+});

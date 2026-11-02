@@ -18,7 +18,7 @@ import { rememberSession } from "./runs.mjs";
 import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
 import { line, search } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
-import { ENGINES, ENGINE_RUN, STATE, addRoute, httpError, json, saveState } from "./xk-core.mjs";
+import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 
 const DIR = roleDir("hachimi");
 // 放在上游加进 PATH 的 ~/.cccodroid/bin：主人在应用内终端里直接敲 agy 登录
@@ -264,6 +264,37 @@ function copyChannel(runId, runKey) {
   catch (e) { log("哈基米渠道记录没抄成：" + e.message); }
 }
 ENGINE_RUN.agy = runAgyQueued;
+
+// 问一次、拿回文字（整理记忆用）：不在哈基米目录里跑（不读 AGENTS.md 人设）、不接对话、不放行工具、不写会话记录
+const ASK_DIR = path.join(XK_HOME, "ask");
+export function askAgy(prompt, timeoutMs = 5 * 60000) {
+  return new Promise((resolve) => {
+    fs.mkdirSync(ASK_DIR, { recursive: true });
+    const args = ["--input-format", "stream-json", "--output-format", "stream-json", ...(STATE.agyModel ? ["--model", STATE.agyModel] : [])];
+    const child = spawn(AGY, args, { cwd: ASK_DIR, env: agyEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    let buf = "", text = "", err = "", done = false;
+    const fin = (r) => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
+    const timer = setTimeout(() => { child.kill(); fin({ error: `agy ${Math.round(timeoutMs / 60000)} 分钟没答完` }); }, timeoutMs);
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d) => {
+      buf += d; let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const l = buf.slice(0, i); buf = buf.slice(i + 1);
+        let raw; try { raw = JSON.parse(l); } catch { continue; }
+        const ev = raw[raw.event] && typeof raw[raw.event] === "object" ? raw[raw.event] : raw;
+        if (raw.event === "step_update" && ev.step_type === "agent_response" && ev.text_delta) text += ev.text_delta;
+        if (raw.event === "result") fin(ev.status === "SUCCESS" ? { text: ev.response || text } : { error: "哈基米（agy）：" + (ev.error || ev.status) });
+      }
+    });
+    child.stderr.on("data", (d) => { err = (err + d).slice(-4000); });
+    child.stdin.on("error", () => {});
+    child.on("error", (e) => fin({ error: "agy 起不来：" + e.message }));
+    child.on("close", (code) => fin({ error: err.trim().split("\n").slice(-3).join(" ") || `agy 没答完就退出了（退出码 ${code}）` }));
+    // 和以前一次性的内部轮次一样：写一行就关 stdin，agy 答完这一条自己退
+    child.stdin.end(JSON.stringify({ event: "user", message: { content: [{ type: "text", text: prompt }] } }) + "\n");
+  });
+}
+ENGINE_ASK.agy = askAgy;
 
 // ── 登录：照旧版小克登录 Claude 的做法，在伪终端里跑 agy（没登录时它先弹登录菜单），选 Google 登录，
 //    把它打出来的登录链接交给界面，主人在浏览器里授权后把授权码贴回来。网关只搬字节，凭据由 agy 自己存，我们不读不存。

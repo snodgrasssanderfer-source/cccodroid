@@ -65,12 +65,14 @@ export function anchorDates(text, said = new Date()) {
 const norm = (s) => String(s).replace(/[\s\p{P}\p{S}]+/gu, "").toLowerCase();
 
 /** 记一条。ends：这条让哪些旧记忆不再成立，旧的标成已过去（until = 这条的日期）留着。
+ *  said：这句话是哪天说的（YYYY-MM-DD）。整理跑在说话之后，可能已经跨了零点：相对说法和缺省日期都按它算，不按今天
  *  已经有一字不差、还没过去的同一条，就不再记一遍，返回那条（dup: true） */
 export function remember(dir, m) {
-  const text = anchorDates(String(m.text || "").trim());
+  const said = DATE.test(m.said || "") ? new Date(m.said + "T00:00:00") : new Date();
+  const text = anchorDates(String(m.text || "").trim(), said);
   if (!text) throw new Error("text 不能为空");
   const kind = KINDS.includes(m.kind) ? m.kind : "fact";
-  const date = DATE.test(m.date || "") ? m.date : today();
+  const date = DATE.test(m.date || "") ? m.date : today(said);
   return locked(dir, (list) => {
     const same = list.find((x) => !x.past && norm(x.text) === norm(text));
     if (same && ![].concat(m.ends || []).length) return { ...same, dup: true };
