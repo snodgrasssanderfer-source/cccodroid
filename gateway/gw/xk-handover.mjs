@@ -8,9 +8,9 @@ import { isLoginMode } from "./models.mjs";
 import { RATE_LIMITS } from "./stream.mjs";
 import { projectById } from "./projects.mjs";
 import { ROLES, roleById, roleOfDir } from "./xk-roles.mjs";
-import { ENGINE_RUN, ENGINES, INTERNAL, PLANNERS, STATE, carryText, projectOf, saveState, writeCarry } from "./xk-core.mjs";
+import { ENGINE_RUN, ENGINES, INTERNAL, PLANNERS, STATE, carryText, projectOf, resumeSid, saveState, writeCarry } from "./xk-core.mjs";
 
-STATE.originRun ||= {};   // run 号 → { from, reason }：接班开的新会话拿到会话号后转进 STATE.origin
+STATE.originRun ||= {};   // run 号 → { from, fromSid, reason }：接班开的新会话拿到会话号后转进 STATE.origin；fromSid 是交回时要接着的那段（#1）
 
 // 不知道什么时候重置（第三方接口的 429 不带重置时间）时，过一小时再让原角色试一次
 const RETRY_MS = 60 * 60 * 1000;
@@ -73,7 +73,7 @@ function handOver(fromRole, toRole, fromSid, message, reason) {
   let item;
   if (toRole.engine === "claude") { item = enqueue({ message, projectId: projectOf(toRole.id) }); writeCarry(toRole.id, item.id, carry); }
   else { item = { id: "xa" + Date.now().toString(36), message, sessionId: null }; setImmediate(() => ENGINE_RUN[toRole.engine](item, { carry })); }
-  STATE.originRun[item.id] = { from: fromRole.id, reason, at: Date.now() };
+  STATE.originRun[item.id] = { from: fromRole.id, fromSid, reason, at: Date.now() };
   saveState();
   publish({ type: "xk", op: "handover", runId: item.id, from: fromRole.id, to: toRole.id, reason, fromSession: fromSid });
   log(`🔁 接班：${fromRole.name} → ${toRole.name}（${reason}）`);
@@ -105,7 +105,8 @@ PLANNERS.push((b, ctx) => {
   const sid = b.sessionId || null;
   const origin = sid && STATE.origin[sid];
   let to = null, reason = "";
-  if (origin && origin.from !== role.id && roleReady(roleById(origin.from))) {
+  // 自动交回只管额度用完被迫换的人；主人手动换的（manual）不管，否则下一条就被拽回原角色
+  if (origin && !origin.manual && origin.from !== role.id && roleReady(roleById(origin.from))) {
     to = roleById(origin.from);
     reason = `${to.name}的额度恢复了，交回给${to.name}`;
   } else if (cooling(role.id)) {
@@ -113,13 +114,15 @@ PLANNERS.push((b, ctx) => {
     reason = `${role.name}的额度还没恢复（${fmt(STATE.cooldown[role.id].until)} 左右）`;
   }
   if (!to) return;
-  ctx.body = { ...ctx.body, sessionId: null, follow: null, projectId: projectOf(to.id) };
-  ctx.carry = sid ? { fromSid: sid, fromRole: role.id, reason } : ctx.carry || { fromSid: null, fromRole: role.id, reason };
-  ctx.notice = { from: role.id, to: to.id, reason, fromSession: sid };
+  // 交回原角色：她原来那段还在就接着它（#1），没了才新开
+  const back = origin && to.id === origin.from ? resumeSid(sid, to.id) : null;
+  ctx.body = { ...ctx.body, sessionId: back, follow: null, projectId: projectOf(to.id) };
+  ctx.carry = sid ? { fromSid: sid, fromRole: role.id, reason, back: !!back } : ctx.carry || { fromSid: null, fromRole: role.id, reason };
+  ctx.notice = { from: role.id, to: to.id, reason, fromSession: sid, ...(back ? { back: true } : {}) };
   ctx.role = to.id;
   ctx.onQueued = (item) => {
     if (origin && to.id === origin.from) return;   // 交回原角色：新会话不算接班会话
-    STATE.originRun[item.id] = { from: role.id, reason, at: Date.now() };
+    STATE.originRun[item.id] = { from: role.id, fromSid: sid, reason, at: Date.now() };
     saveState();
   };
 });

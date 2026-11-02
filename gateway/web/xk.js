@@ -236,16 +236,18 @@
   }
   setInterval(() => syncRole().catch(() => {}), 1000);
 
-  /** 手动换角色：开一个新会话落到那个角色，第一条消息带上刚才那段对话（网关 /api/xk/switch） */
+  /** 手动换角色：开一个新会话落到那个角色，第一条消息带上刚才那段对话（网关 /api/xk/switch）；
+   *  从接班会话换回原角色时网关给 resume，打开她原来那段接着聊（#1） */
   async function switchRole(id) {
     const cc = window.__cc, from = cc.view.sessionId || null;
     const r = await api("/api/xk/switch", { method: "POST", body: { to: id, fromSessionId: from } });
     cur.sid = undefined; cur.role = id; cur.origin = null;
-    cc.newConversation();
-    cc.view.projectId = r.projectId;
+    if (r.resume) cc.openSession(r.resume);
+    else { cc.newConversation(); cc.view.projectId = r.projectId; }
     await loadRoles();
     applyRole(id, true);
-    toast(`换成${rname(id)}了`, from ? "下一条消息会带上刚才的对话" : "", sprite(id, "wave"));
+    toast(r.resume ? `换回${rname(id)}了` : `换成${rname(id)}了`, r.resume ? "接着你们原来那段，下一条会带上她不在时聊的" : from ? "下一条消息会带上刚才的对话" : "", sprite(id, "wave"));
+    return r;
   }
 
   // ── 她在干什么：输入框上方探出小人；思考过程跑着时展开 ──
@@ -297,7 +299,7 @@
         if (ev.op === "handover") {
           const pic = ev.from === "xiaoke" && ev.to === "hachimi" ? art("group/handover_1") : ev.from === "hachimi" && ev.to === "deepseek" ? art("group/handover_2") : sprite(ev.to, "wave");
           SFX.play("sleep"); peek("sleeping");
-          toast(`${rname(ev.to)}来接班`, ev.reason, pic);
+          toast(ev.back ? `${rname(ev.to)}回来了` : `${rname(ev.to)}来接班`, ev.reason, pic);
           const now = window.__cc && window.__cc.view.sessionId;
           if (!ev.fromSession || ev.fromSession === now) follow.set(ev.runId, true);
           loadRoles().then(() => { paintHead(); if ($("#xk-p-roles.on")) renderRoles(); }).catch(() => {});
@@ -504,9 +506,9 @@
   async function bindTo(to, pick) {
     binding = true;
     try {
-      await switchRole(to);
-      // 刚选的型号带过去：新会话的第一条消息会把它钉上
-      if (pick && pick.provider) window.__cc.state.pendingModel = { provider: pick.provider, ...(pick.model != null ? { model: pick.model } : {}) };
+      const r = await switchRole(to);
+      // 刚选的型号带过去：新会话的第一条消息会把它钉上（回到原来那段时不钉，那段有它自己的型号）
+      if (!r.resume && pick && pick.provider) window.__cc.state.pendingModel = { provider: pick.provider, ...(pick.model != null ? { model: pick.model } : {}) };
     } catch (e) { fail(e); } finally { setTimeout(() => { binding = false; }, 800); }
   }
 

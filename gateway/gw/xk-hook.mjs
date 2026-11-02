@@ -18,7 +18,7 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
     } else if (ev === "prompt") {
       const hits = search(dir, input.prompt || "", 6);
       if (hits.length) parts.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准）：\n" + hits.map(line).join("\n"));
-      // 接班说明按这一轮的 run 号放（xk-handover.mjs 在起进程之前写好），用完就删，只出现在新会话的第一条
+      // 接班 / 交回说明按这一轮的 run 号放（xk-handover.mjs 在起进程之前写好），用完就删，只出现在接手后的第一条
       const run = process.env.CCAPP_RUN_ID;
       const carry = run && path.join(dir, ".xk", "carry", run + ".md");
       if (carry && fs.existsSync(carry)) { parts.push(fs.readFileSync(carry, "utf8").trim()); fs.rmSync(carry); }

@@ -76,3 +76,15 @@ test("hook：post_history 每轮贴着消息，接班说明按 run 号只带一�
   assert.notEqual(bad.status, 0);
   assert.match(bad.stderr, /不认识的 hook 事件/);
 });
+
+test("同一个目录的两种写法（安卓上 /data/data 和 /data/user/0）都认得出是哪个角色", () => {
+  ensureRoles();
+  // 真机上会话记录的 cwd 是 /data/data/cc.codroid/…，ROLES_DIR 却按 CCAPP_WORKSPACE=/data/user/0/cc.codroid/… 拼：只比字符串，谁都认不出
+  const alias = path.join(path.dirname(ROLES_DIR), "..", "ws-alias");
+  fs.rmSync(alias, { force: true });
+  fs.symlinkSync(path.dirname(ROLES_DIR), alias);
+  assert.equal(roleOfDir(path.join(alias, "roles", "hachimi"))?.id, "hachimi");
+  assert.equal(roleOfDir(fs.realpathSync(roleDir("deepseek")))?.id, "deepseek");
+  assert.equal(roleOfDir(path.join(alias, "roles")), null, "roles/ 本身不是哪个角色");
+  assert.equal(roleOfDir(path.join(alias, "elsewhere")), null);
+});
