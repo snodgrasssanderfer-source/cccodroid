@@ -321,6 +321,8 @@
           loadRoles().then(() => { paintHead(); if ($("#xk-p-roles.on")) renderRoles(); }).catch(() => {});
         } else if (ev.op === "handover_none") { peek("sleeping"); toast(`${rname(ev.from)}睡着了`, ev.reason, sprite(ev.from, "sleeping"), true); }
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
+        // 主人从系统设置给完悬浮窗权限回来：开着的「通知」页跟着刷新
+        else if (ev.op === "overlay_config" && meSub?.dataset.k === "notify") SUB.notify(meSub.querySelector(".xk-subb")).catch(() => {});
         else if (ev.op === "diary") toast("日记", ev.text, art("xiaoke/10_diary"), !!ev.error);
         else if (ev.op === "board") {
           if (ev.error) toast("留言板", ev.error, stateArt("error"), true);
@@ -895,7 +897,7 @@
   const rc = (id) => `var(--xk-c-${id === "deepseek" ? "xiaoyu" : id})`;
   const meRow = (id, k, sub, right) => `<button class="xk-row xk-press" id="${id}"><span class="k">${k}${sub ? `<small>${sub}</small>` : ""}</span>${right ?? svg("go")}</button>`;
   const sw = (on) => `<span class="xk-sw${on ? " on" : ""}"></span>`;
-  const SECTS = [["account", "账号与接口", "她们各用各的那家"], ["appearance", "外观", "深浅、动效、音效"], ["notify", "通知", "跑完和等你确认时提醒"],
+  const SECTS = [["account", "账号与接口", "她们各用各的那家"], ["appearance", "外观", "深浅、动效、音效"], ["notify", "通知", "提醒、悬浮窗"],
     ["usage", "用量", "三个人各花了多少"], ["about", "关于", "版本、更新、开源声明"], ["developer", "开发者", "cccodroid 原本的设置和工具"]];
   let meSub = null;
 
@@ -983,6 +985,12 @@
         ${off ? `<p class="xk-hint xk-warn">${off}</p>` : ""}<div class="xk-list" style="margin-top:12px">${meRow("xk-n-sys", "系统通知设置", "")}</div>`;
       for (const k of ["done", "ask"]) $("#xk-n-" + k, b).onclick = () => { SFX.play("toggle"); api("/api/app/notify_set", { method: "POST", body: { [k]: !st[k] } }).then(() => SUB.notify(b)).catch(fail); };
       $("#xk-n-sys", b).onclick = () => { SFX.play("tap"); api("/api/app/notify_settings", { method: "POST", body: {} }).catch(fail); };
+      // 悬浮窗（#32）：离开 App 也看得到她在做什么、网关重启倒数。权限由外壳在打开时带去系统设置，给没给它报回网关
+      const ov = await api("/api/xk/overlay");
+      const need = ov.enabled && !ov.permitted;
+      b.insertAdjacentHTML("beforeend", `<div class="xk-gt">悬浮窗</div><div class="xk-list">${meRow("xk-n-ov", "离开小克时显示悬浮窗", "小圆片 + 顶上一行字：她在做什么、说到哪；网关重启时倒数", sw(ov.enabled))}</div>
+        ${need ? `<img class="xk-ovperm" src="${art("overlay/permission")}" alt=""><p class="xk-hint xk-warn">还差一步：在系统设置里允许小克「显示在其他应用的上层」。打开开关时会自动带你过去；没跳过去的话，到系统设置 → 应用 → 小克里找。</p>` : ""}`);
+      $("#xk-n-ov", b).onclick = () => { SFX.play("toggle"); api("/api/xk/overlay/config", { method: "PUT", body: { enabled: !ov.enabled } }).then(() => SUB.notify(b)).catch(fail); };
     },
     async usage(b) {
       const u = await api("/api/xk/usage");

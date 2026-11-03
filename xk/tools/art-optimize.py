@@ -2,7 +2,7 @@
 """把 GPT 交来的原图（xiaoke-art/）缩成 App 用的 WebP，放进 gateway/web/xk-art/。
 
 原图 49 MB，直接进 APK 太大；按界面上实际显示的最大尺寸（含 3 倍屏）缩小再转 WebP。
-设定图和界面参考图只给人看，不进 App。原图包在仓库 xiaoke-art-2026-11-01（第 1 版）、xiaoke-art-v2-2026-11-02（第 2 版）分支。
+设定图和界面参考图只给人看，不进 App。原图包在仓库 xiaoke-art-2026-11-01（第 1 版）、xiaoke-art-v2-2026-11-02（第 2 版）、xiaoke-art-overlay-2026-11-03（悬浮窗）分支。
 用法：python3 xk/tools/art-optimize.py <解压后的 xiaoke-art 目录>
 """
 import sys
@@ -22,6 +22,8 @@ SIZES = {
     # 第 2 版（前端重构）
     "me": 1200, "health": 384, "onboard": 1080, "state": 512,
     "diary/paper": 512, "diary": 640, "help": 768,
+    # 悬浮窗（#32）：小圆片屏上约 56dp，3 倍屏 168px，留点余量
+    "overlay/permission.png": 768, "overlay": 256,
 }
 SKIP = ("00_ref_sheet", "ui-ref/", "preview_")
 
