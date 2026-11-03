@@ -17,6 +17,7 @@
         android:label="小克 · 平板"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network">
         <!-- 明文 HTTP 只到同一个网里的手机，内容在应用层用配对密钥加密（gateway/gw/xk-pad.mjs） -->

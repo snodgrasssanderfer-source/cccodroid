@@ -3,17 +3,19 @@
 @media (prefers-color-scheme: dark) { :root { --bg: #1d1814; --bg2: #2a231e; --fg: #f3e9df; --fg3: #a8988a; --line: #3a312a; --accent: #f39a58;
   --xiaoke: #f39a58; --hachimi: #b496ef; --xiaoyu: #7ea8ee; } }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+/* 整页不滚、只有消息列表滚：不然弹过一次键盘，整页被顶上去就不回来，顶上「看手机画面」跟着看不见（主人 11-03 真机截图） */
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 [hidden] { display: none !important; }
 .btn { border: 0; border-radius: 999px; background: var(--accent); color: #fff; font: inherit; font-size: 16px; padding: 10px 22px; }
 .btn.small { font-size: 14px; padding: 6px 14px; }
 .err { color: var(--err); font-size: 14px; }
-#setup { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; gap: 6px; }
+#setup { height: 100%; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; gap: 6px; }
 #setup img { width: min(420px, 80vw); }
 #setup h1 { font-size: 22px; margin: 8px 0 0; font-weight: 500; }
 #setup p { margin: 0; color: var(--fg3); max-width: 30em; line-height: 1.6; }
 #sas { font-size: 56px; letter-spacing: .25em; font-variant-numeric: tabular-nums; margin: 10px 0; color: var(--accent); }
-#chat { height: 100%; display: flex; flex-direction: column; }
+#chat { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#list { min-height: 0; }
 header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 header img { width: 40px; height: 40px; }
 header div { flex: 1; display: flex; flex-direction: column; }
