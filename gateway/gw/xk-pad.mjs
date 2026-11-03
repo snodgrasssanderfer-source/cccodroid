@@ -102,8 +102,11 @@ export async function padCall(env, now = Date.now()) {
   if (!d) throw httpError(PAIR.pending.has(env.id) ? 403 : 401, PAIR.pending.has(env.id) ? "等手机上确认配对" : "这台平板没配对过");
   const key = Buffer.from(d.key, "base64"), q = open(key, env, d.id);
   if (Math.abs(now - Number(q.t)) > SKEW_MS) throw httpError(401, "时间对不上（两台设备的钟差了一分钟以上）");
-  if (!(Number(q.q) > d.seq)) throw httpError(401, "序号旧了：这个请求已经用过");
-  d.seq = Number(q.q); d.lastSeen = now; save();   // 序号落盘：网关重启后旧请求照样不认
+  // 序号：平板会同时发好几个请求（长轮询等事件的同时发消息），到达顺序不一定，所以用一个滑动窗口——
+  // 比见过的最大号往回 64 以内、而且没用过的才认；序号落盘，网关重启后旧请求照样不认
+  const n = Number(q.q), seen = d.seen || [];
+  if (!(n > 0) || n <= d.seq - 64 || seen.includes(n)) throw httpError(401, "序号旧了：这个请求已经用过");
+  d.seen = [...seen, n].slice(-64); d.seq = Math.max(d.seq, n); d.lastSeen = now; save();
   const method = String(q.m || "GET").toUpperCase(), p = String(q.p || "");
   // 事件：ev = 上次拿到的光标；-1 = 刚连上，只要现在的光标，马上回
   if (q.ev != null) return seal(key, await waitEvents(Number(q.ev), Number(q.ev) < 0 ? 0 : 25000), d.id);
@@ -167,7 +170,7 @@ addRoute(async (req, res, u, p) => {
   if (!p.startsWith("/api/xk/pad")) return NEXT;
   if (p === "/api/xk/pad" && req.method === "GET") {
     return sendJson(res, 200, {
-      devices: devices().devices.map(({ key, seq, ...d }) => d), port: PAD_PORT, addrs: lanAddrs(),
+      devices: devices().devices.map(({ key, seq, seen, ...d }) => d), port: PAD_PORT, addrs: lanAddrs(),
       pairing: Date.now() < PAIR.until ? { until: PAIR.until, pending: [...PAIR.pending].map(([id, x]) => ({ id, name: x.name, sas: x.sas })) } : null,
     });
   }

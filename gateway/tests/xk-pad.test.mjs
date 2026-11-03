@@ -61,6 +61,10 @@ test("加密请求：放行的接口转给本机；别的接口、旧序号、�
   const old = t.req({ m: "GET", p: "/api/xk/roles" });
   await padCall(old);
   await assert.rejects(padCall(old), /序号旧了/, "同一个请求再发一遍");
+  // 同时发的两个请求先后颠倒到达：都认（长轮询和发消息同时在路上）
+  const a = t.req({ m: "GET", p: "/api/xk/roles" }), b = t.req({ m: "GET", p: "/api/xk/roles" });
+  await padCall(b); await padCall(a);
+  await assert.rejects(padCall(a), /序号旧了/);
   await assert.rejects(padCall(t.req({ m: "GET", p: "/api/xk/roles" }, Date.now() - 5 * 60000)), /时间对不上/);
   const other = tablet(); other.id = t.id; other.key = crypto.randomBytes(32);
   await assert.rejects(padCall(other.req({ m: "GET", p: "/api/xk/roles" })), /解不开/);
