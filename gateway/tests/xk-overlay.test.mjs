@@ -50,6 +50,21 @@ test("主人的一轮：想 → 干活 → 说话 → 跑完，浮层跟着换�
   assert.deepEqual(seq.at(-1), ["deepseek", "idle", "看到了，在设置页"]);
 });
 
+test("最后一段话整块到、马上跑完：先补推说话再闲下来；思考按 phase:think 认，不重复推", () => {
+  const { got, off } = watch();
+  RUNS.set("r4", { id: "r4", cwd: roleDir("xiaoke") });
+  try {
+    ev("run_start", "r4", {});
+    ev("phase", "r4", { phase: "think" });
+    ev("phase", "r4", { phase: "think" });
+    ev("phase", "r4", { phase: "tool", name: "Bash" });
+    ev("delta", "r4", { text: "命令跑完了。" });
+    ev("run_end", "r4", {});
+  } finally { off(); RUNS.delete("r4"); }
+  assert.deepEqual(got.filter((e) => e.op === "overlay").map((e) => [e.state, e.line]),
+    [["busy", "在想…"], ["talk", "命令跑完了。"], ["idle", "命令跑完了。"]]);
+});
+
 test("网关自己起的轮次（整理、日记、压缩）不显示；额度用完的跑完显示睡着", () => {
   const { got, off } = watch();
   RUNS.set("r2", { id: "r2", cwd: roleDir("xiaoke") });

@@ -50,7 +50,9 @@ function roleOfRun(id) {
 }
 
 onPublish((ev) => {
-  if (!ev || !ev.runId || !["run_start", "thinking", "tool_use", "delta", "run_end"].includes(ev.type)) return;
+  // 真机上 Claude 的思考是逐字流的，只来 phase:think，不来整段 thinking（11-03 抓事件流看到的）
+  const think = ev?.type === "thinking" || (ev?.type === "phase" && ev.phase === "think");
+  if (!ev || !ev.runId || !(think || ["run_start", "tool_use", "delta", "run_end"].includes(ev.type))) return;
   if (ev.type === "run_start") { if (!ev.auto) LIVE_RUNS.set(ev.runId, { role: null, text: "" }); return; }
   const live = LIVE_RUNS.get(ev.runId);
   if (!live) return;
@@ -58,12 +60,13 @@ onPublish((ev) => {
   live.role ||= roleOfRun(ev.runId);
   if (!live.role) { if (ev.type === "run_end") LIVE_RUNS.delete(ev.runId); return; }
   OV.role = live.role; OV.runId = ev.runId;
-  if (ev.type === "thinking") { OV.state = "busy"; OV.line = "在想…"; push(); }
+  if (think) { if (OV.state !== "busy" || OV.line !== "在想…") { OV.state = "busy"; OV.line = "在想…"; push(); } }
   else if (ev.type === "tool_use" && !ev.parent) { OV.state = "busy"; OV.line = stepLine(ev.name, ev.input); push(); }
   else if (ev.type === "delta") { live.text += ev.text || ""; OV.state = "talk"; OV.line = lastLine(live.text); pushSoon(); }
   else if (ev.type === "run_end") {
     LIVE_RUNS.delete(ev.runId);
-    clearTimeout(talkTimer); talkTimer = null;
+    // 最后一段话常常整块到、紧接着就跑完：还没推出去的「说话」先补推，外壳看到 talk → 闲下来才会在圆片上亮小点（11-03 真机没亮）
+    if (talkTimer) { clearTimeout(talkTimer); talkTimer = null; push(); }
     OV.state = restState(OV.role);
     if (live.text) OV.line = lastLine(live.text);
     push();
