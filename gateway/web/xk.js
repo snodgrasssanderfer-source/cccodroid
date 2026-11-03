@@ -916,7 +916,8 @@
     const a = rtd(Math.min(...ats)), b = rtd(Math.max(...ats));
     return a.day === b.day ? `${a.day} ${a.hm} ~ ${b.hm}` : `${a.day} ${a.hm} ~ ${b.day} ${b.hm}`;
   }
-  async function roomCanvas(msgs) {
+  async function roomCanvas(msgs, opts = {}) {
+    const hideNames = !!opts.hideNames;
     const list = (msgs || []).filter((m) => m && m.text != null);
     if (!list.length) throw new Error("没有选消息");
     try { await document.fonts.ready; } catch {}
@@ -930,7 +931,7 @@
     const bFont = `400 15px ${FONT}`, aFont = `400 13.5px ${FONT}`, nFont = `500 12px ${FONT}`, sFont = `400 12px ${FONT}`, tFont = `700 20px ${FONT}`, tsFont = `400 11px ${FONT}`;
     const W = 440, HEAD = 120, PX = 16, AV = 36, AVGAP = 8, GAP = 10;
     const innerW = W - PX * 2, herMax = innerW - AV - AVGAP, meMax = Math.round(innerW * 0.82);
-    const lineH = 15 * 1.55, padY = 8, padX = 12, nameH = 16, asideH = 13.5 * 1.5;
+    const lineH = 15 * 1.55, padY = 8, padX = 12, nameH = hideNames ? 0 : 16, asideH = 13.5 * 1.5;
     const meter = document.createElement("canvas").getContext("2d");
 
     // 先量高度（和日记导出一个路子）
@@ -1020,7 +1021,7 @@
         c.restore();
         c.beginPath(); c.arc(PX + AV / 2, y + AV / 2, AV / 2 - .75, 0, Math.PI * 2); c.strokeStyle = col; c.lineWidth = 1.5; c.stroke();
         c.font = nFont; c.fillStyle = col;
-        c.fillText(rname(m.from) + (m.kind === "aside" ? "  插了一句" : ""), PX + AV + AVGAP, y + nameH / 2 + 1);
+        if (!hideNames) c.fillText(rname(m.from) + (m.kind === "aside" ? "  插了一句" : ""), PX + AV + AVGAP, y + nameH / 2 + 1);
         const bx = PX + AV + AVGAP, by = y + nameH;
         c.font = m.kind === "aside" ? aFont : bFont;
         const mw = herMax - (m.kind === "aside" ? 20 : padX * 2);
@@ -1048,29 +1049,59 @@
     const blob = await new Promise((ok, no) => cv.toBlob((b) => (b ? ok(b) : no(new Error("图片没生成出来"))), "image/png"));
     return blob;
   }
-  async function exportRoomImage(msgs, share) {
+  // 生成前先给主人看一眼：预览 + 「隐藏昵称」开关，确认无误再保存或分享（#66，照着 QQ 的隐藏昵称做）
+  async function exportRoomImage(msgs, opts) {
     if (roomExporting) return;
+    const list = (msgs || []).filter((m) => m && m.text != null);
+    if (!list.length) return toast("没有选消息", "先勾几条再生成");
+    const st = { hideNames: !!(opts && typeof opts === "object" && opts.hideNames), blob: null, url: "", busy: false };
+    const render = async () => {
+      if (st.busy) return;
+      st.busy = true;
+      try {
+        st.blob = await roomCanvas(list, { hideNames: st.hideNames });
+        if (st.url) URL.revokeObjectURL(st.url);
+        st.url = URL.createObjectURL(st.blob);
+        const img = $("#xk-prev-img", sheet); if (img) img.src = st.url;
+      } catch (e) { fail(e); }
+      st.busy = false;
+    };
+    const finish = async (share) => {
+      if (st.busy || !st.blob) return;
+      const blob = st.blob, name = "聊天室记录.png";
+      try {
+        const r = await fetch("/api/xk/room/export", { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.message || j.error || "HTTP " + r.status);
+        closeSheet();
+        if (share) {
+          const s = await api("/api/app/share_file", { method: "POST", body: { path: j.path } });
+          if (!s.ok) throw new Error(s.message || "分享失败");
+          toast("发出去了", j.name || name);
+        } else if (shell && shell.saveAs) {
+          shell.saveAs(j.path, j.name || name, "image/png");
+        } else {
+          const u = URL.createObjectURL(blob), a = document.createElement("a");
+          a.href = u; a.download = j.name || name; document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(u), 10000);
+          toast("图片做好了", j.name || name);
+        }
+      } catch (e) { fail(e); }
+    };
     roomExporting = true;
-    toast("正在做图", "把选中的消息画成一张长图");
-    try {
-      const blob = await roomCanvas(msgs);
-      const name = "聊天室记录.png";
-      const r = await fetch("/api/xk/room/export", { method: "POST", headers: { "content-type": "image/png" }, body: blob });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.message || j.error || "HTTP " + r.status);
-      if (share) {
-        const s = await api("/api/app/share_file", { method: "POST", body: { path: j.path } });
-        if (!s.ok) throw new Error(s.message || "分享失败");
-        toast("发出去了", j.name || name);
-      } else if (shell && shell.saveAs) {
-        shell.saveAs(j.path, j.name || name, "image/png");
-      } else {
-        const u = URL.createObjectURL(blob), a = document.createElement("a");
-        a.href = u; a.download = j.name || name; document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(u), 10000);
-        toast("图片做好了", j.name || name);
-      }
-    } catch (e) { fail(e); } finally { roomExporting = false; }
+    openSheet(`<h2>导出群聊记录</h2><p class="sub">共 ${list.length} 条 · 先看一眼，再保存或分享</p>
+      <img id="xk-prev-img" alt="预览" style="width:100%;max-height:46vh;object-fit:contain;border-radius:12px;background:var(--bg3)"/>
+      <div class="xk-row xk-press" id="xk-prev-hide-row" style="margin-top:8px"><span class="k">隐藏昵称</span><span class="xk-sw" id="xk-prev-hide"></span></div>
+      <button class="xk-wide xk-press" id="xk-prev-save">保存图片</button>
+      ${shell ? '<button class="xk-wide xk-soft xk-press" id="xk-prev-share">分享图片</button>' : ""}`,
+      (s) => {
+        $("#xk-prev-hide-row", s).onclick = () => { st.hideNames = !st.hideNames; $("#xk-prev-hide", s).classList.toggle("on", st.hideNames); render(); };
+        $("#xk-prev-save", s).onclick = () => finish(false);
+        const sh = $("#xk-prev-share", s); if (sh) sh.onclick = () => finish(true);
+      });
+    $("#xk-prev-hide", sheet)?.classList.toggle("on", st.hideNames);
+    await render();
+    roomExporting = false;
   }
 
   // ── 我的页（主人 11-02 定的：伴侣设置；上游整套设置和工具收进「开发者」）──
