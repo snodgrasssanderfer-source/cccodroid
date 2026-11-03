@@ -335,6 +335,10 @@
         else if (ev.op === "room") roomMsg(ev.msg);
         else if (ev.op === "room_typing") roomTyping(ev.role, ev.on);
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
+        else if (ev.op === "pad_pending" || ev.op === "pad_paired") {
+          if (meSub?.dataset.k === "pad") SUB.pad(meSub.querySelector(".xk-subb")).catch(() => {});
+          else if (ev.op === "pad_pending") toast("平板想配对", `「${ev.name}」：到「我的 → 平板」核对 6 位数`, art("pad/pair"));
+        }
         // 主人从系统设置给完悬浮窗权限回来：开着的「通知」页跟着刷新
         else if (ev.op === "overlay_config" && meSub?.dataset.k === "notify") SUB.notify(meSub.querySelector(".xk-subb")).catch(() => {});
         else if (ev.op === "diary") toast("日记", ev.text, art("xiaoke/10_diary"), !!ev.error);
@@ -1151,7 +1155,9 @@
   const meRow = (id, k, sub, right) => `<button class="xk-row xk-press" id="${id}"><span class="k">${k}${sub ? `<small>${sub}</small>` : ""}</span>${right ?? svg("go")}</button>`;
   const sw = (on) => `<span class="xk-sw${on ? " on" : ""}"></span>`;
   const SECTS = [["account", "账号与接口", "她们各用各的那家"], ["appearance", "外观", "深浅、动效、音效"], ["notify", "通知", "提醒、悬浮窗"],
-    ["usage", "用量", "三个人各花了多少"], ["about", "关于", "版本、更新、开源声明"], ["developer", "开发者", "cccodroid 原本的设置和工具"]];
+    ["usage", "用量", "三个人各花了多少"], ["pad", "平板", "配对平板，在平板上聊天、看画面"], ["about", "关于", "版本、更新、开源声明"], ["developer", "开发者", "cccodroid 原本的设置和工具"]];
+  // 各分区的头图：「平板」用第三步那张配对图（没有单独画 me_pad）
+  const SECT_ART = (k) => (k === "pad" ? "pad/pair" : "me/me_" + k);
   let meSub = null;
 
   // 健康卡：都好就一行；有问题按人列出来，每条带一个去处理的按钮
@@ -1182,7 +1188,7 @@
 
   async function renderMe() {
     const b = body("me");
-    if (!b.querySelector(".xk-sects")) b.innerHTML = `<div id="xk-hcard"></div><div class="xk-sects">${SECTS.map(([k, t, s]) => `<button class="xk-sect xk-press" data-k="${k}" style="background-image:url('${art("me/me_" + k)}')"><b>${t}</b><small>${s}</small></button>`).join("")}</div>
+    if (!b.querySelector(".xk-sects")) b.innerHTML = `<div id="xk-hcard"></div><div class="xk-sects">${SECTS.map(([k, t, s]) => `<button class="xk-sect xk-press" data-k="${k}" style="background-image:url('${art(SECT_ART(k))}')"><b>${t}</b><small>${s}</small></button>`).join("")}</div>
       <div class="xk-list" style="margin-top:10px">${meRow("xk-m-help", "怎么用", "聊天、替班、记忆、日记，一页说清")}</div>`;
     b.querySelector(".xk-sects").onclick = (e) => { const s = e.target.closest(".xk-sect"); if (s) openMeSub(s.dataset.k); };
     $("#xk-m-help", b).onclick = () => openMeSub("help");
@@ -1194,7 +1200,7 @@
   // 分区：一层从右边滑进来的页，顶上是这一区的头图；返回键先关它
   function openMeSub(k) {
     closeMeSub(true);
-    const [title, head] = k === "help" ? ["怎么用", "help/help_roles"] : [SECTS.find((s) => s[0] === k)[1], "me/me_" + k];
+    const [title, head] = k === "help" ? ["怎么用", "help/help_roles"] : [SECTS.find((s) => s[0] === k)[1], SECT_ART(k)];
     const el = document.createElement("section"); el.className = "xk-sub"; el.dataset.k = k;
     el.innerHTML = `<div class="xk-subh" style="background-image:url('${art(head)}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>${title}</h2></div><div class="xk-subb"></div>`;
     $("#xk-p-me").appendChild(el); void el.offsetWidth; el.classList.add("on"); SFX.play("sheet");
@@ -1256,6 +1262,23 @@
         <div class="xk-list" style="margin-top:12px">${meRow("xk-u-all", "完整用量与月报", "按小时、按型号")}${meRow("xk-u-quota", "额度与余额", "Claude 订阅的额度、DeepSeek 余额")}</div>`;
       $("#xk-u-all", b).onclick = () => { SFX.play("tap"); cc()?.openPage("usage"); };
       $("#xk-u-quota", b).onclick = () => { SFX.play("tap"); cc()?.openPage("settings", "usage"); };
+    },
+    // 平板（第三步 3a）：开配对 → 平板发来公钥后两边各显示一个 6 位数，一样就点「一致，配对」（gateway/gw/xk-pad.mjs）
+    async pad(b) {
+      const st = await api("/api/xk/pad");
+      const ago = (t) => !t ? "还没连过" : Date.now() - t < 120000 ? "刚刚连着" : new Date(t).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) + " 连过";
+      const pend = st.pairing?.pending || [];
+      b.innerHTML = `${pend.map((x) => `<div class="xk-padsas"><small>「${esc(x.name)}」想配对，看平板上的数和这个一样吗</small><b>${esc(x.sas)}</b>
+          <div><button class="xk-mini xk-press" data-no="${esc(x.id)}">不一样</button><button class="xk-mini xk-press on" data-ok="${esc(x.id)}">一致，配对</button></div></div>`).join("")}
+        ${st.pairing && !pend.length ? `<p class="xk-hint">配对开着（${Math.max(0, Math.round((st.pairing.until - Date.now()) / 1000))} 秒内）：在平板上打开「小克 · 平板」点「配对」。两台要连在同一个网里。</p>` : ""}
+        <div class="xk-gt">已配对的平板</div>
+        <div class="xk-list">${st.devices.length ? st.devices.map((d) => `<div class="xk-row"><span class="k">${esc(d.name)}<small>${ago(d.lastSeen)}</small></span><button class="xk-mini xk-press danger" data-del="${esc(d.id)}">取消配对</button></div>`).join("") : `<div class="xk-row"><span class="k">还没有<small>平板上装「小克 · 平板」（和小克一起发在 Release 里的 xiaoke-pad.apk）</small></span></div>`}</div>
+        <button class="xk-wide xk-press" id="xk-pad-pair" style="margin-top:14px">配对新平板</button>
+        <p class="xk-hint">平板只能看群聊、在群里说话、看手机画面；文件、终端、设置都碰不到。通信用配对时那把密钥加密。看手机画面要开着 Shizuku。</p>`;
+      $("#xk-pad-pair", b).onclick = () => { SFX.play("tap"); api("/api/xk/pad/pair", { method: "POST", body: {} }).then(() => SUB.pad(b)).catch(fail); };
+      b.querySelectorAll("[data-ok]").forEach((x) => x.onclick = () => { SFX.play("done"); api("/api/xk/pad/confirm", { method: "POST", body: { id: x.dataset.ok } }).then(() => { toast("配好了", "平板上会自己连上来", art("pad/pair")); SUB.pad(b); }).catch(fail); });
+      b.querySelectorAll("[data-no]").forEach((x) => x.onclick = () => { SFX.play("tap"); toast("没配对", "数不一样就别配：重新开一次配对，在家里的网上再试", null, true); });
+      b.querySelectorAll("[data-del]").forEach((x) => x.onclick = () => { SFX.play("toggle"); api("/api/xk/pad/" + x.dataset.del, { method: "DELETE" }).then(() => SUB.pad(b)).catch(fail); });
     },
     async about(b) {
       let feed = null, ver = ""; try { feed = await api("/api/xk/update-feed"); } catch {}

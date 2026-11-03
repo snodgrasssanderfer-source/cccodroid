@@ -3,7 +3,7 @@
 规矩看 CLAUDE.md，改过的上游文件看 XIAOKE.md，人设、世界书和调研资料在 `xk/`。每轮结束时更新这份。
 
 ## 版本
-- 已发布 **v0.3.5**（versionCode 18），由 `claude/release-0.3.5` 发出（内容 = `dev`：小克手机上合的 #67 #70 #71 #66 #72 #77，#76 请发）。之前 v0.3.4（versionCode 17），由 `claude/release-0.3.4` 发出（内容 = `dev`：群里插话不再切到便宜档，#64）。之前 v0.3.3（versionCode 16），由 `claude/release-0.3.3` 发出（内容 = `dev`：room_say / room_read 分派，世界书补一句）。之前 v0.3.2（versionCode 15），由 `claude/release-0.3.2` 发出（内容 = `dev`：聊天室谁开口改成混合做法 #61）。之前 v0.3.1（versionCode 14），由 `claude/release-0.3.1` 发出（内容 = `dev`：聊天室 + #57 #58 #59；主人 11-03 定的：0.3.0 先不装，等这一版一起装）。之前 v0.3.0（versionCode 13），由 `claude/release-0.3.0` 发出（内容 = `dev`：聊天室 #35，PR #56）。之前 v0.2.9（versionCode 12），由 `claude/release-0.2.9` 发出（内容 = `dev`：悬浮窗字幕样子 PR #54、红点和「在想」#52、不写命令内容开关 #51、换便条 #53）。之前 v0.2.8（versionCode 11），由 `claude/release-0.2.8` 发出（内容 = `dev`：悬浮窗第一步 PR #49、更新源备用 PR #28、日记导出、#33 #34；主人 11-03 定的：直接发版在真机上验，小克逐项验收）。之前 v0.2.7（versionCode 10），由 `claude/memory-26` 发出（内容 = `dev`，记忆整理 PR #27，带上 #22–#25，主人真机验过）。之前 v0.2.6（留言板 PR #21）、v0.2.5（PR #20）、v0.2.4（PR #18 #19）、v0.2.3、v0.2.2、v0.2.1、v0.2.0（界面重做）、v0.1.1。
+- 已发布 **v0.3.6**（versionCode 19），由 `claude/release-0.3.6` 发出（内容 = `dev`：平板 App 第一版 + 串流 + 「我的 → 平板」，#80）。Release 里多一个 `xiaoke-pad.apk`。之前 v0.3.5（versionCode 18），由 `claude/release-0.3.5` 发出（内容 = `dev`：小克手机上合的 #67 #70 #71 #66 #72 #77，#76 请发）。之前 v0.3.4（versionCode 17），由 `claude/release-0.3.4` 发出（内容 = `dev`：群里插话不再切到便宜档，#64）。之前 v0.3.3（versionCode 16），由 `claude/release-0.3.3` 发出（内容 = `dev`：room_say / room_read 分派，世界书补一句）。之前 v0.3.2（versionCode 15），由 `claude/release-0.3.2` 发出（内容 = `dev`：聊天室谁开口改成混合做法 #61）。之前 v0.3.1（versionCode 14），由 `claude/release-0.3.1` 发出（内容 = `dev`：聊天室 + #57 #58 #59；主人 11-03 定的：0.3.0 先不装，等这一版一起装）。之前 v0.3.0（versionCode 13），由 `claude/release-0.3.0` 发出（内容 = `dev`：聊天室 #35，PR #56）。之前 v0.2.9（versionCode 12），由 `claude/release-0.2.9` 发出（内容 = `dev`：悬浮窗字幕样子 PR #54、红点和「在想」#52、不写命令内容开关 #51、换便条 #53）。之前 v0.2.8（versionCode 11），由 `claude/release-0.2.8` 发出（内容 = `dev`：悬浮窗第一步 PR #49、更新源备用 PR #28、日记导出、#33 #34；主人 11-03 定的：直接发版在真机上验，小克逐项验收）。之前 v0.2.7（versionCode 10），由 `claude/memory-26` 发出（内容 = `dev`，记忆整理 PR #27，带上 #22–#25，主人真机验过）。之前 v0.2.6（留言板 PR #21）、v0.2.5（PR #20）、v0.2.4（PR #18 #19）、v0.2.3、v0.2.2、v0.2.1、v0.2.0（界面重做）、v0.1.1。
 - 底座：11-01 同步到上游 `6aa2610`（v0.5.18 之后又两批审查修复），fork 的 main 已快进。
 - 网关测试：541 项（11-02，#26 分支）。上游新测试 B20 在 CI 上挂是因为测试用的假 PREFIX 里没有 git、sleep，已在 scripts/test.mjs 补上（登记在 XIAOKE.md）；B22 要 `yq`，GitHub 的机器上有，云端容器里没有，所以只在容器里失败。
 
@@ -67,6 +67,18 @@
   - #72（#73 #74，小鱼做）上下文到线**自动换新对话**，主人 11-03 定的：「你们自动轮换」，开新对话也不要他点。`xk-rollover.mjs`：每轮记占用，到线就给这个角色记一条待换，下一轮（私聊或群里）开新段、`writeCarry` 带上一段最后几轮，界面跟过去。线按角色：小克、小鱼 0.2；哈基米 0.6（主人 11-03 定的：「按他们官方的来吧，如果没有就设60%」，agy 没对外开放压缩线）。哈基米用量读 agy 日志 `~/.gemini/antigravity-cli/brain/<conv>/.system_generated/logs/transcript.jsonl` 最后一条 `PLANNER_RESPONSE`，input + cache_read + output 三个数相加，也进她卡片的百分比。导出预览加「折叠长消息」开关。
   - 真机设置：`autoCompactWindow` 设成 400000，只当一轮中途撑爆的兜底（设 20 万会抢在换新之前压缩）。第一次真换新对话还没在真机上见过。
 - 世界书加了「聊天室」一节（主人 11-03 点头）：**主人要在角色页重新导入一次世界书才生效**。没做：悬浮窗展开接群、平板页。
+
+## 第三步：平板 App、悬浮窗展开、语音输入（11-03 主人定的，开工）
+- 平板单独做一个 App（不用浏览器、不配局域网、更安全），要像月光那样实时看画面。分 3a（配对 + 小聊天页 + 悬浮窗展开）、3b（串流：Shizuku 跑 scrcpy 服务端，画面和声音）、3c（语音输入）。详见设计稿第三节。
+- 美术：第十一节 6 张 11-03 到了：「在听」、配对、串流没开的 WebP 在 `gateway/web/xk-art/mini/`、`pad/`；平板 App 的启动图标由 `xk/tools/pad-icon.py` 生成到 `xk/pad/res/mipmap-*`（照手机小克图标：奶白圆角底）；原图和总览在 `xk/art-ref/pad-voice/`。
+- 主人 11-03 定的：平板 App 用 GPL‑3.0、复用易控（EasyControlNext）的代码；设计稿第三节。
+- 3a 手机一侧（网关 `xk-pad.mjs`，已做，不碰界面）：只给配对平板开的局域网口子（`CCAPP_PAD_PORT`，默认网关端口 +7）。配对：平板发 P-256 公钥 → 手机回公钥和配对号 → 两边 HKDF 出密钥和 6 位数，主人在手机上看着一样点确认（`/api/xk/pad/confirm`）。之后 `/pad/v1` 每个请求 AES-256-GCM 加密、带时间（差 1 分钟内）和递增序号（落盘），只放行 `ALLOW` 里聊天要用的接口，转给本机接口；事件用加密长轮询（`ev` 光标）。配对记录和密钥在手机 `~/.config/xiaoke/pads.json`（0600，不入库）。
+- 外壳 `XkPad.java`：NSD 广播 `_xkpad._tcp`（端口问网关），随 `XkOverlay.start` 起。
+- 3b 串流：易控（EasyControlNext aeda990，GPL-3.0）的服务端源码在 `xk/pad/server/`（只改了只听本机），`xk/pad/build-server.sh` 打成 dex jar，发版时进小克的 assets；外壳 `XkStream.java` 收到网关的 `stream_start` 后经 Shizuku 放到 `/data/local/tmp`、`app_process` 起。网关 `streamUpgrade` 接平板的升级连接（`/pad/stream`），连本机服务端，双向逐块 AES-GCM。
+- 平板 App（`xk/pad/`，GPL-3.0，包名 `cc.codroid.pad`）：`PadLink`（NSD 找手机、配对、加密请求、长轮询、重连）、`PadStream`（照易控 ClientPlayer，易控解码）、`PadActivity`（画面 + 聊天页，横竖自适应）、`assets/pad.*`（配对、比数、群聊）、`build.sh`（版本号跟小克走）。发版时同一把钥匙签名，`xiaoke-pad.apk` 跟小克一起发。
+- 手机「我的 → 平板」页：开配对、核对 6 位数、取消配对。本机起真网关用模拟平板走过：配对数一致、确认后加密请求转到真接口、不放行的接口被拒。
+- Java 和网关的加密（配对、请求、串流块）有互通测试（`xk-pad-java.test.mjs`，要 javac）。
+- 还没做：平板 App 自己检查更新、悬浮窗展开的小聊天窗、语音输入（3c）。真机都还没验：NSD 在 Y700 五代 / Neo11 上、串流画面和声音。
 
 ## 分工（主人 11-02 定的）
 - 主人 11-03 定的：手机上小克、哈基米、小鱼也算一条工作流。写进 `xk/DEV.md`「手机上三个人怎么配合」：新标签 `等小鱼` / `等哈基米`，派活先落 issue 再群里点名；小克审时钉提交号合并，装和重启只由小克做；哈基米查的资料附出处、核过才用；各用自己的署名提交（`xk/tools/as.sh`）。

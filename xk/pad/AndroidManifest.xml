@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小克 · 平板（GPL-3.0，见 xk/pad/NOTICE.md）。版本号由 build.sh 照手机小克的填（@VC@ / @VN@），两边一起发 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cc.codroid.pad"
+    android:versionCode="@VC@"
+    android:versionName="@VN@">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 局域网里找手机（NSD 走组播） -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <application
+        android:label="小克 · 平板"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network">
+        <!-- 明文 HTTP 只到同一个网里的手机，内容在应用层用配对密钥加密（gateway/gw/xk-pad.mjs） -->
+        <activity
+            android:name=".PadActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,63 @@
+{
+  "date": "2026-11-03",
+  "kind": "pad_voice_incremental",
+  "delivery": "本素材包由 GPT 交付，存在防御性思维污染。",
+  "png_count": 6,
+  "files": [
+    {
+      "file": "pad/app_icon_fg.png",
+      "width": 1024,
+      "height": 1024,
+      "transparent": true,
+      "bytes": 316683,
+      "sha256": "027e8f39262f859a232b4de8154090afcee9b71193fdb67854ba225ea10a3141"
+    },
+    {
+      "file": "pad/pair.png",
+      "width": 768,
+      "height": 512,
+      "transparent": true,
+      "bytes": 218492,
+      "sha256": "4cd4ddb31d1ff2112062287cef0008099e2b18ac3664d74f0274bf20f41525cc"
+    },
+    {
+      "file": "pad/stream_off.png",
+      "width": 768,
+      "height": 512,
+      "transparent": true,
+      "bytes": 219924,
+      "sha256": "de680402350185ad627ca37f1c84d319cada657e269d40986a7d349961c85856"
+    },
+    {
+      "file": "mini/listening_xiaoke.png",
+      "width": 512,
+      "height": 512,
+      "transparent": true,
+      "bytes": 251660,
+      "sha256": "ead4fa2dea303ffb5f9b111fea7977d38bd032aae3850aa26cb2c3d821dbb04d"
+    },
+    {
+      "file": "mini/listening_hachimi.png",
+      "width": 512,
+      "height": 512,
+      "transparent": true,
+      "bytes": 264587,
+      "sha256": "34e675df7a1d42d0ae7cc6283f98393f80a6c11eac0a43679e6087806b2a04b7"
+    },
+    {
+      "file": "mini/listening_xiaoyu.png",
+      "width": 512,
+      "height": 512,
+      "transparent": true,
+      "bytes": 177721,
+      "sha256": "36da3629f90d03184aafc5a0fa27f5b9d2b48be80e5c8d9ebaec87c0cdb6bd40"
+    }
+  ],
+  "checks": {
+    "exact_dimensions": true,
+    "true_alpha": true,
+    "transparent_borders": true,
+    "icon_central_60_percent": true,
+    "voice_viewed_at_48_and_56_pixels": true
+  }
+}

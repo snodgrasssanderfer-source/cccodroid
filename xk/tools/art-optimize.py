@@ -26,8 +26,10 @@ SIZES = {
     "overlay/permission.png": 768, "overlay": 256,
     # 聊天室（#35）：群头像和小圆片一样大；头图同「我的」各区；空状态同 state/
     "room/room_avatar.png": 256, "room/room_header.png": 1200, "room/room_empty.png": 512,
+    # 第三步（平板 App、语音）：「在听」和小圆片一样大；平板图标另由 xk/tools/pad-icon.py 生成，不进网页素材
+    "mini": 256, "pad/pair.png": 768, "pad/stream_off.png": 768,
 }
-SKIP = ("00_ref_sheet", "ui-ref/", "preview_")
+SKIP = ("00_ref_sheet", "ui-ref/", "preview_", "pad/app_icon_fg")
 
 
 def size_for(rel: str) -> int:

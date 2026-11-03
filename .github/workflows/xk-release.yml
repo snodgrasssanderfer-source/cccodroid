@@ -86,10 +86,14 @@ jobs:
           export CC_ANDROID="$ANDROID_SDK_ROOT/ndk/$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
           export JAVAC=javac D8="$BT/d8" AAPT2="$BT/aapt2" ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/$PLATFORM/android.jar"
           export SIGN=apksigner APKSIGNER="$BT/apksigner" ZIPALIGN="$BT/zipalign" KEY="$RUNNER_TEMP/key.json"
+          # 平板串流的服务端（易控，GPL-3.0，单独一个程序，见 xk/pad/NOTICE.md）：随小克带在 assets 里，手机上用 shell 起
+          ANDROID_JAR="$ANDROID_JAR" AIDL="$BT/aidl" D8="$BT/d8" sh xk/pad/build-server.sh android/assets/xk-stream-server.jar
           TARGET_SDK=36 sh scripts/build.sh && mv dist/cccodroid.apk dist/cccodroid-36.apk
           sh scripts/build.sh
+          # 小克 · 平板（GPL-3.0，xk/pad/）：同一把钥匙、同一个版本号
+          AAPT2="$BT/aapt2" sh xk/pad/build.sh dist/xiaoke-pad.apk
           rm -f "$RUNNER_TEMP/key.json"
-          for a in dist/cccodroid.apk dist/cccodroid-36.apk; do
+          for a in dist/cccodroid.apk dist/cccodroid-36.apk dist/xiaoke-pad.apk; do
             got=$("$BT/apksigner" verify --print-certs "$a" | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
             [ "$got" = "$EXPECT" ] || { echo "::error::$a 的签名证书是 $got，不是主人的钥匙"; exit 1; }
           done
@@ -102,8 +106,9 @@ jobs:
           # 正文 = App 里弹的那份更新说明（android/assets/xk-whatsnew/<版本>.zh.md），再加安装提示
           notes="$RUNNER_TEMP/notes.md"
           { [ -f "android/assets/xk-whatsnew/$TAG.zh.md" ] && cat "android/assets/xk-whatsnew/$TAG.zh.md" && echo
-            echo "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"; } > "$notes"
-          gh release create "$TAG" dist/cccodroid-36.apk dist/cccodroid.apk --target "$GITHUB_SHA" \
+            echo "装 cccodroid-36.apk（targetSdk 36）。系统提示不兼容时改装 cccodroid.apk。"
+            echo "平板上装 xiaoke-pad.apk（小克 · 平板，GPL-3.0，源码在 xk/pad/）。"; } > "$notes"
+          gh release create "$TAG" dist/cccodroid-36.apk dist/cccodroid.apk dist/xiaoke-pad.apk --target "$GITHUB_SHA" \
             --title "小克 $TAG" --notes-file "$notes"
           # App 的备用发布列表（Xk.backupFeed）：api.github.com 被限流时，它从 releases/latest/download/releases.json 读这份。
           # 建好 Release 之后再取，列表里才有这一版和它的两个 APK
