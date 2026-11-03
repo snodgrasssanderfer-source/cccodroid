@@ -1,5 +1,5 @@
 """小克的语音服务，跑在主人电脑上（设计稿 xk/design/presence.md 第五节）：
-  念：POST /tts {role, text} → WAV。VoxCPM 照 voices/<角色>.wav（和 .txt 里它说的原话）的音色念。
+  念：POST /tts {role, text} → WAV。CosyVoice3（或 VoxCPM，看 config.json）照 voices/<角色>.wav（和 .txt 里它说的原话）的音色念。
   听：POST /asr（请求体是 16kHz 单声道 WAV）→ {text}。SenseVoice，默认在 CPU 上跑，省显存给念。
   GET /health → 模型、哪几个人挑好了音色。
 平板在家里 Wi‑Fi 里自己找到它（mDNS _xkvoice._tcp），请求头 x-xk-code 带配对码（第一次运行时生成，存在 config.json）。
@@ -10,13 +10,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import soundfile as sf
 
-from common import HERE, ROLES, VOICES, load_tts, safe_text
+from common import HERE, ROLES, VOICES, load_cosyvoice3, load_voxcpm, safe_text, voice
 
 CONF = os.path.join(HERE, "config.json")
 
 
 def load_conf():
-    c = {"port": 8790, "tts_model": "VoxCPM1.5", "asr_device": "cpu", "code": ""}
+    # tts_engine：cosyvoice3（默认）或 voxcpm；tts_model 只给 voxcpm 用；fp16 只给 cosyvoice3 用（显卡上省显存、更快）
+    c = {"port": 8790, "tts_engine": "cosyvoice3", "cosyvoice_repo": "CosyVoice", "fp16": True, "tts_model": "VoxCPM1.5", "asr_device": "cpu", "code": ""}
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
     if not c["code"]:
@@ -29,28 +30,48 @@ C = load_conf()
 GPU = threading.Lock()   # 一次只念一句：显存就这么多
 
 
-class Tts:
-    def __init__(self, name):
-        self.name, self.v2 = name, name.startswith("VoxCPM2")
-        self.m = load_tts(name)
-        self.rate = self.m.tts_model.sample_rate
+def wav_bytes(samples, rate):
+    buf = io.BytesIO()
+    sf.write(buf, samples, rate, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
 
-    def voice(self, role):
-        wav, txt = os.path.join(VOICES, role + ".wav"), os.path.join(VOICES, role + ".txt")
-        if not (os.path.exists(wav) and os.path.exists(txt)):
-            raise LookupError(f"还没给 {role} 挑音色：先运行 design.py 再 pick.py")
-        return wav, open(txt, encoding="utf-8").read().strip()
+
+class CosyTts:
+    """CosyVoice3（默认）：照 voices/<角色>.wav 克隆。参考录音的特征第一次念时算好存着（录音换了就重算），之后每句不再重算，出声快"""
+    def __init__(self):
+        self.name = "CosyVoice3"
+        self.m = load_cosyvoice3(C["cosyvoice_repo"], C["fp16"])
+        self.rate = self.m.sample_rate
+        self.spk = {}   # 角色 → 存好的录音的修改时间
 
     def say(self, role, text):
-        wav, said = self.voice(role)
+        wav, said = voice(role)
+        stamp = os.path.getmtime(wav), os.path.getmtime(wav[:-4] + ".txt")
+        with GPU:
+            if self.spk.get(role) != stamp:
+                # CosyVoice3 的提示词要带这个开头（官方 example.py 就是这么写的）
+                self.m.add_zero_shot_spk("You are a helpful assistant.<|endofprompt|>" + said, wav, role)
+                self.spk[role] = stamp
+            parts = [o["tts_speech"] for o in self.m.inference_zero_shot(safe_text(text), "", "", zero_shot_spk_id=role, stream=False)]
+        import torch
+        return wav_bytes(torch.cat(parts, dim=1).squeeze(0).cpu().numpy(), self.rate)
+
+
+class VoxTts:
+    """VoxCPM（可选，config.json 里 tts_engine 写 voxcpm）"""
+    def __init__(self, name):
+        self.name, self.v2 = name, name.startswith("VoxCPM2")
+        self.m = load_voxcpm(name)
+        self.rate = self.m.tts_model.sample_rate
+
+    def say(self, role, text):
+        wav, said = voice(role)
         kw = dict(text=safe_text(text), prompt_wav_path=wav, prompt_text=said, cfg_value=2.0, inference_timesteps=10)
         if self.v2:
             kw["reference_wav_path"] = wav   # VoxCPM2 才有：音色更像
         with GPU:
             out = self.m.generate(**kw)
-        buf = io.BytesIO()
-        sf.write(buf, out, self.rate, format="WAV", subtype="PCM_16")
-        return buf.getvalue()
+        return wav_bytes(out, self.rate)
 
 
 class Asr:
@@ -135,8 +156,8 @@ def advertise(port, addrs):
 
 
 if __name__ == "__main__":
-    print(f"加载念的模型 {C['tts_model']}…", flush=True)
-    TTS = Tts(C["tts_model"])
+    print(f"加载念的模型（{C['tts_engine']}）…", flush=True)
+    TTS = CosyTts() if C["tts_engine"] == "cosyvoice3" else VoxTts(C["tts_model"])
     print(f"加载听的模型 SenseVoice（{C['asr_device']}）…", flush=True)
     ASR = Asr(C["asr_device"])
     addrs = lan_addrs()
@@ -147,7 +168,8 @@ if __name__ == "__main__":
     print(f"  配对码：{C['code']}（在平板「小克 · 平板」里填一次）", flush=True)
     port = C["port"]
     print(f"  地址：{'、'.join(f'{a}:{port}' for a in addrs)}", flush=True)
-    print(f"  挑好音色的：{'、'.join(have) or '还没有（先 design.py 再 pick.py）'}", flush=True)
+    none = "还没有（把录音和它说的原话放进 voices 文件夹，见 README）"
+    print(f"  放好音色的：{'、'.join(have) or none}", flush=True)
     print("  关掉这个窗口就停了。\n", flush=True)
     try:
         srv.serve_forever()

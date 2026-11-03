@@ -1,5 +1,4 @@
-# torch / torchaudio 要 CUDA 12.8 版（RTX 50 系），setup.bat 先单独装，这里不写
-voxcpm
+# 语音服务自己的依赖。torch / torchaudio（CUDA 12.8 版）和 CosyVoice 的依赖由 setup.bat 另装
 funasr
 modelscope
 soundfile
