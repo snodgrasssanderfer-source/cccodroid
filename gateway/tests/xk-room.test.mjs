@@ -70,7 +70,7 @@ test("主人连着发的几句攒成一批：只定一次，几句一起递给�
   assert.match(queued[0].message, /主人：小克\n主人：今天好累/);
 });
 
-test("拿不准：问一次便宜档（小鱼那家），按它挑的人接，另一个可以插一句（插话走便宜档）", async () => {
+test("拿不准：问一次便宜档（小鱼那家），按它挑的人接，另一个可以插一句（插话不切型号）", async () => {
   verdict = { reply: "hachimi", aside: "deepseek" };
   const ids = await ownerSays("今天吃什么").decided;
   assert.deepEqual(ids, ["hachimi"]);
@@ -79,7 +79,7 @@ test("拿不准：问一次便宜档（小鱼那家），按它挑的人接，�
   assert.match(judged[0].prompt, /主人：今天吃什么[\s\S]*谁来接最合适/);
   const aside = queued.find((q) => !q.agy);
   assert.match(aside.message, new RegExp(PASS));
-  assert.equal(aside.model, "deepseek-flash");
+  assert.equal(aside.model, null, "插话也用她平时的模型，不在她那段里切型号（#64）");
   answer(aside, "deepseek", PASS);
   assert.equal(messages().length, 1, "不插话的不贴");
 });
