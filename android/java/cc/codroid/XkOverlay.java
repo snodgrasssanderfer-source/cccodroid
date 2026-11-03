@@ -90,6 +90,7 @@ final class XkOverlay {
         loop.setDaemon(true);
         loop.start();
         ui.post(tick);
+        XkPad.start(ctx);   // 平板 App 找手机用的局域网广播：和悬浮窗一样跟着网关服务起（不另改上游文件）
     }
 
     // ── 每秒一次：前台 / 后台、权限、倒计时 ──
