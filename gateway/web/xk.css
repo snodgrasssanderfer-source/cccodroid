@@ -184,9 +184,9 @@ html[data-theme="dark"] .xk-leaf[data-r="xiaoyu"] { background-image: url(/xk-ar
 #xk-sheet h2 { font: 400 22px var(--xk-title); margin: 0 0 4px; }
 #xk-sheet .sub { color: var(--fg3); font-size: 13px; margin: 0 0 14px; }
 #xk-sheet button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-#xk-sheet .xk-wide { width: 100%; padding: 12px; border-radius: 14px; background: var(--accent); color: var(--on-accent); margin-top: 12px; }
-#xk-sheet .xk-wide.xk-soft { background: var(--bg3); color: var(--fg); }
-#xk-sheet .xk-wide:disabled { opacity: .4; }
+#xk-sheet .xk-wide, .xk-page .xk-wide { width: 100%; padding: 12px; border-radius: 14px; background: var(--accent); color: var(--on-accent); margin-top: 12px; }
+#xk-sheet .xk-wide.xk-soft, .xk-page .xk-wide.xk-soft { background: var(--bg3); color: var(--fg); }
+#xk-sheet .xk-wide:disabled, .xk-page .xk-wide:disabled { opacity: .4; }
 #xk-sheet .xk-list { background: var(--bg); }
 .xk-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
 .xk-facts div { background: var(--bg); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: var(--fg3); }
@@ -371,3 +371,9 @@ html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-du
 #xk-room.pick .xk-rm-list [data-n]::before { content: ""; position: absolute; left: 14px; width: 20px; height: 20px; margin-top: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--fg3); background: var(--bg); }
 #xk-room.pick .xk-rm-list [data-n].picked::before { border-color: var(--accent); background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center / 14px no-repeat; }
 #xk-room.pick .xk-rm-list [data-n]:not(.picked) { opacity: .62; }
+/* 「我的 → 平板」：配对时核对的 6 位数 */
+.xk-padsas { background: var(--bg2); border-radius: 16px; padding: 14px 16px; margin: 4px 0 12px; text-align: center; }
+.xk-padsas small { display: block; color: var(--fg3); font-size: 12.5px; }
+.xk-padsas b { display: block; font-size: 40px; letter-spacing: .22em; font-variant-numeric: tabular-nums; color: var(--accent); margin: 6px 0 10px; }
+.xk-padsas div { display: flex; gap: 10px; justify-content: center; }
+.xk-padsas .xk-mini.on { background: var(--accent); color: var(--on-accent); }

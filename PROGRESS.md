@@ -74,7 +74,11 @@
 - 主人 11-03 定的：平板 App 用 GPL‑3.0、复用易控（EasyControlNext）的代码；设计稿第三节。
 - 3a 手机一侧（网关 `xk-pad.mjs`，已做，不碰界面）：只给配对平板开的局域网口子（`CCAPP_PAD_PORT`，默认网关端口 +7）。配对：平板发 P-256 公钥 → 手机回公钥和配对号 → 两边 HKDF 出密钥和 6 位数，主人在手机上看着一样点确认（`/api/xk/pad/confirm`）。之后 `/pad/v1` 每个请求 AES-256-GCM 加密、带时间（差 1 分钟内）和递增序号（落盘），只放行 `ALLOW` 里聊天要用的接口，转给本机接口；事件用加密长轮询（`ev` 光标）。配对记录和密钥在手机 `~/.config/xiaoke/pads.json`（0600，不入库）。
 - 外壳 `XkPad.java`：NSD 广播 `_xkpad._tcp`（端口问网关），随 `XkOverlay.start` 起。
-- 还没做：手机上「我的 → 平板」页（开配对、比数字、取消）、平板 App 本身、悬浮窗展开——这些都要等第十一节的图。
+- 3b 串流：易控（EasyControlNext aeda990，GPL-3.0）的服务端源码在 `xk/pad/server/`（只改了只听本机），`xk/pad/build-server.sh` 打成 dex jar，发版时进小克的 assets；外壳 `XkStream.java` 收到网关的 `stream_start` 后经 Shizuku 放到 `/data/local/tmp`、`app_process` 起。网关 `streamUpgrade` 接平板的升级连接（`/pad/stream`），连本机服务端，双向逐块 AES-GCM。
+- 平板 App（`xk/pad/`，GPL-3.0，包名 `cc.codroid.pad`）：`PadLink`（NSD 找手机、配对、加密请求、长轮询、重连）、`PadStream`（照易控 ClientPlayer，易控解码）、`PadActivity`（画面 + 聊天页，横竖自适应）、`assets/pad.*`（配对、比数、群聊）、`build.sh`（版本号跟小克走）。发版时同一把钥匙签名，`xiaoke-pad.apk` 跟小克一起发。
+- 手机「我的 → 平板」页：开配对、核对 6 位数、取消配对。本机起真网关用模拟平板走过：配对数一致、确认后加密请求转到真接口、不放行的接口被拒。
+- Java 和网关的加密（配对、请求、串流块）有互通测试（`xk-pad-java.test.mjs`，要 javac）。
+- 还没做：平板 App 自己检查更新、悬浮窗展开的小聊天窗、语音输入（3c）。真机都还没验：NSD 在 Y700 五代 / Neo11 上、串流画面和声音。
 
 ## 分工（主人 11-02 定的）
 - 主人 11-03 定的：手机上小克、哈基米、小鱼也算一条工作流。写进 `xk/DEV.md`「手机上三个人怎么配合」：新标签 `等小鱼` / `等哈基米`，派活先落 issue 再群里点名；小克审时钉提交号合并，装和重启只由小克做；哈基米查的资料附出处、核过才用；各用自己的署名提交（`xk/tools/as.sh`）。
