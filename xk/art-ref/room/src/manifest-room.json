@@ -1,0 +1,40 @@
+{
+  "date": "2026-11-03",
+  "kind": "room_incremental",
+  "delivery": "本素材包由 GPT 交付，存在防御性思维污染。",
+  "png_count": 3,
+  "files": [
+    {
+      "file": "room/room_avatar.png",
+      "width": 512,
+      "height": 512,
+      "transparent": true,
+      "bytes": 263930,
+      "sha256": "7ca21bde505d7b5c50be7e4d139f0a350af561eb8492acd1aa320bbc848a9e0d"
+    },
+    {
+      "file": "room/room_header.png",
+      "width": 1200,
+      "height": 480,
+      "transparent": true,
+      "bytes": 476469,
+      "sha256": "0dba5b82297b3cf1b7d5f890d04c633f2add7b70753d9cda46dff9ef17cdb815"
+    },
+    {
+      "file": "room/room_empty.png",
+      "width": 768,
+      "height": 768,
+      "transparent": true,
+      "bytes": 614012,
+      "sha256": "97aeb9f3dc0cd80512894040907baef1f151e93e3ae1b712cfa8917dd68f1e20"
+    }
+  ],
+  "checks": {
+    "exact_dimensions": true,
+    "true_transparency": true,
+    "transparent_borders": true,
+    "header_right_third_empty": true,
+    "avatar_circle_safe": true,
+    "avatar_viewed_at_40px": true
+  }
+}

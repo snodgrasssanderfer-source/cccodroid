@@ -18,6 +18,7 @@ import "./xk-diary.mjs";
 import "./xk-health.mjs";
 import "./xk-board-gw.mjs";
 import "./xk-overlay.mjs";
+import "./xk-room.mjs";
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {

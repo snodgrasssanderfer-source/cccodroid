@@ -320,6 +320,8 @@
           if (!ev.fromSession || ev.fromSession === now) follow.set(ev.runId, true);
           loadRoles().then(() => { paintHead(); if ($("#xk-p-roles.on")) renderRoles(); }).catch(() => {});
         } else if (ev.op === "handover_none") { peek("sleeping"); toast(`${rname(ev.from)}睡着了`, ev.reason, sprite(ev.from, "sleeping"), true); }
+        else if (ev.op === "room") roomMsg(ev.msg);
+        else if (ev.op === "room_typing") roomTyping(ev.role, ev.on);
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
         // 主人从系统设置给完悬浮窗权限回来：开着的「通知」页跟着刷新
         else if (ev.op === "overlay_config" && meSub?.dataset.k === "notify") SUB.notify(meSub.querySelector(".xk-subb")).catch(() => {});
@@ -463,6 +465,7 @@
     await loadRoles();
     const b = body("roles"), order = ROLES.order.filter((id) => ROLE[id]);
     b.innerHTML = `<div class="xk-cards">${order.map((id) => `<button class="xk-card xk-press${id === cur.role ? " on" : ""}" data-id="${id}" style="--c:var(--xk-c-${id === "deepseek" ? "xiaoyu" : id});--s:var(--xk-s-${id === "deepseek" ? "xiaoyu" : id})"><img src="${sprite(id, asleep(id) ? "sleeping" : "idle")}" alt=""><b>${rname(id)}</b><span class="xk-tag">${roleState(id)}</span></button>`).join("")}</div>
+      <button class="xk-wide xk-press" id="xk-room-go" style="margin-top:12px">进群，三个人一起聊</button>
       <div class="xk-block"><h2 class="xk-bh">留言板<button class="xk-mini xk-press" id="xk-b-new">贴一张</button></h2><div id="xk-board"></div></div>
       <div class="xk-block"><h2>替班顺序</h2><div class="xk-order">${order.map((id, i) => `${i ? `<button class="xk-swap xk-press" data-i="${i}" aria-label="交换顺序">${svg("swap")}</button>` : ""}<div class="o"><i style="background-image:url('${sprite(id, "idle")}')"></i><span>${rname(id)}</span></div>`).join("")}</div>
         <p class="xk-hint">谁的额度用完，就由下一位接班，只带上刚才那段对话；额度恢复后交还。点中间的箭头换顺序。</p></div>
@@ -474,6 +477,7 @@
       try { await api("/api/xk/order", { method: "PUT", body: { order: o } }); SFX.play("toggle"); renderRoles(); } catch (e) { fail(e); }
     });
     $("#xk-b-new", b).onclick = () => { SFX.play("tap"); postSheet(); };
+    $("#xk-room-go", b).onclick = () => openRoom();
     paintBoard(); loadBoard().then(paintBoard).catch(fail);
     $("#xk-imp", b).onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) importSheet(fs).catch(fail); };
   }
@@ -1041,6 +1045,93 @@
   };
   const RENDER = { roles: renderRoles, mem: renderMem, diary: renderDiary, me: renderMe };
 
+  // ── 聊天室（#35，设计稿第四节）：像 QQ 群。群里每人在她当前那段对话里接着说（网关 xk-room.mjs），这里只是一页看法 ──
+  //    头像用悬浮窗那批小圆片（overlay/<人>/bubble_*），群头像、头图、空状态是第十节那 3 张
+  const bub = (id, st) => art("overlay/" + (ROLE[id]?.dir || id) + "/bubble_" + st);
+  let roomEl = null, roomLast = -1, roomTo = new Set();
+  const roomTalking = new Set();
+  function roomRow(m) {
+    if (m.from === "system") return `<div class="xk-rm-sys">${esc(m.text)}</div>`;
+    if (m.from === "owner") return `<div class="xk-rm-me"><p>${esc(m.text)}</p></div>`;
+    return `<div class="xk-rm-her${m.kind === "aside" ? " aside" : ""}" style="--c:${rc(m.from)}"><button class="xk-rm-av" data-id="${m.from}"><img src="${bub(m.from, "idle")}" alt=""></button><div><b>${rname(m.from)}${m.kind === "aside" ? "<small>插了一句</small>" : ""}</b><p>${esc(m.text)}</p></div></div>`;
+  }
+  function roomPaintMembers(ms) {
+    const box = roomEl && $(".xk-rm-mem", roomEl); if (!box) return;
+    box.innerHTML = ms.map((m) => { const st = roomTalking.has(m.id) ? "talk" : m.state === "sleep" ? "sleep" : m.state === "talk" ? "talk" : "idle";
+      return `<button class="xk-rm-chip xk-press${roomTo.has(m.id) ? " on" : ""}" data-id="${m.id}" style="--c:${rc(m.id)}"><img src="${bub(m.id, st)}" alt=""><span>${rname(m.id)}<small>${st === "sleep" ? "睡着了" : st === "talk" ? "在说…" : "在群里"}</small></span></button>`; }).join("");
+  }
+  async function roomLoad() {
+    const r = await api("/api/xk/room?after=" + roomLast);
+    for (const m of r.messages) roomMsg(m, true);
+    roomPaintMembers(r.members);
+    roomScroll();
+  }
+  function roomScroll() { const l = roomEl && $(".xk-rm-list", roomEl); if (l) l.scrollTop = l.scrollHeight; }
+  function roomMsg(m, quiet) {
+    if (!roomEl || m.n <= roomLast) { if (!roomEl && m.from !== "owner" && m.from !== "system") $("#xk-room-dot")?.classList.add("on"); return; }
+    roomLast = m.n;
+    const l = $(".xk-rm-list", roomEl);
+    $(".xk-rm-empty", roomEl)?.remove();
+    l.insertAdjacentHTML("beforeend", roomRow(m));
+    if (!quiet) { roomScroll(); if (m.from !== "owner") SFX.play("receive"); }
+  }
+  function roomTyping(id, on) {
+    if (on) roomTalking.add(id); else roomTalking.delete(id);
+    if (!roomEl) return;
+    const t = $(".xk-rm-typing", roomEl);
+    t.innerHTML = [...roomTalking].map((x) => `<span style="--c:${rc(x)}"><img src="${bub(x, "talk")}" alt="">${rname(x)}在说…</span>`).join("");
+    api("/api/xk/room?after=" + roomLast).then((r) => roomPaintMembers(r.members)).catch(() => {});
+  }
+  async function memberSheet(id) {
+    const r = await api("/api/xk/room?after=" + roomLast);
+    const m = r.members.find((x) => x.id === id) || {};
+    const h = await api("/api/xk/health").catch(() => ({ roles: [] }));
+    const talk = (h.roles.find((x) => x.id === id) || {}).talk;
+    const u = m.usage, pct = u && u.window ? Math.min(100, Math.round(u.used / u.window * 100)) : null;
+    const quota = m.cooldown ? `额度用完了，大约 ${new Date(m.cooldown.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} 恢复` : talk ? talk.why : "能说话";
+    openSheet(`<div style="display:flex;gap:14px;align-items:center"><img src="${bub(id, m.state === "sleep" ? "sleep" : "idle")}" alt="" style="width:72px;height:72px;border-radius:50%;box-shadow:0 0 0 3px ${rc(id)}"><div><h2>${rname(id)}</h2><p class="sub" style="margin:0">${ROLE[id].sub}</p></div></div>
+      <div class="xk-gt">她这段对话的上下文</div>
+      ${pct != null ? `<div class="xk-rm-bar" style="--c:${rc(id)}"><i style="width:${pct}%"></i></div><p class="xk-hint">用了 ${Math.round(u.used / 1000)}K / ${Math.round(u.window / 1000)}K（${pct}%），是她这段对话最近一轮的数（私聊、群里都算）</p>` : `<p class="xk-hint">${id === "hachimi" ? "哈基米走 Antigravity，拿不到上下文占用" : "她这段对话还没跑过一轮，说过一句就有数了"}</p>`}
+      <div class="xk-gt">额度</div><p class="xk-hint">${esc(quota)}</p>
+      <button class="xk-wide xk-press" id="xk-rm-dm">和她私聊</button>`, (s) => {
+      $("#xk-rm-dm", s).onclick = () => { closeSheet(); closeRoom(); if (id !== cur.role) setTimeout(() => switchRole(id).catch(fail), 380); };
+    });
+  }
+  function openRoom() {
+    if (roomEl) return;
+    $("#xk-room-dot")?.classList.remove("on");
+    roomEl = document.createElement("section"); roomEl.id = "xk-room"; roomEl.setAttribute("aria-label", "我们仨的群");
+    roomEl.innerHTML = `<div class="xk-subh xk-rm-h" style="background-image:url('${art("room/room_header")}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>我们仨</h2></div>
+      <div class="xk-rm-mem"></div>
+      <div class="xk-rm-list"><div class="xk-rm-empty"><img src="${art("room/room_empty")}" alt=""><p>三个人都在，等你开口。点上面的头像可以只叫她接话。</p></div></div>
+      <div class="xk-rm-typing"></div>
+      <form class="xk-rm-in"><textarea rows="1" placeholder="在群里说点什么…" enterkeyhint="send"></textarea><button class="xk-press" aria-label="发送">${svg("go")}</button></form>`;
+    document.body.appendChild(roomEl); void roomEl.offsetWidth; roomEl.classList.add("on"); SFX.play("sheet");
+    roomLast = -1; roomTo = new Set();
+    $(".xk-back", roomEl).onclick = () => closeRoom();
+    // 点上面的头像：只叫她（再点取消，可以叫好几个）；长按看她的上下文和额度
+    $(".xk-rm-mem", roomEl).onclick = (e) => { const c = e.target.closest("[data-id]"); if (!c) return; const id = c.dataset.id; roomTo.has(id) ? roomTo.delete(id) : roomTo.add(id); c.classList.toggle("on"); SFX.play("toggle"); };
+    $(".xk-rm-mem", roomEl).oncontextmenu = (e) => { const c = e.target.closest("[data-id]"); if (!c) return; e.preventDefault(); memberSheet(c.dataset.id).catch(fail); };
+    $(".xk-rm-list", roomEl).onclick = (e) => { const a = e.target.closest(".xk-rm-av"); if (a) memberSheet(a.dataset.id).catch(fail); };
+    const ta = $("textarea", roomEl), form = $(".xk-rm-in", roomEl);
+    ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; };
+    ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim(); if (!text) return;
+      ta.value = ""; ta.oninput(); SFX.play("send");
+      try { await api("/api/xk/room", { method: "POST", body: { text, to: [...roomTo] } }); roomTo.clear(); roomEl?.querySelectorAll(".xk-rm-chip.on").forEach((c) => c.classList.remove("on")); }
+      catch (err) { ta.value = text; fail(err); }
+    };
+    roomLoad().catch(fail);
+    roomTyping(null, false);
+  }
+  function closeRoom() {
+    const el = roomEl; if (!el) return false; roomEl = null;
+    el.classList.remove("on"); setTimeout(() => el.remove(), moving() ? 380 : 0);
+    return true;
+  }
+
   // ── 返回键：外壳调 window.__ccBack()，返回 false 就把 App 退到后台。我们的卡片和四页也登记进去（#12）：
   //    先关我们的卡片 → 再让上游关它的浮层（整页、设置、侧栏……一层层退）→ 不在聊天页就回聊天页 → 都没有才退到后台
   const upBack = window.__ccBack;
@@ -1048,6 +1139,7 @@
     try {
       if (obEl) { if (obI) obTo(obI - 1); else obDone(); return true; }
       if (sheet.classList.contains("on")) { closeSheet(); return true; }
+      if (roomEl) { closeRoom(); return true; }
       if (tab === 4 && !root.classList.contains("xk-cover") && closeMeSub()) return true;
       if (typeof upBack === "function" && upBack()) return true;
       if (tab !== 0) { go(0); return true; }
@@ -1119,13 +1211,15 @@
     let shut = new Set(); try { shut = new Set(JSON.parse(localStorage.getItem("cc.sideFold") || "[]")); } catch {}
     const ids = [...(ROLES ? ROLES.order : Object.keys(ROLE)), ""];
     const row = (x) => `<button class="sr-item${x.id === c.view.sessionId ? " on" : ""}" data-sid="${esc(x.id)}" title="${esc(x.title)}">${ask.has(x.id) ? '<i class="sr-dot ask"></i>' : live.has(x.id) ? '<i class="sr-dot"></i>' : ""}<span>${x.pinned ? '<small class="xk-pin">置顶</small>' : ""}${esc(sideTitle(x))}</span></button>`;
-    box.innerHTML = `<div class="xk-side"></div>` + ids.map((id) => {
+    box.innerHTML = `<div class="xk-side"></div><button class="xk-room-row" id="xk-room-row"><img src="${art("room/room_avatar")}" alt=""><span>我们仨<small>三个人都在的群</small></span><i id="xk-room-dot"></i></button>` + ids.map((id) => {
       const l = list.filter((x) => roleOfCwd(x.cwd) === id).sort((a, b) => (b.pinned || 0) - (a.pinned || 0) || b.mtime - a.mtime);
       if (!l.length) return "";
       const k = "xk-" + (id || "other"), s = shut.has(k);
       return `<h4 class="sr-g xk-sg${s ? " shut" : ""}" data-sgfold="${k}" role="button" aria-expanded="${!s}" style="--c:${id ? rc(id) : "var(--fg3)"}"><svg viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></svg>${id ? `<img src="${art(ROLE[id].mark)}" alt="">` : ""}<span>${id ? rname(id) : "其他"}</span>${s ? `<em>${l.length}</em>` : ""}</h4>`
         + (s ? "" : l.slice(0, SIDE_MAX).map(row).join("") + (l.length > SIDE_MAX ? '<button class="sr-all" data-all>全部对话</button>' : ""));
     }).join("") + `<div class="sr-hint">长按一段对话：置顶、重命名、导出、删除</div>`;
+    // 侧栏先退（上游的返回会一层层关，这时最上面是侧栏），再开群
+    $("#xk-room-row", box).onclick = () => { upBack?.(); openRoom(); };
   }
   let sideQ = 0;
   const sideObs = () => { const box = $("#side-recent"); if (!box) return setTimeout(sideObs, 500); new MutationObserver(() => { if (!sideQ) sideQ = requestAnimationFrame(() => { sideQ = 0; paintSide(); }); }).observe(box, { childList: true }); paintSide(); };
@@ -1181,5 +1275,5 @@
     if (!LS.get("onboarded", false)) onboard();
     loadBoard().catch(() => {});
   })();
-  window.XK = { api, toast, go, switchRole, applyRole, SFX, petals };
+  window.XK = { api, toast, go, switchRole, applyRole, SFX, petals, openRoom };
 })();
