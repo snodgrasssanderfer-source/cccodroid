@@ -303,3 +303,5 @@ html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-du
 #xk-sheet .xk-danger { background: var(--bg3); color: var(--err); }
 #xk-tabs .xk-tab.dot { position: relative; }
 #xk-tabs .xk-tab.dot::after { content: ""; position: absolute; top: 8px; left: calc(50% + 9px); width: 7px; height: 7px; border-radius: 50%; background: var(--err, #d9534f); box-shadow: 0 0 0 2px var(--bg); }
+/* 悬浮窗权限引导图（「我的」→ 通知） */
+.xk-ovperm { display: block; width: 100%; max-width: 360px; margin: 10px auto 0; }

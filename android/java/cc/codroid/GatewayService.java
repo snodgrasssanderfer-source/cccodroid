@@ -78,6 +78,7 @@ public class GatewayService extends Service {
         watchFreeze();
         // 后台时的完成 / 等确认通知：订阅网关事件流（界面关了也照发）
         Notify.get(this).start();
+        XkOverlay.get(this).start();   // xk: 悬浮窗（#32）
     }
 
     /**

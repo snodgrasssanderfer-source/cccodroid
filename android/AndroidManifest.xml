@@ -14,6 +14,8 @@
     <!-- 保活：前台服务 + 部分唤醒锁 + 申请忽略电池优化 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- xk: 悬浮窗（#32），XkOverlay.java -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Shizuku：调试提权（以 shell 身份执行），见 Priv.java -->
