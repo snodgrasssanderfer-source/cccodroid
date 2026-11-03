@@ -1,8 +1,11 @@
 // 小鱼：上下文到 20% 自动换新对话（#72）
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import "../gw/config.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ROLLOVER_AT, contextRatio, takeRollover } from "../gw/xk-rollover.mjs";
+import { ROLLOVER_AT, agyTokens, contextRatio, takeRollover } from "../gw/xk-rollover.mjs";
 import { STATE, carryText } from "../gw/xk-core.mjs";
 
 test("上下文占用：按 context_tokens / context_window 算，两成到线", () => {
@@ -19,6 +22,21 @@ test("只有同一段才换；换了就把标记清掉", () => {
   assert.equal(r.fromSid, "s1");
   assert.match(r.reason, /35%/);
   assert.equal(takeRollover("deepseek", "s1"), null);
+});
+
+test("哈基米走 agy：读日志最后一条 PLANNER_RESPONSE 的实际上下文（input + 缓存 + 输出）", () => {
+  const brain = fs.mkdtempSync(path.join(os.tmpdir(), "agy-brain-"));
+  STATE.agyConv = { s1: "conv-1" };
+  const logs = path.join(brain, "conv-1", ".system_generated", "logs");
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, "transcript.jsonl"), [
+    JSON.stringify({ type: "PLANNER_RESPONSE", input_tokens: 1, cache_read_tokens: 1, output_tokens: 1 }),
+    JSON.stringify({ type: "GENERIC", content: "中间夹着别的记录" }),
+    JSON.stringify({ type: "PLANNER_RESPONSE", input_tokens: 2922, cache_read_tokens: 158224, output_tokens: 596 }),
+  ].join("\n"));
+  assert.equal(agyTokens("s1", brain), 161742, "只读 input_tokens 会小一个数量级");
+  assert.equal(agyTokens("没跑过的会话", brain), 0, "不知道 agy 会话号就退回字数估");
+  STATE.agyConv = {};
 });
 
 test("自己换自己的交接说明：带的是她自己上一段，不是别人的记忆", () => {
