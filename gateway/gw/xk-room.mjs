@@ -3,12 +3,12 @@
 // 她的回复贴回群里。所以人设、记忆注入、工具都照常，主人回到私聊时群里聊过的她都记得；记忆整理也照旧按她那段来。
 import fs from "node:fs";
 import path from "node:path";
-import { publish } from "./bus.mjs";
+import { onPublish, publish } from "./bus.mjs";
 import { NEXT, sendJson } from "./http.mjs";
 import { END_HOOKS, enqueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { providerById } from "./providers.mjs";
-import { ROLES, roleById, roleOfSession } from "./xk-roles.mjs";
+import { ROLES, roleById, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { cheapModel } from "./xk-memory.mjs";
 import { ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, projectOf, saveState } from "./xk-core.mjs";
@@ -68,7 +68,9 @@ function sidOf(id) {
   return sid && roleOfSession(sid)?.id === id ? sid : null;
 }
 
-const TURNS = new Map();     // run 号 → { role, kind, upTo, sid, at }
+const TURNS = new Map();     // run 号 → { role, kind, upTo, sid, ownerN, at }（哈基米、插进别人那轮的）
+const CIDS = new Map();      // 入队时带的 cid → 同上（Claude Code 那两位：结束时 run.cid 认得出）
+let CID = 0;
 const BUSY = new Set();      // 正在群里说话的人：一个人一次只跑一轮，后来的消息攒着下轮一起递
 const AGAIN = new Map();     // 她跑着时又轮到她：跑完再来一轮（kind）
 
@@ -82,39 +84,53 @@ export function speak(id, kind = "reply", ownerN = null) {
   const sid = sidOf(id);
   BUSY.add(id);
   publish({ type: "xk", op: "room_typing", role: id, on: true });
+  // 先登记再入队：没配密钥这类错，上游在 enqueue 返回之前就同步结束了这一轮，晚登记就认不出来，她会一直「在说…」
+  const turn = { role: id, kind, upTo, sid, ownerN, at: Date.now() }, cid = "xk-room-" + (++CID);
+  CIDS.set(cid, turn);
   let item;
   if (role.engine === "claude") {
     // 插话用便宜档（设计稿第四节）；正经接话用她平时那个
     const model = kind === "aside" ? cheapModel(providerById(role.provider) || {}) : null;
-    item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), ...(model ? { model } : {}) });
+    item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid, ...(model ? { model } : {}) });
+    // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
+    if (item.injected && CIDS.has(cid)) { const r = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (r) TURNS.set(r.id, turn); }
   } else {
     item = { id: "xr" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: text, sessionId: sid };
+    TURNS.set(item.id, turn);
+    ENGINE_RUN[role.engine](item, {});
   }
-  // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
-  const runId = item.injected ? [...RUNS.values()].find((r) => !r.ended && r.sessionId === sid)?.id || item.id : item.id;
-  TURNS.set(runId, { role: id, kind, upTo, sid, ownerN, at: Date.now() });
-  if (role.engine !== "claude") ENGINE_RUN[role.engine](item, {});
   return item;
 }
 
+// 这一轮报的错（没配密钥、额度用完……）：群里说「没说出来」时带上原因
+const ERRS = new Map();
+onPublish((ev) => { if (ev?.type === "error" && ev.runId) { ERRS.set(ev.runId, String(ev.message || "").slice(0, 120)); if (ERRS.size > 100) ERRS.delete(ERRS.keys().next().value); } });
+
+// 头像卡片上的上下文占用：她那段对话每轮结束都记一下（私聊的轮次也算，数才是她当前那段的）
 END_HOOKS.push((run, f = {}) => {
-  const t = TURNS.get(run.id);
-  if (!t) return;
-  TURNS.delete(run.id);
+  const r = !run.auto && !run.sched && f.usage?.context_tokens ? roleOfDir(run.cwd) : null;
+  if (r) { STATE.room.usage[r.id] = { used: f.usage.context_tokens, window: f.usage.context_window || null, at: Date.now() }; saveState(); }
+});
+
+END_HOOKS.push((run, f = {}) => {
+  const t = TURNS.get(run.id) || (run.cid && CIDS.get(run.cid));
+  if (!t || t.done) return;
+  t.done = true; TURNS.delete(run.id); if (run.cid) CIDS.delete(run.cid);
   BUSY.delete(t.role);
   publish({ type: "xk", op: "room_typing", role: t.role, on: false });
   STATE.room.seen[t.role] = t.upTo;
   // 新开的那段这时才有会话号：下一轮接着它（xk.mjs 记「最近那段」的钩子排在后面，等不到它）
   if (run.sessionId) STATE.lastByRole = { ...(STATE.lastByRole || {}), [t.role]: String(run.sessionId) };
-  if (f.usage?.context_tokens) STATE.room.usage[t.role] = { used: f.usage.context_tokens, window: f.usage.context_window || null, at: Date.now() };
   // 她说的话从她那段会话记录里取（普通轮次的结束事件里没有正文）；哈基米的 agy 也写同样格式的记录
   const said = run.sessionId ? turns(String(run.sessionId), t.at).filter((x) => x.role === "assistant").map((x) => x.text).join("\n").trim() : "";
-  if (f.failed || f.isError || run.aborted) append({ from: "system", text: `${nameOf(t.role)}没说出来${f.subtype ? "（" + f.subtype + "）" : ""}` });
+  const bad = f.failed || f.isError || run.aborted;
+  if (bad) { const why = ERRS.get(run.id) || f.subtype; append({ from: "system", text: `${nameOf(t.role)}没说出来${why ? "：" + why : ""}` }); }
   else if (said && said !== PASS && !said.endsWith(PASS)) append({ from: t.role, text: said, ...(t.kind === "aside" ? { kind: "aside" } : {}) });
+  ERRS.delete(run.id);
   saveState();
   if (AGAIN.has(t.role)) { const a = AGAIN.get(t.role); AGAIN.delete(t.role); speak(t.role, a.kind, a.ownerN); return; }
   // 主人那句的正式回复贴出来了：看看有没有人想插一句（主人一句话最多一个人插）
-  if (t.kind === "reply" && t.ownerN != null && !ASIDED.has(t.ownerN)) { ASIDED.add(t.ownerN); offerAside(t.role, t.ownerN); }
+  if (!bad && t.kind === "reply" && t.ownerN != null && !ASIDED.has(t.ownerN)) { ASIDED.add(t.ownerN); offerAside(t.role, t.ownerN); }
 });
 
 const ASIDED = new Set();   // 已经让人插过话的主人那句（按群消息号）

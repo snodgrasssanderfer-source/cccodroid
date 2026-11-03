@@ -6,6 +6,7 @@ import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { CFG } from "../gw/config.mjs";
 import { END_HOOKS, START_GUARDS } from "../gw/queue.mjs";
+import { publish } from "../gw/bus.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
@@ -31,7 +32,7 @@ function answer(q, role, text, f = {}) {
     { type: "user", sessionId: sid, cwd, uuid: "u" + seq, timestamp: at, message: { role: "user", content: q.message } },
     ...(text ? [{ type: "assistant", sessionId: sid, cwd, uuid: "a" + seq, timestamp: at, message: { role: "assistant", content: [{ type: "text", text }] } }] : []),
   ].map((x) => JSON.stringify(x)).join("\n") + "\n");
-  for (const h of END_HOOKS) h({ id: q.id, sessionId: sid, cwd }, f);
+  for (const h of END_HOOKS) h({ id: q.id, cid: q.cid, sessionId: sid, cwd }, f);
   return sid;
 }
 const said = () => messages().map((m) => [m.from, m.text, m.kind || ""]);
@@ -113,3 +114,20 @@ test("接口：POST 说一句（可以 @ 人），GET 拿新消息和成员", as
   assert.equal(g.body.members.find((m) => m.id === "hachimi").state, "talk");
   ENGINE_RUN.agy = agyOrig;
 });
+
+test("一开跑就结束（没配密钥这类，enqueue 还没返回就结束了）：群里照样说一声，不卡在「在说」", () => {
+  const sync = (q) => { if (/群聊/.test(q.message || "")) { publish({ type: "error", runId: q.id, message: "未配置 API 密钥" }); for (const h of END_HOOKS) h({ id: q.id, cid: q.cid, sessionId: null, cwd: roleDir("deepseek") }, { failed: true }); return false; } return true; };
+  START_GUARDS.unshift(sync);
+  try { ownerSays("小鱼在吗"); } finally { START_GUARDS.splice(START_GUARDS.indexOf(sync), 1); }
+  assert.equal(messages().at(-1).text, "小鱼没说出来：未配置 API 密钥");
+  assert.equal(queued.length, 0, "没说出来就不叫别人插话");
+  ownerSays("小鱼？");
+  assert.equal(queued.length, 1, "没卡住：下一句照常递给她");
+});
+
+test("头像卡片的上下文：她那段每轮结束都记（私聊也算），网关自己起的不算", () => {
+  for (const h of END_HOOKS) h({ id: "p1", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 48000, context_window: 200000 } });
+  for (const h of END_HOOKS) h({ id: "p2", auto: "xk-diary", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 999, context_window: 200000 } });
+  assert.deepEqual({ ...STATE.room.usage.xiaoke, at: 0 }, { used: 48000, window: 200000, at: 0 });
+});
+
