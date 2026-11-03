@@ -311,6 +311,11 @@
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
         if (ev.op === "handover") {
+          if (ev.compacted) {
+            // #79 她自己选了压缩：不换人、不换会话，只提示一声
+            toast(`${rname(ev.to)}压缩了这段对话`, ev.reason || "", sprite(ev.to, "wave"));
+            return;
+          }
           if (ev.rollover) {
             // #72 上下文到 20% 自己换新对话：不换人，只换这段；界面跟到新会话
             toast(`${rname(ev.to)}换了新对话`, ev.reason, sprite(ev.to, "wave"));
