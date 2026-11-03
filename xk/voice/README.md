@@ -8,6 +8,8 @@
 
 ## 第一次装（Windows，笔记本 RTX 5060 8GB）
 
+> 电脑上有 Codex 的话，在这个文件夹里打开它，说「照 AGENTS.md 把语音服务装好」就行，它会照下面这些步骤做。
+
 1. **显卡驱动**更新到最新（50 系要新驱动，CUDA 12.8 起）。
 2. **装 Python 3.11**：<https://www.python.org/downloads/> 找 3.11.x 的 Windows installer，安装第一页勾上 **Add python.exe to PATH**。
 3. **拿到这个文件夹**：云端发给你的 `xk-voice.zip` 解压到一个英文路径里（比如 `D:\xkvoice`），磁盘留 20GB 左右。
