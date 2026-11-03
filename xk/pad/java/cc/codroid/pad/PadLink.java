@@ -180,6 +180,17 @@ final class PadLink {
         return new JSONObject(PadCrypto.open(key, r.getString("n"), r.getString("c"), id));
     }
 
+    // ── 串流用：升级连接请求头里带的加密身份校验（和请求一样带时间、序号），以及连谁、用哪把密钥 ──
+    String hello(JSONObject q) throws Exception {
+        q.put("t", System.currentTimeMillis()).put("q", nextSeq());
+        String[] env = PadCrypto.seal(key, q.toString(), id);
+        String j = new JSONObject().put("id", id).put("n", env[0]).put("c", env[1]).toString();
+        return java.util.Base64.getEncoder().encodeToString(j.getBytes(StandardCharsets.UTF_8));
+    }
+    String host() { return host; }
+    int port() { return port; }
+    byte[] key() { return key; }
+
     // ── 事件：加密长轮询，光标从 -1 起（-1 = 刚连上，只要现在的光标） ──
     private void events() throws Exception {
         long cursor = -1;
