@@ -1,0 +1,7 @@
+# 主人电脑上的东西：模型、试听候选、挑定的音色、配对码，都不进仓库
+.venv/
+models/
+candidates/
+voices/
+config.json
+__pycache__/

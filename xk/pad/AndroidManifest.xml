@@ -8,6 +8,8 @@
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 按住说话（PadVoice），第一次按时才问 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 自己更新：手机代下的新版交给系统安装器（PadUpdate，每次都由主人在系统弹窗里确认） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
