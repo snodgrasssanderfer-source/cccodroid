@@ -11,7 +11,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { routeXk } from "../gw/xk.mjs";
-import { ASIDE_GAP, CAP, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom } from "../gw/xk-room.mjs";
+import { ASIDE_GAP, CAP, CAPPED, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom } from "../gw/xk-room.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ASK } from "../gw/xk-memory.mjs";
@@ -104,16 +104,18 @@ test("她们之间互相点名：被叫到的接（交给她的事），不花�
   assert.match(fish.message, /小克：小鱼，这个交给你[\s\S]*小克在群里叫你了/);
   assert.equal(fish.model, null, "被叫到的用她平时那个模型");
   assert.equal(judged.length, 0);
-  // 互相点名点个不停：主人不开口，最多再说 CAP.chain 句
+  // 互相点名点个不停：主人不开口，点名的最多再接 CAP.named 句（不占自己插话的那三句），到顶了群里说一声
   let last = fish, who = "deepseek";
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < CAP.named + 4; i++) {
     const next = who === "deepseek" ? "xiaoke" : "deepseek";
     answer(last, who, `${next === "xiaoke" ? "小克" : "小鱼"}，该你了`);
     await tick();
     if (queued.at(-1) === last) break;
     last = queued.at(-1); who = next;
   }
-  assert.equal(queued.length, 1 + CAP.chain, "第一句 + 最多三句");
+  assert.equal(queued.length, 1 + CAP.named, "第一句 + 点名最多六句");
+  assert.ok(CAP.named > CAP.chain, "派活比闲聊插话多留几句");
+  assert.deepEqual(said().filter(([f]) => f === "system").map(([, t]) => t), [CAPPED], "到顶说一声，只说一次");
 });
 
 test("这一波说完、没人点名：才问一次有没有人接；说 none 就停；主人又开口了旧的不再往下接", async () => {
