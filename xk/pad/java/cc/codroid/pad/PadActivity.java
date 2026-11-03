@@ -63,8 +63,9 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         web.loadUrl("file:///android_asset/pad.html");
         root.addView(screenBox);
         root.addView(web);
-        layout(getResources().getConfiguration());
         setContentView(root);
+        // 平板转屏、让开键盘或系统栏时大小会变：每次都按新大小重排
+        root.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, orr, ob) -> { if (r - l != orr - ol || bt - t != ob - ot) ui.post(this::arrange); });
         // 安卓 15 起（targetSdk 35）窗口铺到状态栏和导航栏底下：不让开的话，右上角「看手机画面」被电量图标盖住、输入框被键盘盖住
         if (android.os.Build.VERSION.SDK_INT >= 35) {
             root.setOnApplyWindowInsetsListener((v, in) -> {
@@ -83,12 +84,32 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
 
     @Override public void onConfigurationChanged(Configuration c) { super.onConfigurationChanged(c); layout(c); }
 
-    /** 横着：画面在左（占 3/5），聊天在右；竖着：画面在上，聊天在下各一半 */
-    private void layout(Configuration c) {
-        boolean land = c.orientation == Configuration.ORIENTATION_LANDSCAPE;
-        root.setOrientation(land ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        screenBox.setLayoutParams(new LinearLayout.LayoutParams(land ? 0 : -1, land ? -1 : 0, 3));
-        web.setLayoutParams(new LinearLayout.LayoutParams(land ? 0 : -1, land ? -1 : 0, land ? 2 : 3));
+    private void layout(Configuration c) { ui.post(this::arrange); }
+
+    /**
+     * 画面那一块跟着手机画面的比例走，不再按权重写死（#90：平板横、手机竖时左右一大片黑边）。
+     * 左右并排和上下叠两种都算一遍，哪种画面大用哪种（手机转横屏时自然变成画面在上、聊天在下）；
+     * 聊天页至少留 1/3，画面算出来超了才在剩下的地方等比缩小、留一点黑边。
+     */
+    private void arrange() {
+        int w = root.getWidth() - root.getPaddingLeft() - root.getPaddingRight();
+        int h = root.getHeight() - root.getPaddingTop() - root.getPaddingBottom();
+        if (screenBox.getVisibility() != View.VISIBLE || w <= 0 || h <= 0) {
+            web.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            return;
+        }
+        boolean land = w >= h;
+        int pw = vw > 0 ? vw : 9, ph = vh > 0 ? vh : 20;   // 还没拿到尺寸时先按手机竖屏猜
+        float side = Math.min(w * 2f / 3 / pw, (float) h / ph), stack = Math.min((float) w / pw, h * 2f / 3 / ph);
+        boolean beside = side > stack || (side == stack && land);
+        root.setOrientation(beside ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        if (beside) {
+            screenBox.setLayoutParams(new LinearLayout.LayoutParams(Math.round(pw * side), -1));
+            web.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1));
+        } else {
+            screenBox.setLayoutParams(new LinearLayout.LayoutParams(-1, Math.round(ph * stack)));
+            web.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
+        }
         ui.post(this::fitScreen);
     }
 
@@ -106,15 +127,16 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
     @Override public void onEvent(JSONObject ev) { js("padEvent", ev.toString()); }
 
     // ── PadStream ──
-    @Override public void onSize(int w, int h) { vw = w; vh = h; ui.post(this::fitScreen); }
+    @Override public void onSize(int w, int h) { vw = w; vh = h; ui.post(this::arrange); }
     @Override public void onEnd(String why) {
-        ui.post(() -> { stream = null; screenBox.setVisibility(View.GONE); });
+        ui.post(() -> { stream = null; screenBox.setVisibility(View.GONE); arrange(); });
         js("padStream", JSONObject.quote(why == null ? "" : why));
     }
 
     private void startStream() {
         if (stream != null) return;
         screenBox.setVisibility(View.VISIBLE);
+        arrange();
         // 画面区刚显示出来，TextureView 的 surface 要等一下才有
         ui.postDelayed(() -> {
             if (surface == null) { onEnd("画面区还没准备好，再点一次"); return; }
