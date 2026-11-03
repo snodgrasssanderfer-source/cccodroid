@@ -1265,7 +1265,17 @@
   function roomRow(m) {
     if (m.from === "system") return `<div class="xk-rm-sys" data-n="${m.n}">${esc(m.text)}</div>`;
     if (m.from === "owner") return `<div class="xk-rm-me" data-n="${m.n}"><p>${esc(m.text)}</p></div>`;
-    return `<div class="xk-rm-her${m.kind === "aside" ? " aside" : ""}" data-n="${m.n}" style="--c:${rc(m.from)}"><button class="xk-rm-av" data-id="${m.from}"><img src="${bub(m.from, "idle")}" alt=""></button><div><b>${rname(m.from)}${m.kind === "aside" ? "<small>插了一句</small>" : ""}</b><p>${esc(m.text)}</p></div></div>`;
+    return `<div class="xk-rm-her${m.kind === "aside" ? " aside" : ""}" data-n="${m.n}" style="--c:${rc(m.from)}"><button class="xk-rm-av" data-id="${m.from}"><img src="${bub(m.from, "idle")}" alt=""></button><div><b>${rname(m.from)}${m.kind === "aside" ? "<small>插了一句</small>" : ""}</b>${foldBody(m.text)}</div></div>`;
+  }
+  // 长篇的干活汇报折起来（主人 11-03 定的）：只露第一段（结果），后面点「展开」才看；她们之间递的仍是全文
+  const FOLD_AT = 160, CLAMP_AT = 220;
+  function foldBody(text) {
+    const t = String(text ?? ""), i = t.indexOf("\n\n");
+    const head = i > 0 ? t.slice(0, i) : t, rest = i > 0 ? t.slice(i + 2).trim() : "";
+    if (t.length <= FOLD_AT) return `<p>${esc(t)}</p>`;
+    if (!rest && head.length <= CLAMP_AT) return `<p>${esc(t)}</p>`;
+    const clamp = head.length > CLAMP_AT ? " xk-rm-clamp" : "";
+    return `<div class="xk-rm-fold"><p class="${clamp.trim()}">${esc(head)}${rest ? `<span class="xk-rm-rest">\n\n${esc(rest)}</span>` : ""}</p><button class="xk-rm-unfold" type="button">展开全文${rest ? `（还有 ${rest.length} 字）` : ""}</button></div>`;
   }
   function roomPaintMembers(ms) {
     const box = roomEl && $(".xk-rm-mem", roomEl); if (!box) return;
@@ -1347,6 +1357,8 @@
         const n = +r.dataset.n; roomPick.has(n) ? roomPick.delete(n) : roomPick.add(n);
         SFX.play("toggle"); pickPaint(); return;
       }
+      const u = e.target.closest(".xk-rm-unfold");
+      if (u) { const f = u.parentElement, open = f.classList.toggle("open"); u.dataset.t ||= u.textContent; u.textContent = open ? "收起" : u.dataset.t; return; }
       const a = e.target.closest(".xk-rm-av"); if (a) memberSheet(a.dataset.id).catch(fail);
     };
     const ta = $("textarea", roomEl), form = $(".xk-rm-in", roomEl);

@@ -46,12 +46,14 @@ function answer(q, role, text, f = {}) {
 }
 const said = () => messages().map((m) => [m.from, m.text, m.kind || ""]);
 
-test("点了名的直接接，不问便宜档；@ 也算；都睡着了说一声", async () => {
+test("点了名的直接接（便宜档只问有没有人插话）；@ 也算；都睡着了说一声", async () => {
   await ownerSays("小鱼你说呢").decided;
   assert.equal(queued.length, 1);
-  assert.match(queued[0].message, /主人：小鱼你说呢[\s\S]*轮到你在群里接话/);
+  assert.match(queued[0].message, /主人：小鱼你说呢[\s\S]*轮到你在群里接话[\s\S]*第一段一两句只写结果/);
   assert.equal(queued[0].projectId, "p-d");
-  assert.equal(judged.length, 0, "点了名就不花这一次");
+  assert.equal(judged.length, 1, "谁接按规则定了，还是问一次有没有人想插一句");
+  assert.match(judged[0].prompt, /小鱼会接[\s\S]*有没有人对这话题有话想说/);
+  assert.doesNotMatch(judged[0].prompt, /大多数时候/);
   await ownerSays("你们好", ["hachimi"]).decided;
   assert.ok(queued[1].agy, "@ 哈基米：走她的 agy");
   for (const id of ["xiaoke", "hachimi", "deepseek"]) STATE.cooldown[id] = { until: Date.now() + 3600000 };
@@ -91,8 +93,10 @@ test("问不成就退回上一个说话的；一来一回时不问", async () =>
   answer(queued[0], "xiaoke", "在呢");
   await tick();
   judged.length = 0;
+  verdict = { reply: "deepseek", aside: "none" };
   await ownerSays("然后呢").decided;
-  assert.equal(judged.length, 0, "刚和小克说完：直接是她");
+  assert.equal(judged.length, 1, "刚和小克说完：直接是她，只问有没有人插话");
+  assert.ok(!queued.some((q) => q.projectId === "p-d"), "便宜档写的 reply 不算：谁接已经定了");
   assert.match(queued.at(-1).message, /主人：然后呢/);
 });
 
@@ -103,7 +107,7 @@ test("她们之间互相点名：被叫到的接（交给她的事），不花�
   const fish = queued[1];
   assert.match(fish.message, /小克：小鱼，这个交给你[\s\S]*小克在群里叫你了/);
   assert.equal(fish.model, null, "被叫到的用她平时那个模型");
-  assert.equal(judged.length, 0);
+  assert.equal(judged.length, 1, "只有主人那句问过一次插话；点名接的不花判断");
   // 互相点名点个不停：主人不开口，点名的最多再接 CAP.named 句（不占自己插话的那三句），到顶了群里说一声
   let last = fish, who = "deepseek";
   for (let i = 0; i < CAP.named + 4; i++) {
@@ -123,15 +127,16 @@ test("这一波说完、没人点名：才问一次有没有人接；说 none �
   try {
     await ownerSays("小克在吗").decided;
     verdict = { reply: "none", aside: "none" };
+    judged.length = 0;
     answer(queued[0], "xiaoke", "在");
     await tick();
     assert.equal(judged.length, 1);
     assert.match(judged[0].prompt, /小克刚说完最后一句/);
     assert.equal(queued.length, 1, "没人接");
-    verdict = { reply: "none", aside: "hachimi" };
     await ownerSays("小克再说一句").decided;
     const q = queued.at(-1);
     await ownerSays("算了，小鱼你说").decided;
+    verdict = { reply: "none", aside: "hachimi" };   // 主人这两句都没人插；旧那批说完时便宜档想叫哈基米，也不该叫
     answer(q, "xiaoke", "好");
     await tick();
     assert.ok(!queued.some((x) => x.agy), "主人已经换了话题：旧那批不再叫人插话");
