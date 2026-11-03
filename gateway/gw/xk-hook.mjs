@@ -23,6 +23,17 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
       const run = process.env.CCAPP_RUN_ID;
       const carry = run && path.join(dir, ".xk", "carry", run + ".md");
       if (carry && fs.existsSync(carry)) { parts.push(fs.readFileSync(carry, "utf8").trim()); fs.rmSync(carry); }
+      // 上下文过线了（#79）：网关在上一轮结束时写的那句话，递一次就删；留个记号，网关这轮结束来收她的选择。
+      // 只在原来那段会话里递：网关自己起的整理、日记轮次在别的会话，不能把话吃掉
+      const ask = path.join(dir, ".xk", "ask.json");
+      try {
+        const a = fs.existsSync(ask) ? JSON.parse(fs.readFileSync(ask, "utf8")) : null;
+        if (a && a.text && (!a.sid || !input.session_id || String(a.sid) === String(input.session_id))) {
+          parts.push(a.text);
+          fs.writeFileSync(path.join(dir, ".xk", "asked.json"), JSON.stringify({ sid: String(input.session_id || a.sid || "") }));
+          fs.rmSync(ask);
+        }
+      } catch {}
       // 留言板上给她的新便条：读一次就记成已读，之后想再看用 board_read
       const board = unreadText(path.dirname(dir), path.basename(dir), run);
       if (board) parts.push(board);

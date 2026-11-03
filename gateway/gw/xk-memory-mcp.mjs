@@ -40,6 +40,10 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要在群里说的话；要交给谁就点她的名" } } } },
   { name: "room_read", description: "看三个人的群里最近说了什么（主人和三个人的话都在）。交出去的事办到哪了、群里聊过什么，用它看。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最近几条，默认 20" } } } },
+  { name: "context_next", description: "上下文过线时用：告诉网关这一轮之后是压缩这段对话（compact）还是换新对话（new）。只在你收到「过线了」那句提示时用；不选就按 new。",
+    inputSchema: { type: "object", required: ["mode"], properties: {
+      mode: { type: "string", enum: ["compact", "new"], description: "compact 压缩这段 / new 换一段新对话" },
+      why: { type: "string", description: "一句话说为什么，可不填" } } } },
 ];
 
 function call(name, a) {
@@ -80,6 +84,16 @@ function call(name, a) {
     const name = (id) => ({ owner: "主人", system: "（系统）", xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" })[id] || id;
     const pick = ms.slice(-(Number(a.limit) || 20));
     return pick.length ? pick.map((m) => `${new Date(m.at).toLocaleString("zh-CN", { hour12: false })} ${name(m.from)}：${m.text}`).join("\n") : "群里还没人说话。";
+  }
+  // 上下文过线（#79）：和留言板、群一样写文件交给网关，网关在这一轮结束时读走
+  if (name === "context_next") {
+    const mode = a.mode === "compact" || a.mode === "new" ? a.mode : null;
+    if (!mode) throw new Error("mode 只能是 compact 或 new");
+    const f = path.join(path.dirname(dir), ".ctl", path.basename(dir) + ".json");
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f + ".tmp", JSON.stringify({ mode, why: String(a.why || ""), at: Date.now() }));
+    fs.renameSync(f + ".tmp", f);
+    return mode === "compact" ? "好，这一轮结束后压缩这段对话。" : "好，这一轮结束后换一段新对话。";
   }
   if (name === "forget") return `删掉了：${line(remove(dir, String(a.id || "")))}`;
   throw new Error("没有这个工具：" + name);
