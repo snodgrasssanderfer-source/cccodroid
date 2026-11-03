@@ -41,7 +41,7 @@ import java.util.Map;
  * 小克的悬浮窗（#32，设计稿 xk/design/presence.md 第一节）：盖在别的 App 上面的小圆片 + 顶上一行字幕。
  * 主人离开 App 也看得到她在做什么；网关重启时倒数、重启好了说一声（浮层在外壳里，网关重启时它不跟着没）。
  * 「谁、什么状态、说什么」由网关（gateway/gw/xk-overlay.mjs）整理好推过来，这里只管画。
- * App 在前台时收起（聊天页上本来就看得到）。
+ * App 在前台时收起（聊天页上本来就看得到），重启倒数除外。
  */
 final class XkOverlay {
     static final String TAG = "cccodroid";
@@ -104,7 +104,9 @@ final class XkOverlay {
                     ctx.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + ctx.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 } catch (RuntimeException e) { Log.w(TAG, "悬浮窗：打不开权限设置页", e); }
             }
-            boolean show = enabled && can && !MainActivity.visible;
+            if (MainActivity.visible) dot = false;   // 主人从桌面图标、最近任务回来也算看过了
+            // 重启倒数时 App 在前台也显示：重启多半发生在主人正在 App 里聊的时候（小克 #49 验收）
+            boolean show = enabled && can && (!MainActivity.visible || countTo > 0 || doneAt > 0);
             if (show && bubble == null) attach();
             else if (!show && bubble != null) detach();
             if (bubble != null) render();
@@ -165,6 +167,8 @@ final class XkOverlay {
         slp.gravity = Gravity.TOP;
         slp.y = (int) (36 * dp);
         slp.horizontalMargin = 0.04f;
+        // 安卓 12 起，别的 App 叠在上面的窗口只有整体 alpha ≤ 0.8 点击才放得下去（内容透明度不算），不设就会挡住下面
+        slp.alpha = 0.8f;
         try {
             wm.addView(strip, slp);
             wm.addView(bubble, lp);
@@ -257,7 +261,7 @@ final class XkOverlay {
         if (showStrip) {
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(14 * dp);
-            bg.setColor((color(role) & 0x00FFFFFF) | 0xE6000000);
+            bg.setColor(color(role));   // 窗口整体已是 0.8，底色不再另加透明
             strip.setBackground(bg);
             stripText.setText(text);
             stripBar.setVisibility(progress != null ? View.VISIBLE : View.GONE);
