@@ -78,6 +78,7 @@
   }
   $("#mem").onclick = (e) => { const c = e.target.closest("[data-id]"); if (!c) return; to.has(c.dataset.id) ? to.delete(c.dataset.id) : to.add(c.dataset.id); c.classList.toggle("on"); };
   const ta = $("#in textarea");
+  ta.onblur = () => window.scrollTo(0, 0);
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#in").requestSubmit(); } };
   $("#in").onsubmit = async (e) => {
