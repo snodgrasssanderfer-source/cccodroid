@@ -120,6 +120,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         @JavascriptInterface public String state() { return link.state().toString(); }
         @JavascriptInterface public void pair() { link.pair(); }
         @JavascriptInterface public void forget() { link.forget(); }
+        @JavascriptInterface public void manual(String host, int port) { link.manual(host, port); }
         @JavascriptInterface public void stream(boolean on) { ui.post(() -> { if (on) startStream(); else stopStream(); }); }
         /** 异步：结果回 window.padReply(id, {s, b} 或 {error}) */
         @JavascriptInterface public void call(int id, String method, String path, String body) {

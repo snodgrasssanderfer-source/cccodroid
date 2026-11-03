@@ -32,6 +32,7 @@
     if (s) {
       $("#setup-title").textContent = s[0]; $("#setup-text").textContent = s[1]; $("#setup-art").src = s[2];
       $("#pair").hidden = !s[3];
+      $("#manual").hidden = st.phase === "confirm";
       $("#sas").hidden = st.phase !== "confirm"; $("#sas").textContent = st.sas || "";
       $("#setup-err").hidden = !st.error; $("#setup-err").textContent = st.error || "";
     } else {
@@ -40,6 +41,12 @@
     }
   };
   $("#pair").onclick = () => Pad.pair();
+  $("#manual-f").onsubmit = (e) => {
+    e.preventDefault();
+    const m = $("#manual-a").value.trim().match(/^([\d.]+):(\d+)$/);
+    if (!m) { $("#setup-err").hidden = false; $("#setup-err").textContent = "要像 192.168.1.23:8797 这样，地址和端口中间一个冒号"; return; }
+    Pad.manual(m[1], Number(m[2]));
+  };
 
   // ── 群聊 ──
   let last = -1, to = new Set();

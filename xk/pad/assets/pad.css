@@ -39,3 +39,7 @@ header small { color: var(--fg3); font-size: 12px; }
 #in { display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px; border-top: 1px solid var(--line); }
 #in textarea { flex: 1; resize: none; border: 0; outline: 0; border-radius: 18px; padding: 8px 12px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 16px; max-height: 140px; }
 #stream-err { padding: 0 14px 8px; margin: 0; }
+#manual { margin-top: 14px; color: var(--fg3); font-size: 14px; max-width: 30em; }
+#manual summary { cursor: pointer; }
+#manual form { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+#manual input { border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--bg2); color: var(--fg); font: inherit; width: 14em; }
