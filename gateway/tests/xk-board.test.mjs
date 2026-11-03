@@ -63,6 +63,45 @@ test("记忆工具：board_write 贴上（写着是谁留的），board_read 看
   assert.deepEqual(list(ROLES_DIR).map((n) => [n.from, n.to]), [["deepseek", "xiaoke"]]);
 });
 
+test("替换自己的便条（#45）：没人读过就直接换；读过的人下一轮再收到更正；别人的换不了", () => {
+  // 没人读过：板上只剩新的，接班的只看到对的那张
+  const a = post(ROLES_DIR, { from: "xiaoke", to: "hachimi", text: "三件事等主人拍板", at: Date.UTC(2026, 10, 2, 14, 10) });
+  const a2 = post(ROLES_DIR, { from: "xiaoke", to: "hachimi", text: "聊天室主人早定了，只剩世界书", replaces: a.id });
+  assert.deepEqual(list(ROLES_DIR).map((n) => n.id), [a2.id]);
+  assert.match(a2.text, /^（更正了 11\/2 22:10 那张）聊天室/);
+  assert.deepEqual(a2.replaces.readBy, []);
+  assert.deepEqual(takeUnread(ROLES_DIR, "hachimi").map((n) => n.id), [a2.id]);
+  // 读过了再换：新号没人读过，她下一轮再收到
+  const b = post(ROLES_DIR, { from: "xiaoke", text: "悬浮窗等云端" });
+  assert.equal(takeUnread(ROLES_DIR, "deepseek").length, 1);
+  const b2 = post(ROLES_DIR, { from: "xiaoke", text: "悬浮窗发版了，等真机验", replaces: b.id });
+  assert.deepEqual(b2.replaces.readBy, ["deepseek"]);
+  assert.deepEqual(takeUnread(ROLES_DIR, "deepseek").map((n) => n.id), [b2.id], "读过旧的：再收到更正");
+  assert.deepEqual(takeUnread(ROLES_DIR, "hachimi").map((n) => n.id), [b2.id], "没读过旧的：只看到对的那张");
+  assert.ok(!list(ROLES_DIR).some((n) => n.id === b.id));
+  // 别人的、没有的：拒绝，板上不动
+  const c = post(ROLES_DIR, { from: "deepseek", text: "日记导出做好了" });
+  assert.throws(() => post(ROLES_DIR, { from: "xiaoke", text: "改一下", replaces: c.id }), /小鱼贴的，只能换自己贴的/);
+  assert.throws(() => post(ROLES_DIR, { from: "xiaoke", text: "改一下", replaces: "nope123" }), /没有这张便条/);
+  assert.equal(list(ROLES_DIR).length, 3);
+});
+
+test("记忆工具：board_read 带便条号，board_write 填 replaces 换掉自己那张", () => {
+  const old = post(ROLES_DIR, { from: "deepseek", to: "xiaoke", text: "歌单做完了" });
+  takeUnread(ROLES_DIR, "xiaoke");
+  const msgs = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "board_read", arguments: {} } },
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "board_write", arguments: { text: "歌单还差夜跑那组", to: "小克", replaces: old.id } } },
+  ];
+  const r = spawnSync(process.execPath, [path.join(GW, "xk-memory-mcp.mjs"), roleDir("deepseek")], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n" });
+  const out = r.stdout.toString().trim().split("\n").map((l) => JSON.parse(l));
+  assert.match(out[1].result.content[0].text, new RegExp("^\\[" + old.id + "\\] - 小鱼留给小克"));
+  assert.match(out[2].result.content[0].text, /旧的那张撤下了；小克读过旧的，下一轮会再收到这张/);
+  assert.deepEqual(takeUnread(ROLES_DIR, "xiaoke").map((n) => n.text), [list(ROLES_DIR)[0].text]);
+  assert.match(list(ROLES_DIR)[0].text, /^（更正了 .* 那张）歌单还差夜跑那组$/);
+});
+
 // ── 下班补一张 ──
 const sid = (n) => `dddddddd-7777-4777-8777-00000000000${n}`;
 function session(n, role, lines) {

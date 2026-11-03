@@ -31,7 +31,8 @@ const TOOLS = [
   { name: "board_write", description: "往三人共用的留言板贴一张便条，给接你班的人看。下班前（主人要换人、你要歇了）、或者手头的事做到一半时写：主人交代了什么、办到哪一步、还差什么、有什么要提醒的。只写主人交代的事，不抄你的私人记忆。",
     inputSchema: { type: "object", required: ["text"], properties: {
       text: { type: "string", description: "便条正文，几句话写清楚，结论放前面" },
-      to: { type: "string", description: "给谁：小克、哈基米、小鱼；不填就是给大家" } } } },
+      to: { type: "string", description: "给谁：小克、哈基米、小鱼；不填就是给大家" },
+      replaces: { type: "string", description: "写错了要更正时填：自己贴过的那张的便条号（board_read 里方括号那串）。旧的撤下，读过旧的人会再收到这张更正" } } } },
   { name: "board_read", description: "看留言板上最近的便条（三个人和主人贴的都在）。想知道别人做到哪了、主人交代过什么时用。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最多几张，默认 10" } } } },
 ];
@@ -48,12 +49,13 @@ function call(name, a) {
   }
   if (name === "board_write") {
     const me = path.basename(dir);
-    const n = boardPost(path.dirname(dir), { from: me, to: toId(a.to), text: a.text });
-    return `贴好了：${noteLine(n)}`;
+    const n = boardPost(path.dirname(dir), { from: me, to: toId(a.to), text: a.text, replaces: a.replaces || null });
+    const re = n.replaces ? `，旧的那张撤下了${n.replaces.readBy.length ? `；${n.replaces.readBy.map((r) => WHO[r]).join("、")}读过旧的，下一轮会再收到这张` : ""}` : "";
+    return `贴好了${re}：${noteLine(n)}`;
   }
   if (name === "board_read") {
     const ns = boardList(path.dirname(dir)).slice(0, Number(a.limit) || 10);
-    return ns.length ? ns.map((n) => noteLine(n) + (n.readBy.length ? `（${n.readBy.map((r) => WHO[r]).join("、")}看过）` : "")).join("\n") : "留言板上还没有便条。";
+    return ns.length ? ns.map((n) => `[${n.id}] ` + noteLine(n) + (n.readBy.length ? `（${n.readBy.map((r) => WHO[r]).join("、")}看过）` : "")).join("\n") : "留言板上还没有便条。";
   }
   if (name === "forget") return `删掉了：${line(remove(dir, String(a.id || "")))}`;
   throw new Error("没有这个工具：" + name);
