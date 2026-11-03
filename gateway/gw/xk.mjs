@@ -19,6 +19,19 @@ import "./xk-health.mjs";
 import "./xk-board-gw.mjs";
 import "./xk-overlay.mjs";
 import "./xk-room.mjs";
+import { takeRollover } from "./xk-rollover.mjs";
+
+// #72：上一段占到 20% 就换新对话（从自己换到自己），带上交接；不压缩，三个人同一套
+PLANNERS.push((b, ctx) => {
+  const role = ctx.role && roleById(ctx.role);
+  if (!role || !String(b.message || "").trim() || /^\//.test(String(b.message).trim())) return;
+  if (ctx.carry) return;                       // 已经在接班/交回了，别叠加
+  const ro = takeRollover(role.id, b.sessionId || null);
+  if (!ro) return;
+  ctx.body = { ...ctx.body, sessionId: null, follow: null, projectId: projectOf(role.id) };
+  ctx.carry = { fromSid: ro.fromSid, fromRole: role.id, reason: ro.reason };
+  ctx.notice = { from: role.id, to: role.id, reason: ro.reason, fromSession: ro.fromSid, rollover: true };
+});
 
 /** 三个角色各自对应一个上游项目（目录、默认服务商）。项目号记在状态里，接班和切换靠它 */
 async function ensureProjects() {

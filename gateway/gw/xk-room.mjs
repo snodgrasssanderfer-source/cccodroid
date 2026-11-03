@@ -11,7 +11,8 @@ import { RUNS } from "./runs.mjs";
 import { ROLES, ROLES_DIR, roleById, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { ASK } from "./xk-memory.mjs";
-import { ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, projectOf, saveState } from "./xk-core.mjs";
+import { ENGINE_RUN, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, saveState, writeCarry } from "./xk-core.mjs";
+import { takeRollover } from "./xk-rollover.mjs";
 
 const FILE = path.join(XK_HOME, "room.jsonl");
 STATE.room ||= { seen: {}, lastAside: {}, usage: {} };
@@ -112,7 +113,10 @@ export function speak(id, kind = "reply", round = null, caller = null) {
   if (BUSY.has(id)) { if (kind === "reply" || !AGAIN.has(id)) AGAIN.set(id, { kind, round, caller }); return null; }
   const { text, upTo, fresh } = feed(id, kind, caller);
   if (!fresh) return null;   // 她跑着时攒下的已经在上一轮里看过了
-  const sid = sidOf(id);
+  let sid = sidOf(id), carry = "";
+  // #72：这一段占到 20% 了，就在群里起一轮时换新对话（带上上一段的交接）
+  const ro = takeRollover(id, sid);
+  if (ro) { sid = null; carry = carryText(ro.fromSid, id, id, ro.reason); }
   BUSY.add(id);
   publish({ type: "xk", op: "room_typing", role: id, on: true });
   // 先登记再入队：没配密钥这类错，上游在 enqueue 返回之前就同步结束了这一轮，晚登记就认不出来，她会一直「在说…」
@@ -124,13 +128,15 @@ export function speak(id, kind = "reply", round = null, caller = null) {
     // 不切型号（#64，主人 11-03）：插话也用她平时那个。在她那段里中途换模型，整段上下文要重读、缓存用不上，反而更贵，
     // 界面上这段对话也会显示成换了模型。省钱的只有「判断谁接」那一下，它是单独的一次调用，不碰她的会话
     item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid });
+    if (carry) writeCarry(id, item.id, carry);
     // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
     if (item.injected && CIDS.has(cid)) { const r = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (r) TURNS.set(r.id, turn); }
   } else {
     item = { id: "xr" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: text, sessionId: sid };
     TURNS.set(item.id, turn);
-    ENGINE_RUN[role.engine](item, {});
+    ENGINE_RUN[role.engine](item, { carry });
   }
+  if (ro) publish({ type: "xk", op: "handover", runId: item.id, from: id, to: id, reason: ro.reason, fromSession: ro.fromSid, rollover: true });
   return item;
 }
 

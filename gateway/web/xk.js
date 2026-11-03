@@ -311,6 +311,13 @@
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
         if (ev.op === "handover") {
+          if (ev.rollover) {
+            // #72 上下文到 20% 自己换新对话：不换人，只换这段；界面跟到新会话
+            toast(`${rname(ev.to)}换了新对话`, ev.reason, sprite(ev.to, "wave"));
+            const now0 = window.__cc && window.__cc.view.sessionId;
+            if (!ev.fromSession || ev.fromSession === now0) follow.set(ev.runId, true);
+            return;
+          }
           // 接班四张、回来三张（第 2 版美术）；没画到的组合用接班那位挥手
           const HO = { "xiaoke>hachimi": 1, "hachimi>deepseek": 2, "xiaoke>deepseek": 3, "deepseek>xiaoke": 4 };
           const pic = ev.back ? art("group/back_" + (ROLE[ev.to].dir || ev.to)) : HO[ev.from + ">" + ev.to] ? art("group/handover_" + HO[ev.from + ">" + ev.to]) : sprite(ev.to, "wave");
@@ -918,6 +925,7 @@
   }
   async function roomCanvas(msgs, opts = {}) {
     const hideNames = !!opts.hideNames;
+    const fold = opts.fold !== false;
     const list = (msgs || []).filter((m) => m && m.text != null);
     if (!list.length) throw new Error("没有选消息");
     try { await document.fonts.ready; } catch {}
@@ -928,12 +936,27 @@
     const fg = ink("--fg", "#333"), fg2 = ink("--fg2", "#666"), fg3 = ink("--fg3", "#999");
     const accent = ink("--accent", "#d9692a"), onAccent = ink("--on-accent", "#fff"), line = ink("--line", "rgba(0,0,0,.12)");
     const roleColor = (id) => ink("--xk-c-" + (id === "deepseek" ? "xiaoyu" : id), fg2);
-    const bFont = `400 15px ${FONT}`, aFont = `400 13.5px ${FONT}`, nFont = `500 12px ${FONT}`, sFont = `400 12px ${FONT}`, tFont = `700 20px ${FONT}`, tsFont = `400 11px ${FONT}`;
+    const bFont = `400 15px ${FONT}`, aFont = `400 13.5px ${FONT}`, nFont = `500 12px ${FONT}`, sFont = `400 12px ${FONT}`, tFont = `700 20px ${FONT}`, tsFont = `400 11px ${FONT}`, noteFont = `400 11px ${FONT}`;
     const W = 440, HEAD = 120, PX = 16, AV = 36, AVGAP = 8, GAP = 10;
     const innerW = W - PX * 2, herMax = innerW - AV - AVGAP, meMax = Math.round(innerW * 0.82);
     const lineH = 15 * 1.55, padY = 8, padX = 12, nameH = hideNames ? 0 : 16, asideH = 13.5 * 1.5;
     const meter = document.createElement("canvas").getContext("2d");
 
+    // 折叠长消息：只露第一段，第一段超过五行就截断（和群页 foldBody 同一套判断）
+    const NOTE_H = 15;
+    function foldLines(text, maxW) {
+      const fp = foldParts(text, fold);
+      let lines = wrapLines(meter, fp.folded ? fp.head : String(text ?? ""), maxW), hidden = 0;
+      if (fp.folded) {
+        hidden = fp.rest.length;
+        if (fp.head.length > CLAMP_AT && lines.length > 5) {
+          const kept = lines.slice(0, 5);
+          hidden += fp.head.length - kept.join("").length;
+          lines = kept;
+        }
+      }
+      return { lines, hidden };
+    }
     // 先量高度（和日记导出一个路子）
     const layout = [];
     let bodyH = 0;
@@ -945,13 +968,15 @@
         it.h = Math.max(20, it.lines.length * 17 + 6);
       } else if (m.from === "owner") {
         meter.font = bFont;
-        it = { km: "me", lines: wrapLines(meter, String(m.text), meMax - padX * 2) };
-        it.h = it.lines.length * lineH + padY * 2;
+        const fl = foldLines(m.text, meMax - padX * 2);
+        it = { km: "me", lines: fl.lines, hidden: fl.hidden };
+        it.h = it.lines.length * lineH + padY * 2 + (it.hidden ? NOTE_H : 0);
       } else {
         const aside = m.kind === "aside";
         meter.font = aside ? aFont : bFont;
-        it = { km: aside ? "aside" : "her", lines: wrapLines(meter, String(m.text), herMax - (aside ? 20 : padX * 2)) };
-        it.bh = it.lines.length * (aside ? asideH : lineH) + (aside ? 4 : padY * 2);
+        const fl = foldLines(m.text, herMax - (aside ? 20 : padX * 2));
+        it = { km: aside ? "aside" : "her", lines: fl.lines, hidden: fl.hidden };
+        it.bh = it.lines.length * (aside ? asideH : lineH) + (aside ? 4 : padY * 2) + (it.hidden ? NOTE_H : 0);
         it.h = Math.max(AV, nameH + it.bh);
       }
       it.m = m; it.y = bodyH; bodyH += it.h + GAP;
@@ -1013,6 +1038,7 @@
         c.fillStyle = accent; c.fill();
         c.fillStyle = onAccent;
         it.lines.forEach((ln, i) => c.fillText(ln, x + padX, y + padY + lineH / 2 + i * lineH));
+        if (it.hidden) { c.font = noteFont; c.globalAlpha = .7; c.fillText(`（后面还有 ${it.hidden} 字，已折叠）`, x + padX, y + padY + it.lines.length * lineH + NOTE_H / 2 + 1); c.globalAlpha = 1; }
       } else {
         const col = roleColor(m.from), av = avs[m.from];
         c.save();
@@ -1038,6 +1064,12 @@
           c.fillStyle = fg;
           it.lines.forEach((ln, i) => c.fillText(ln, bx + padX, by + padY + lineH / 2 + i * lineH));
         }
+        if (it.hidden) {
+          const tx = bx + (m.kind === "aside" ? 10 : padX);
+          const ty = by + (m.kind === "aside" ? 2 : padY) + it.lines.length * (m.kind === "aside" ? asideH : lineH) + NOTE_H / 2 + 1;
+          c.font = noteFont; c.fillStyle = fg3;
+          c.fillText(`（后面还有 ${it.hidden} 字，已折叠）`, tx, ty);
+        }
       }
       y += it.h + GAP;
     }
@@ -1054,12 +1086,12 @@
     if (roomExporting) return;
     const list = (msgs || []).filter((m) => m && m.text != null);
     if (!list.length) return toast("没有选消息", "先勾几条再生成");
-    const st = { hideNames: !!(opts && typeof opts === "object" && opts.hideNames), blob: null, url: "", busy: false };
+    const st = { hideNames: !!(opts && typeof opts === "object" && opts.hideNames), fold: !(opts && typeof opts === "object" && opts.fold === false), blob: null, url: "", busy: false };
     const render = async () => {
       if (st.busy) return;
       st.busy = true;
       try {
-        st.blob = await roomCanvas(list, { hideNames: st.hideNames });
+        st.blob = await roomCanvas(list, { hideNames: st.hideNames, fold: st.fold });
         if (st.url) URL.revokeObjectURL(st.url);
         st.url = URL.createObjectURL(st.blob);
         const img = $("#xk-prev-img", sheet); if (img) img.src = st.url;
@@ -1092,14 +1124,17 @@
     openSheet(`<h2>导出群聊记录</h2><p class="sub">共 ${list.length} 条 · 先看一眼，再保存或分享</p>
       <img id="xk-prev-img" alt="预览" style="width:100%;max-height:46vh;object-fit:contain;border-radius:12px;background:var(--bg3)"/>
       <div class="xk-row xk-press" id="xk-prev-hide-row" style="margin-top:8px"><span class="k">隐藏昵称</span><span class="xk-sw" id="xk-prev-hide"></span></div>
+      <div class="xk-row xk-press" id="xk-prev-fold-row"><span class="k">折叠长消息</span><span class="xk-sw" id="xk-prev-fold"></span></div>
       <button class="xk-wide xk-press" id="xk-prev-save">保存图片</button>
       ${shell ? '<button class="xk-wide xk-soft xk-press" id="xk-prev-share">分享图片</button>' : ""}`,
       (s) => {
         $("#xk-prev-hide-row", s).onclick = () => { st.hideNames = !st.hideNames; $("#xk-prev-hide", s).classList.toggle("on", st.hideNames); render(); };
+        $("#xk-prev-fold-row", s).onclick = () => { st.fold = !st.fold; $("#xk-prev-fold", s).classList.toggle("on", st.fold); render(); };
         $("#xk-prev-save", s).onclick = () => finish(false);
         const sh = $("#xk-prev-share", s); if (sh) sh.onclick = () => finish(true);
       });
     $("#xk-prev-hide", sheet)?.classList.toggle("on", st.hideNames);
+    $("#xk-prev-fold", sheet)?.classList.toggle("on", st.fold);
     await render();
     roomExporting = false;
   }
@@ -1269,13 +1304,19 @@
   }
   // 长篇的干活汇报折起来（主人 11-03 定的）：只露第一段（结果），后面点「展开」才看；她们之间递的仍是全文
   const FOLD_AT = 160, CLAMP_AT = 220;
-  function foldBody(text) {
+  // 折不折、怎么折：群页（foldBody）和导出长图（roomCanvas）共用这一套判断
+  function foldParts(text, fold = true) {
     const t = String(text ?? ""), i = t.indexOf("\n\n");
     const head = i > 0 ? t.slice(0, i) : t, rest = i > 0 ? t.slice(i + 2).trim() : "";
-    if (t.length <= FOLD_AT) return `<p>${esc(t)}</p>`;
-    if (!rest && head.length <= CLAMP_AT) return `<p>${esc(t)}</p>`;
-    const clamp = head.length > CLAMP_AT ? " xk-rm-clamp" : "";
-    return `<div class="xk-rm-fold"><p class="${clamp.trim()}">${esc(head)}${rest ? `<span class="xk-rm-rest">\n\n${esc(rest)}</span>` : ""}</p><button class="xk-rm-unfold" type="button">展开全文${rest ? `（还有 ${rest.length} 字）` : ""}</button></div>`;
+    if (!fold || t.length <= FOLD_AT) return { folded: false, head: t, rest: "" };
+    if (!rest && head.length <= CLAMP_AT) return { folded: false, head: t, rest: "" };
+    return { folded: true, head, rest };
+  }
+  function foldBody(text) {
+    const f = foldParts(text, true);
+    if (!f.folded) return `<p>${esc(f.head)}</p>`;
+    const clamp = f.head.length > CLAMP_AT ? " xk-rm-clamp" : "";
+    return `<div class="xk-rm-fold"><p class="${clamp.trim()}">${esc(f.head)}${f.rest ? `<span class="xk-rm-rest">\n\n${esc(f.rest)}</span>` : ""}</p><button class="xk-rm-unfold" type="button">展开全文${f.rest ? `（还有 ${f.rest.length} 字）` : ""}</button></div>`;
   }
   function roomPaintMembers(ms) {
     const box = roomEl && $(".xk-rm-mem", roomEl); if (!box) return;
