@@ -8,3 +8,6 @@ devkit/cache/
 out/
 cache/
 android/assets/devkit-pin.json
+
+# 平板 App 的构建产物
+xk/pad/build/
