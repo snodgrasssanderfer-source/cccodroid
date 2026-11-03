@@ -61,21 +61,24 @@ function following() {
 }
 
 /** 问一次便宜档：mode = owner（主人刚说完，谁接、要不要再有人插一句）/ chain（after 刚说完，有没有人想接一句） */
-export async function judge(mode, after) {
+export async function judge(mode, after, taken = []) {
   const awake = ROLES.map((r) => r.id).filter((id) => !asleep(id));
   if (!awake.length) return {};
   const lines = messages().slice(-20).map((m) => `${nameOf(m.from)}：${m.text}`).join("\n");
   const who = awake.map((id) => `- ${id}（${nameOf(id)}）：${TRAITS[id] || ""}`).join("\n");
+  // 主人 11-03 嫌插话太少：不再写「大多数时候不用」，有话想说（补充、接梗、不同意）就让她插；刷屏靠 ASIDE_GAP 和上限卡
   const ask = mode === "owner"
-    ? `主人刚说完最后那几句。谁来接最合适（看话题和各自的性子）？要是另一个人也很想插一句，写在 aside，大多数时候不用。`
-    : `${nameOf(after)}刚说完最后一句。有没有人想接一句？大多数时候没有，就写 none。`;
+    ? (taken.length
+      ? `主人刚说完最后那几句，${taken.map(nameOf).join("、")}会接。另外还有没有人对这话题有话想说（补充、接梗、不同意都算）？有就写在 aside，reply 写 none。`
+      : `主人刚说完最后那几句。谁来接最合适（看话题和各自的性子）？另一个人要是对这话题也有话想说（补充、接梗、不同意都算），写在 aside。`)
+    : `${nameOf(after)}刚说完最后一句。有没有人想接一句（补充、接梗、不同意都算）？真没有就写 none。`;
   const prompt = `群里有主人和下面几位（睡着的不在）：\n${who}\n\n最近的群消息：\n${lines}\n\n${ask}\n只输出：{"reply":"${awake.join("|")}|none","aside":"${awake.join("|")}|none"}`;
   // 判断用小鱼那家的便宜档（单价最低，不占小克的订阅额度）；她睡着了就借小克的 haiku
   const r = await ASK.claude(prompt, roleById(asleep("deepseek") ? "xiaoke" : "deepseek"), JUDGE_SYSTEM);
   if (r.error) throw new Error(r.error);
   const s = String(r.text || ""), i = s.indexOf("{"), j = s.lastIndexOf("}");
   let o; try { o = JSON.parse(s.slice(i, j + 1)); } catch (e) { throw new Error("回复不是 JSON：" + s.slice(0, 120)); }
-  const ok = (id) => (awake.includes(id) && id !== after ? id : null);
+  const ok = (id) => (awake.includes(id) && id !== after && !taken.includes(id) ? id : null);
   return { reply: ok(o.reply), aside: ok(o.aside) };
 }
 
@@ -85,7 +88,8 @@ function feed(id, kind, caller) {
   const lines = all.slice(from).filter((m) => m.from !== id).map((m) => `${nameOf(m.from)}：${m.text}`);
   const ask = kind === "aside"
     ? `你可以插一句（一两句话就好）；不想插就只回「${PASS}」。`
-    : caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。";
+    : (caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。") +
+      "要是在汇报干了什么活，第一段一两句只写结果，过程和细节空一行放后面（群页会把后面折起来，主人点开才看）。";
   return { upTo: all.length - 1, fresh: lines.length > 0, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）\n${lines.join("\n")}\n\n（${ask}）` };
 }
 
@@ -227,6 +231,10 @@ async function decide(b) {
     try { const j = await judge("owner"); if (j.reply) ids = [j.reply]; aside = j.aside; }
     catch (e) { log("聊天室：判断谁接话失败，按上一个说话的来：" + e.message); }
     if (!ids.length) { const last = [...messages()].reverse().find((m) => roleById(m.from) && !asleep(m.from)); const id = last ? last.from : STATE.active; if (!asleep(id)) ids = [id]; }
+  } else if (ids.length < CAP.wave) {
+    // 谁接已经按规则定了（点了名 / 正一来一回）：还是问一次有没有人想插一句（主人 11-03 定的：每句都问，插话才不会几乎没有）
+    try { aside = (await judge("owner", null, ids)).aside; }
+    catch (e) { log("聊天室：判断有没有人插话失败（这次就不插了）：" + e.message); }
   }
   ids = ids.slice(0, CAP.wave);
   if (!ids.length) { append({ from: "system", text: "她们都睡着了，等额度恢复再来" }); return []; }
