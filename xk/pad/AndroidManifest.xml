@@ -8,6 +8,8 @@
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 自己更新：手机代下的新版交给系统安装器（PadUpdate，每次都由主人在系统弹窗里确认） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 局域网里找手机（NSD 走组播） -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />

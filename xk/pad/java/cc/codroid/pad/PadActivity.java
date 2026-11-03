@@ -26,9 +26,10 @@ import org.json.JSONObject;
  * 小克 · 平板的唯一一页：一边是手机画面（串流，点了才开），一边是聊天页（assets/pad.html，WebView）。
  * 横着放左右分，竖着放上下分。网页只管画；找手机、配对、加密都在 PadLink，网页经 window.Pad 调它。
  */
-public class PadActivity extends Activity implements PadLink.Listener, PadStream.Listener {
+public class PadActivity extends Activity implements PadLink.Listener, PadStream.Listener, PadUpdate.Out {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private PadLink link;
+    private PadUpdate upd;
     private PadStream stream;
     private WebView web;
     private LinearLayout root;
@@ -79,6 +80,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
             getWindow().getInsetsController().setSystemBarsAppearance(light, light);
         }
         link = new PadLink(this, this);
+        upd = new PadUpdate(this, link, this);
         link.start();
     }
 
@@ -123,7 +125,12 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
     private void js(String fn, String json) { ui.post(() -> web.evaluateJavascript("window." + fn + "&&window." + fn + "(" + json + ")", null)); }
 
     // ── PadLink ──
-    @Override public void onState(JSONObject st) { js("padState", st.toString()); if (!"connected".equals(st.optString("phase"))) ui.post(this::stopStream); }
+    @Override public void onState(JSONObject st) {
+        js("padState", st.toString());
+        if ("connected".equals(st.optString("phase"))) upd.check();
+        else ui.post(this::stopStream);
+    }
+    @Override public void onUpdate(JSONObject st) { js("padUpdate", st.toString()); }
     @Override public void onEvent(JSONObject ev) { js("padEvent", ev.toString()); }
 
     // ── PadStream ──
@@ -154,6 +161,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         @JavascriptInterface public String state() { return link.state().toString(); }
         @JavascriptInterface public void pair() { link.pair(); }
         @JavascriptInterface public void forget() { link.forget(); }
+        @JavascriptInterface public void update() { upd.install(); }
         @JavascriptInterface public void manual(String host, int port) { link.manual(host, port); }
         @JavascriptInterface public void stream(boolean on) { ui.post(() -> { if (on) startStream(); else stopStream(); }); }
         /** 异步：结果回 window.padReply(id, {s, b} 或 {error}) */

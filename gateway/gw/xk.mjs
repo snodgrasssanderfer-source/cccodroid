@@ -20,6 +20,7 @@ import "./xk-board-gw.mjs";
 import "./xk-overlay.mjs";
 import "./xk-room.mjs";
 import "./xk-pad.mjs";
+import "./xk-padupd.mjs";
 import { takeRollover } from "./xk-rollover.mjs";
 
 // #72：上一段占到 20% 就换新对话（从自己换到自己），带上交接；不压缩，三个人同一套
