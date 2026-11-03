@@ -1,6 +1,7 @@
 // 记忆工具的 MCP 服务（stdio）：node xk-memory-mcp.mjs <角色目录>。由角色项目的 .mcp.json 让 Claude Code 拉起，
 // 所以它只能碰自己这个角色的记忆。渠道（App / QQ 私聊 / QQ 群）由网关按 run 号写在 .xk/runs/ 里，没有就是 App。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { KINDS, line, remember, remove, search, today } from "./xk-memstore.mjs";
@@ -35,6 +36,10 @@ const TOOLS = [
       replaces: { type: "string", description: "写错了要更正时填：自己贴过的那张的便条号（board_read 里方括号那串）。旧的撤下，读过旧的人会再收到这张更正" } } } },
   { name: "board_read", description: "看留言板上最近的便条（三个人和主人贴的都在）。想知道别人做到哪了、主人交代过什么时用。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最多几张，默认 10" } } } },
+  { name: "room_say", description: "往三个人的群里说一句（主人也看得到）。话里点到谁的名字（小克、哈基米、小鱼），她就会在群里接。你不在群里的时候也能用：把主人交代的事交给更合适的人——写清做什么、做到什么程度、做完在群里说一声。之后用 room_read 看她回了什么。",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要在群里说的话；要交给谁就点她的名" } } } },
+  { name: "room_read", description: "看三个人的群里最近说了什么（主人和三个人的话都在）。交出去的事办到哪了、群里聊过什么，用它看。",
+    inputSchema: { type: "object", properties: { limit: { type: "number", description: "最近几条，默认 20" } } } },
 ];
 
 function call(name, a) {
@@ -56,6 +61,25 @@ function call(name, a) {
   if (name === "board_read") {
     const ns = boardList(path.dirname(dir)).slice(0, Number(a.limit) || 10);
     return ns.length ? ns.map((n) => `[${n.id}] ` + noteLine(n) + (n.readBy.length ? `（${n.readBy.map((r) => WHO[r]).join("、")}看过）` : "")).join("\n") : "留言板上还没有便条。";
+  }
+  // 群：MCP 是单独的进程，碰不到网关，和留言板一样写文件交接——网关每秒把 outbox 里的话贴进群，点了名的叫她接（xk-room.mjs）
+  if (name === "room_say") {
+    const text = String(a.text || "").trim();
+    if (!text) throw new Error("text 不能为空");
+    const box = path.join(path.dirname(dir), ".room", "outbox");
+    fs.mkdirSync(box, { recursive: true });
+    const f = path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}.json`);
+    fs.writeFileSync(f + ".tmp", JSON.stringify({ from: path.basename(dir), text, at: Date.now() }));
+    fs.renameSync(f + ".tmp", f);
+    return "贴进群里了，网关一两秒内送到；点了名的她会在群里接。";
+  }
+  if (name === "room_read") {
+    const f = path.join(os.homedir(), ".config", "xiaoke", "room.jsonl");
+    let ms = [];
+    try { ms = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch (e) { if (e.code !== "ENOENT") throw e; }
+    const name = (id) => ({ owner: "主人", system: "（系统）", xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" })[id] || id;
+    const pick = ms.slice(-(Number(a.limit) || 20));
+    return pick.length ? pick.map((m) => `${new Date(m.at).toLocaleString("zh-CN", { hour12: false })} ${name(m.from)}：${m.text}`).join("\n") : "群里还没人说话。";
   }
   if (name === "forget") return `删掉了：${line(remove(dir, String(a.id || "")))}`;
   throw new Error("没有这个工具：" + name);
