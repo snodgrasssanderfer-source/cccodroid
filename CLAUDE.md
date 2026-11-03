@@ -37,5 +37,5 @@
 ## 测试与构建
 - 网关测试：`node scripts/test.mjs`（上游的 gateway/tests 加我们的 xk-*.test.mjs）。
 - APK：照上游 CI（.github/workflows/apk.yml），build-tools 35.0.0、platform android-35、NDK 27.2.12479018、JDK 17+，`TARGET_SDK=36 sh scripts/build.sh`。会话里检查用测试 keystore（`KS=`）。
-- 发布：改了 versionName 的提交推到 `claude/**` 分支，`.github/workflows/xk-release.yml` 发现还没有 `v<versionName>` 的 Release，就用 Secret 里的密钥签名并发布（标签由它创建；会话不能推标签）（证书 SHA-256 adadfbcf…84d0，对不上就失败）。主人在手机上点更新就行。
+- 发布：改了 versionName 的提交推到 `claude/**` 分支，`.github/workflows/xk-release.yml` 发现还没有 `v<versionName>` 的 Release，就用 Secret 里的密钥签名并发布（标签由它创建；会话不能推标签）（证书 SHA-256 adadfbcf…84d0，对不上就失败）。主人在手机上点更新就行。主人 11-03 定的：云端会话可以自己发版，不用先问，发完告诉主人（版本号、改了什么、Release 链接）。
 - 版本：versionName 从 0.1.0 起，每个给主人装的包 versionCode 加一（AndroidManifest.xml）。不跑模拟器，不做压力测试。
