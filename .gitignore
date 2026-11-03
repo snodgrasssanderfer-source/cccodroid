@@ -11,3 +11,5 @@ android/assets/devkit-pin.json
 
 # 平板 App 的构建产物
 xk/pad/build/
+# 串流服务端：构建时由 xk/pad/build-server.sh 打出来，不进仓库
+android/assets/xk-stream-server.jar

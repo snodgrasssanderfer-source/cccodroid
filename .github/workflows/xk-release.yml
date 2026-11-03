@@ -86,6 +86,8 @@ jobs:
           export CC_ANDROID="$ANDROID_SDK_ROOT/ndk/$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
           export JAVAC=javac D8="$BT/d8" AAPT2="$BT/aapt2" ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/$PLATFORM/android.jar"
           export SIGN=apksigner APKSIGNER="$BT/apksigner" ZIPALIGN="$BT/zipalign" KEY="$RUNNER_TEMP/key.json"
+          # 平板串流的服务端（易控，GPL-3.0，单独一个程序，见 xk/pad/NOTICE.md）：随小克带在 assets 里，手机上用 shell 起
+          ANDROID_JAR="$ANDROID_JAR" AIDL="$BT/aidl" D8="$BT/d8" sh xk/pad/build-server.sh android/assets/xk-stream-server.jar
           TARGET_SDK=36 sh scripts/build.sh && mv dist/cccodroid.apk dist/cccodroid-36.apk
           sh scripts/build.sh
           rm -f "$RUNNER_TEMP/key.json"

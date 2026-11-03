@@ -341,6 +341,8 @@ final class XkOverlay {
             JSONObject ev = new JSONObject(json);
             if (!"xk".equals(ev.optString("type"))) return;
             String op = ev.optString("op");
+            // 平板要串流：外壳起易控的服务端（XkStream）。也挂在这条事件流上，不另开一条
+            if ("stream_start".equals(op)) { XkStream.start(ctx, ev); return; }
             ui.post(() -> {
                 if ("overlay".equals(op)) apply(ev);
                 else if ("overlay_config".equals(op)) { boolean was = enabled; enabled = ev.optBoolean("enabled"); if (enabled && !was) asked = false; }
