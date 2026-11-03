@@ -65,6 +65,18 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         root.addView(web);
         layout(getResources().getConfiguration());
         setContentView(root);
+        // 安卓 15 起（targetSdk 35）窗口铺到状态栏和导航栏底下：不让开的话，右上角「看手机画面」被电量图标盖住、输入框被键盘盖住
+        if (android.os.Build.VERSION.SDK_INT >= 35) {
+            root.setOnApplyWindowInsetsListener((v, in) -> {
+                android.graphics.Insets bars = in.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                android.graphics.Insets ime = in.getInsets(android.view.WindowInsets.Type.ime());
+                v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
+                return android.view.WindowInsets.CONSUMED;
+            });
+            // 底色是浅的：状态栏、导航栏的图标用深色
+            int light = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            getWindow().getInsetsController().setSystemBarsAppearance(light, light);
+        }
         link = new PadLink(this, this);
         link.start();
     }

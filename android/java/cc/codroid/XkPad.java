@@ -89,7 +89,7 @@ final class XkPad {
         }, "xk-pad-note").start();
     }
 
-    /** Wi‑Fi（或有线）那张网，不是 VPN。开着 VPN 时，不指定网的话找服务、连接都可能只走 VPN */
+    /** Wi‑Fi（或有线）那张网，不是 VPN。开着 VPN 时不指定网，找平板可能只在 VPN 上找（0.3.9 靠这个在真机上通的） */
     private static android.net.Network lan(Context ctx) {
         android.net.ConnectivityManager cm = ctx.getSystemService(android.net.ConnectivityManager.class);
         for (android.net.Network n : cm.getAllNetworks()) {
@@ -100,18 +100,11 @@ final class XkPad {
         return null;
     }
 
-    /** 连平板：先试绑在 Wi‑Fi 上直连（VPN 允许绕开时就不经过它），不行再照常连 */
-    private static java.net.Socket dialPad(Context ctx, java.net.InetAddress a, int port, String[] how) throws java.io.IOException {
-        android.net.Network w = lan(ctx);
-        String why = w == null ? "没找到 Wi‑Fi 网" : "";
-        if (w != null) {
-            java.net.Socket s = new java.net.Socket();
-            try { w.bindSocket(s); s.connect(new java.net.InetSocketAddress(a, port), 3000); how[0] = "绑在 Wi‑Fi 上"; return s; }
-            catch (java.io.IOException e) { close(s); why = "绑 Wi‑Fi 不行：" + e.getMessage(); }
-        }
+    /** 连平板。试过先绑 Wi‑Fi（Network.bindSocket）：Hiddify 不许绕开，真机上一直是照常连通的，就不绕那一下了（0.3.9，#83） */
+    private static java.net.Socket dialPad(java.net.InetAddress a, int port) throws java.io.IOException {
         java.net.Socket s = new java.net.Socket();
-        try { s.connect(new java.net.InetSocketAddress(a, port), 3000); how[0] = "照常连（" + why + "）"; return s; }
-        catch (java.io.IOException e) { close(s); throw new java.io.IOException(why + "；照常连也不行：" + e.getMessage()); }
+        try { s.connect(new java.net.InetSocketAddress(a, port), 3000); return s; }
+        catch (java.io.IOException e) { close(s); throw e; }
     }
 
     private static void back(Context ctx, int padPort) {
@@ -166,11 +159,10 @@ final class XkPad {
         StringBuilder fails = new StringBuilder();
         for (java.net.InetAddress a : as) {
             if (!(a instanceof java.net.Inet4Address)) continue;
-            String[] how = new String[1];
             java.net.Socket c;
-            try { c = dialPad(ctx, a, port, how); }
+            try { c = dialPad(a, port); }
             catch (java.io.IOException e) { fails.append(a.getHostAddress()).append(":").append(port).append(" ").append(e.getMessage()).append("；"); continue; }
-            note("已连上平板 " + a.getHostAddress() + "（" + how[0] + "）");
+            note("已连上平板 " + a.getHostAddress());
             try {
                 c.setSoTimeout(45_000);
                 java.io.OutputStream o = c.getOutputStream();
@@ -198,7 +190,7 @@ final class XkPad {
         new Thread(() -> {
             java.net.Socket t = null, g = new java.net.Socket();
             try {
-                t = dialPad(ctx, a, port, new String[1]);
+                t = dialPad(a, port);
                 t.setTcpNoDelay(true);
                 t.getOutputStream().write("XKDATA\n".getBytes(StandardCharsets.US_ASCII));
             } catch (java.io.IOException e) { note("给平板开数据线失败：" + e.getMessage()); close(t); return; }
