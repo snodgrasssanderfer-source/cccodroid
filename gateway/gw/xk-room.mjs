@@ -8,10 +8,9 @@ import { onPublish, publish } from "./bus.mjs";
 import { NEXT, sendJson } from "./http.mjs";
 import { END_HOOKS, enqueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
-import { providerById } from "./providers.mjs";
 import { ROLES, ROLES_DIR, roleById, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
-import { ASK, cheapModel } from "./xk-memory.mjs";
+import { ASK } from "./xk-memory.mjs";
 import { ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, projectOf, saveState } from "./xk-core.mjs";
 
 const FILE = path.join(XK_HOME, "room.jsonl");
@@ -48,7 +47,7 @@ export const called = (text, but) => ROLES.map((r) => r.id).filter((id) => id !=
 // ── 谁开口（#61，主人 11-03 定的混合做法）：明确的按规则定，拿不准的才用便宜档问一次「谁想接」，上限用规则卡死 ──
 // 节奏：主人连着发的几句攒成一批再定（等他说完）；点了名的等得短些
 export const PACE = { quietMs: 2000, maxMs: 8000, calledMs: 1000, followMs: 5 * 60 * 1000 };
-// 上限：一批主人的话，第一波最多两个人开口；之后她们之间（互相点名、自己插话）最多再说三句，主人不开口就停
+// 上限：一批主人的话，第一波最多两个人开口；之后她们之间（互相点名、自己插话）最多再说三句，主人不开口就停。插话和接话都用她平时的模型（#64）
 export const CAP = { wave: 2, chain: 3 };
 const TRAITS = { xiaoke: "讲究、较真、好面子，凡事想透了才动手，写代码、拿主意在行", hachimi: "见多识广、闲不住、点子多，爱查资料、看图，自信来得早", deepseek: "直、带点懒劲、爱吃饭，干活靠谱，一句话把大计划缩成眼下一步" };
 const JUDGE_SYSTEM = "你帮一个群聊决定接下来谁开口，像真人群聊那样：不是每句话都要好几个人接。只输出一个 JSON 对象，不要别的文字。";
@@ -116,9 +115,9 @@ export function speak(id, kind = "reply", round = null, caller = null) {
   CIDS.set(cid, turn);
   let item;
   if (role.engine === "claude") {
-    // 插话用便宜档（设计稿第四节）；正经接话用她平时那个
-    const model = kind === "aside" ? cheapModel(providerById(role.provider) || {}) : null;
-    item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid, ...(model ? { model } : {}) });
+    // 不切型号（#64，主人 11-03）：插话也用她平时那个。在她那段里中途换模型，整段上下文要重读、缓存用不上，反而更贵，
+    // 界面上这段对话也会显示成换了模型。省钱的只有「判断谁接」那一下，它是单独的一次调用，不碰她的会话
+    item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid });
     // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
     if (item.injected && CIDS.has(cid)) { const r = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (r) TURNS.set(r.id, turn); }
   } else {
