@@ -128,12 +128,16 @@ export function lastSidOf(to) {
   const sid = STATE.lastByRole && STATE.lastByRole[to];
   return sid && roleOfSession(sid)?.id === to ? sid : null;
 }
+// 两段里接更近的那段：替班会话会被反复接着用，它记的「被替班前那段」可能早就过时了。
+// 11-03 主人从哈基米换回小克，接到的是两段之前的旧对话（她那段会话是 11-02 晚上从那段换过去时开的）
+const mtime = (sid) => { try { const f = sid && findSessionFile(sid); return f ? fs.statSync(f.file).mtimeMs : -1; } catch { return -1; } };
+const newer = (a, b) => (!a || !b || a === b ? a || b : mtime(a) >= mtime(b) ? a : b);
 export function switchTo(to, fromSessionId, reason) {
   STATE.active = to;
   const fromRole = fromSessionId ? roleOfSession(fromSessionId)?.id || null : null;
   if (fromRole && fromRole !== to) shiftEnded({ from: fromRole, to, sid: fromSessionId, reason });
   // 先看是不是交回原角色（接她被替班前那段），否则接她自己最近那段；从空的新对话换过去的照旧新开
-  const resume = fromSessionId && fromRole !== to ? resumeSid(fromSessionId, to) || lastSidOf(to) : null;
+  const resume = fromSessionId && fromRole !== to ? newer(resumeSid(fromSessionId, to), lastSidOf(to)) : null;
   if (fromSessionId && fromRole !== to) STATE.pending[to] = resume ? { fromSid: fromSessionId, fromRole, reason: "主人把你换了回来", back: true, resumeSid: resume } : { fromSid: fromSessionId, fromRole, reason };
   saveState();
   return { ok: true, active: to, projectId: projectOf(to), resume };
