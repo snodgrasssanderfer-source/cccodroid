@@ -50,7 +50,7 @@ export const cheapModel = (P) => CHEAP[P.id] || P.fastModel || P.defaultModel ||
 const WORK = path.join(XK_HOME, "ask");   // 一次性调用的工作目录：不在角色目录里，就不读人设、不跑 hook、不挂记忆工具
 /** 问一次、拿回文字：不给工具、不留会话。{ text } 或 { error } */
 export const ASK = {
-  async claude(prompt, role) {
+  async claude(prompt, role, system = SYSTEM) {   // system：聊天室判断谁接话也借这个问一次（xk-room.mjs）
     const P = providerById(role.provider);
     if (!P) return { error: `${role.name}的接口（${role.provider}）没配` };
     // 她那家正好是全局那家、又不是登录模式时，claude 走本地 DNS 桥（同 autotitle）
@@ -59,7 +59,7 @@ export const ASK = {
     return new Promise((resolve) => {
       fs.mkdirSync(WORK, { recursive: true });
       const [cmd, args] = claudeCmd([...settingsArgs(P), "-p", "--no-session-persistence", "--tools", "", "--strict-mcp-config",
-        "--system-prompt", SYSTEM, "--output-format", "json", ...(model ? ["--model", model] : [])]);
+        "--system-prompt", system, "--output-format", "json", ...(model ? ["--model", model] : [])]);
       const child = spawn(cmd, args, { cwd: WORK, env: claudeEnv({ model, provider: P }), stdio: ["pipe", "pipe", "pipe"], detached: true });
       let out = "", err = "", done = false;
       const fin = (r) => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
