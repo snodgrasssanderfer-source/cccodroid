@@ -119,28 +119,35 @@ if (LIVE) {
 }
 
 // ── 界面：导出成图片 ──
-// 纸纹、横线、日期和签名由前端画成 PNG 传上来，这里只负责落盘（exports/ 在「保存到」允许的范围里）
+// 纸纹、横线、日期、签名由前端画成 PNG 传上来，群聊长图也一样。这里只负责校验和落盘（exports/ 在「保存到」允许的范围里）
 const EXPORT_MAX = 24 * 1024 * 1024;
+function saveExportPng(prefix, name, buf, cleanRe) {
+  if (!Buffer.isBuffer(buf) || buf.length < 8 || buf.length > EXPORT_MAX || buf[0] !== 0x89 || buf.toString("latin1", 1, 4) !== "PNG")
+    throw httpError(400, "图片数据不对");
+  const dir = path.join(CFG.home, "exports");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${prefix}-${Date.now().toString(36)}.png`);
+  fs.writeFileSync(file, buf);
+  // 只留一天：存过的原图不长期堆在私有目录；按同一类清（diary-/room-），别把另一类的图删了
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!cleanRe.test(f)) continue;
+      const p = path.join(dir, f);
+      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.unlinkSync(p);
+    }
+  } catch {}
+  return { path: file, name };
+}
 export function saveDiaryPng(roleId, date, buf) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw httpError(400, "日期不对");
   const role = roleById(roleId);
   if (!role) throw httpError(404, "没有这个角色");
   if (!fs.existsSync(path.join(roleDir(role.id), "diary", date + ".md"))) throw httpError(404, "这天没有日记");
-  if (!Buffer.isBuffer(buf) || buf.length < 8 || buf.length > EXPORT_MAX || buf[0] !== 0x89 || buf.toString("latin1", 1, 4) !== "PNG")
-    throw httpError(400, "图片数据不对");
-  const dir = path.join(CFG.home, "exports");
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `diary-${role.id}-${date}-${Date.now().toString(36)}.png`);
-  fs.writeFileSync(file, buf);
-  // 只留一天：存过的原图不长期堆在私有目录
-  try {
-    for (const f of fs.readdirSync(dir)) {
-      if (!/^diary-.*\.png$/.test(f)) continue;
-      const p = path.join(dir, f);
-      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.unlinkSync(p);
-    }
-  } catch {}
-  return { path: file, name: `${NICK[role.id] || role.name}的日记 ${date}.png` };
+  return saveExportPng(`diary-${role.id}-${date}`, `${NICK[role.id] || role.name}的日记 ${date}.png`, buf, /^diary-.*\.png$/);
+}
+// 群聊长截图：前端把选中的气泡画成一张长图传上来，这里只落盘
+export function saveRoomPng(buf) {
+  return saveExportPng("room", "聊天室记录.png", buf, /^room-.*\.png$/);
 }
 
 // ── 界面：按角色、日期看 ──
@@ -151,6 +158,12 @@ addRoute(async (req, res, u, p) => {
     try { buf = await readBodyBuf(req, EXPORT_MAX + 4096); }
     catch (e) { throw /too large/.test(e.message) ? httpError(413, "图片太大") : httpError(400, "图片没传完整：" + e.message); }
     return sendJson(res, 200, { ok: true, ...saveDiaryPng(u.searchParams.get("role"), u.searchParams.get("date"), buf) });
+  }
+  if (p === "/api/xk/room/export" && req.method === "POST") {
+    let buf;
+    try { buf = await readBodyBuf(req, EXPORT_MAX + 4096); }
+    catch (e) { throw /too large/.test(e.message) ? httpError(413, "图片太大") : httpError(400, "图片没传完整：" + e.message); }
+    return sendJson(res, 200, { ok: true, ...saveRoomPng(buf) });
   }
   if (p === "/api/xk/diary" && req.method === "GET") {
     const role = roleById(u.searchParams.get("role"));
