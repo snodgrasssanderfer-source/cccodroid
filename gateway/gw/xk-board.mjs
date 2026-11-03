@@ -31,15 +31,25 @@ export function list(rolesDir) {
     .sort((a, b) => b.at - a.at);
 }
 
-/** 贴一张：from 是角色号或 owner；to 是角色号或 null（给大家）；auto 表示网关从对话里摘的（她额度用完、自己写不了） */
-export function post(rolesDir, { from, to = null, text, auto = false, at = Date.now() }) {
-  const t = String(text ?? "").trim();
+/** 贴一张：from 是角色号或 owner；to 是角色号或 null（给大家）；auto 表示网关从对话里摘的（她额度用完、自己写不了）。
+ *  replaces：换掉自己贴过的一张（#45，主人 11-03 定的）。旧的撤下，新的开头写明更正了哪张。
+ *  新便条是新号，谁都还没读过：读过旧的人下一轮自然会再收到这张更正，没读过的只会看到对的这张 */
+export function post(rolesDir, { from, to = null, text, auto = false, at = Date.now(), replaces = null }) {
+  let t = String(text ?? "").trim();
   if (!t) throw new Error("便条是空的");
   if (!WHO[from]) throw new Error("不认识的留言人：" + from);
   if (to !== null && (!WHO[to] || to === "owner")) throw new Error("不认识的收件人：" + to);
+  let old = null;
+  if (replaces) {
+    old = list(rolesDir).find((x) => x.id === String(replaces).trim());
+    if (!old) throw new Error(`没有这张便条：${replaces}（用 board_read 看便条号）`);
+    if (old.from !== from) throw new Error(`那张是${WHO[old.from]}贴的，只能换自己贴的`);
+    t = `（更正了 ${when(old.at)} 那张）${t}`;
+  }
   const id = at.toString(36) + Math.random().toString(36).slice(2, 6);
-  const n = { id, from, to, text: t, at, ...(auto ? { auto: true } : {}) };
+  const n = { id, from, to, text: t, at, ...(auto ? { auto: true } : {}), ...(old ? { replaces: { id: old.id, at: old.at, readBy: old.readBy } } : {}) };
   writeJson(path.join(dirOf(rolesDir), `n-${id}.json`), n);
+  if (old) remove(rolesDir, old.id);   // 先贴新的再撤旧的：中途出错板上至少还有一张
   return n;
 }
 
