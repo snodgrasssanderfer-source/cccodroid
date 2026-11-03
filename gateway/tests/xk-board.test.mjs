@@ -65,7 +65,7 @@ test("记忆工具：board_write 贴上（写着是谁留的），board_read 看
 
 test("替换自己的便条（#45）：没人读过就直接换；读过的人下一轮再收到更正；别人的换不了", () => {
   // 没人读过：板上只剩新的，接班的只看到对的那张
-  const a = post(ROLES_DIR, { from: "xiaoke", to: "hachimi", text: "三件事等主人拍板", at: Date.UTC(2026, 10, 2, 14, 10) });
+  const a = post(ROLES_DIR, { from: "xiaoke", to: "hachimi", text: "三件事等主人拍板", at: new Date(2026, 10, 2, 22, 10).getTime() });   // 按本地时间造：显示也按本地，CI 在 UTC、手机在东八区都对得上
   const a2 = post(ROLES_DIR, { from: "xiaoke", to: "hachimi", text: "聊天室主人早定了，只剩世界书", replaces: a.id });
   assert.deepEqual(list(ROLES_DIR).map((n) => n.id), [a2.id]);
   assert.match(a2.text, /^（更正了 11\/2 22:10 那张）聊天室/);

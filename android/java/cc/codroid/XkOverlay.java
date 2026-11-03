@@ -162,11 +162,12 @@ final class XkOverlay {
         stripBar.setVisibility(View.GONE);
         strip.addView(stripBar, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (int) (4 * dp)));
         // 字幕点击穿透：不挡主人，也不挡她以后操作屏幕
-        WindowManager.LayoutParams slp = params(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT,
+        // 宽度自己算：带着 FLAG_LAYOUT_NO_LIMITS 时 MATCH_PARENT + horizontalMargin 只往右挪、不收窄，右边会出屏（0.2.8 主人截图）
+        int side = (int) (12 * dp);
+        WindowManager.LayoutParams slp = params(screenW() - 2 * side, WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-        slp.gravity = Gravity.TOP;
+        slp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         slp.y = (int) (36 * dp);
-        slp.horizontalMargin = 0.04f;
         // 安卓 12 起，别的 App 叠在上面的窗口只有整体 alpha ≤ 0.8 点击才放得下去（内容透明度不算），不设就会挡住下面
         slp.alpha = 0.8f;
         try {
@@ -261,7 +262,11 @@ final class XkOverlay {
         if (showStrip) {
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(14 * dp);
-            bg.setColor(color(role));   // 窗口整体已是 0.8，底色不再另加透明
+            // 窗口整体已是 0.8：主色原样铺底，白字在亮色壁纸上看不清（0.2.8 主人截图，橙底配橙壁纸）。
+            // 底色压暗到四成多，主色留在描边上认人
+            int c = color(role);
+            bg.setColor(Color.rgb(Color.red(c) * 9 / 20, Color.green(c) * 9 / 20, Color.blue(c) * 9 / 20));
+            bg.setStroke((int) (1.5f * dp), c);
             strip.setBackground(bg);
             stripText.setText(text);
             stripBar.setVisibility(progress != null ? View.VISIBLE : View.GONE);
