@@ -119,8 +119,9 @@ public final class Server {
   }
 
   private static void connectClient() throws IOException {
-    // 小克改：只听本机（原版听所有网卡、明文）。平板经手机网关加密中转（gateway/gw/xk-pad.mjs），不直连这里
-    try (ServerSocket serverSocket = new ServerSocket(Options.serverPort, 2, java.net.InetAddress.getLoopbackAddress())) {
+    // 小克改：只听本机（原版听所有网卡、明文）。平板经手机网关加密中转（gateway/gw/xk-pad.mjs），不直连这里。
+    // 写死 127.0.0.1：安卓上 getLoopbackAddress() 给的是 ::1，网关连 127.0.0.1 连不上（0.3.10 真机，#83）
+    try (ServerSocket serverSocket = new ServerSocket(Options.serverPort, 2, java.net.InetAddress.getByAddress(new byte[] { 127, 0, 0, 1 }))) {
       mainSocket = serverSocket.accept();
       videoSocket = serverSocket.accept();
       mainOutputStream = mainSocket.getOutputStream();

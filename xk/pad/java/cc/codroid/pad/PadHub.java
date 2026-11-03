@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit;
  * 所以平板也开一个口子、在局域网里广播（_xkpadc._tcp）；手机（外壳 android/java/cc/codroid/XkPad.java）找到后
  * 连过来挂一条控制线。平板要发请求时在控制线上写一个 'c'，手机就再连一条过来（先写 "XKDATA\n"），
  * 接到它自己网关的平板口子上。加密照旧是平板和网关两头的事，这里只搬字节，所以谁连上来都偷看不到、改不了。
- * 控制线上两边每 15 秒互发一个 'p'，45 秒没动静就当断了。
+ * 控制线一开头平板回 "OK\n"：手机开着 VPN 时，连接可能只是 VPN 在手机本机接下的、根本没到平板（开热点时就这样），
+ * 等不到 OK 就知道这条线是假的。之后两边每 15 秒互发一个 'p'，45 秒没动静就当断了。
  */
 final class PadHub {
     static final String TAG = "xkpad";
@@ -99,7 +100,7 @@ final class PadHub {
         try {
             s.setSoTimeout(5000);
             String line = line(s.getInputStream());
-            if ("XKREV".equals(line)) control(s);
+            if ("XKREV".equals(line)) { synchronized (s) { s.getOutputStream().write("OK\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)); s.getOutputStream().flush(); } control(s); }
             else if ("XKDATA".equals(line)) { s.setSoTimeout(0); s.setTcpNoDelay(true); data.offer(s); }
             else close(s);
         } catch (IOException e) { Log.i(TAG, "反连进来的连接断了：" + e.getMessage()); close(s); }

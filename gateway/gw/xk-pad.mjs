@@ -152,7 +152,7 @@ export function waitEvents(after, ms = 25000) {
 // 平板开两条升级连接（先 main：声音和控制，再 video：画面），请求头里带加密的身份校验 → 网关在本机连上服务端，双向逐块加密转发。
 // 每条连接一把子密钥（HKDF(配对密钥, 平板给的随机盐, 方向)），nonce = 方向 1 字节 + 3 个 0 + 8 字节计数：截下来重放、调换顺序都解不开。
 export const STREAM = { sid: null, port: 0, at: 0, error: "", opts: null };
-export const SPAWN = { connect: (port) => net.connect(port, "127.0.0.1") };
+export const SPAWN = { connect: (port, host = "127.0.0.1") => net.connect(port, host) };
 function startStream(d, b) {
   STREAM.sid = crypto.randomBytes(6).toString("hex");
   STREAM.port = 20000 + crypto.randomInt(20000);
@@ -194,7 +194,7 @@ export function opener(key, dir, onPlain) {
 }
 /** 平板来的升级连接：核对身份 → 连本机服务端（它刚起，可能还没开始听，重试一会儿）→ 双向加密转发 */
 export async function streamUpgrade(req, sock, head, now = Date.now()) {
-  const fail = (code, msg) => { sock.end(`HTTP/1.1 ${code} x\r\ncontent-type: text/plain; charset=utf-8\r\n\r\n${msg}`); };
+  const fail = (code, msg) => { log(`串流（${code}）：${msg}`); sock.end(`HTTP/1.1 ${code} x\r\ncontent-type: text/plain; charset=utf-8\r\n\r\n${msg}`); };
   let v;
   try { v = verify(JSON.parse(Buffer.from(String(req.headers["x-pad"] || ""), "base64").toString("utf8")), now); }
   catch (e) { return fail(e.status || 400, e.message); }
@@ -206,10 +206,12 @@ export async function streamUpgrade(req, sock, head, now = Date.now()) {
   let up = null;
   for (let i = 0; i < 40 && !up; i++) {
     if (STREAM.error) return fail(502, STREAM.error);
-    up = await new Promise((ok) => { const c = SPAWN.connect(STREAM.port); c.once("connect", () => ok(c)); c.once("error", () => ok(null)); });
+    // 服务端听 127.0.0.1；老的 jar 在安卓上听的是 ::1（getLoopbackAddress），两个轮着试
+    up = await new Promise((ok) => { const c = SPAWN.connect(STREAM.port, i % 2 ? "::1" : "127.0.0.1"); c.once("connect", () => ok(c)); c.once("error", () => ok(null)); });
     if (!up) await new Promise((r) => setTimeout(r, 250));
   }
   if (!up) return fail(504, "手机上的串流服务端 10 秒没起来（Shizuku 开着吗？）");
+  log(`串流：平板的 ${ch} 连上了`);
   sock.write("HTTP/1.1 101 Switching Protocols\r\nupgrade: xkpad\r\nconnection: Upgrade\r\n\r\n");
   const toPad = sealer(streamKey(key, salt, ch, 0), 0);
   const fromPad = opener(streamKey(key, salt, ch, 1), 1, (plain) => up.write(plain));

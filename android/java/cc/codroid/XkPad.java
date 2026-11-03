@@ -162,17 +162,28 @@ final class XkPad {
             java.net.Socket c;
             try { c = dialPad(a, port); }
             catch (java.io.IOException e) { fails.append(a.getHostAddress()).append(":").append(port).append(" ").append(e.getMessage()).append("；"); continue; }
-            note("已连上平板 " + a.getHostAddress());
             try {
-                c.setSoTimeout(45_000);
                 java.io.OutputStream o = c.getOutputStream();
                 o.write("XKREV\n".getBytes(StandardCharsets.US_ASCII)); o.flush();
+                // 等平板回 OK：开着 VPN 时 connect 可能只是 VPN 在本机接下的，线根本没到平板（手机开热点时就这样）
+                c.setSoTimeout(5000);
+                InputStream in0 = c.getInputStream();
+                StringBuilder ok = new StringBuilder();
+                try { for (int b; (b = in0.read()) >= 0 && b != '\n' && ok.length() < 8; ) ok.append((char) b); }
+                catch (java.net.SocketTimeoutException e) { ok.setLength(0); }
+                if (!"OK".equals(ok.toString())) {
+                    fails.append(a.getHostAddress()).append(" 连上了但平板没回话（多半是 VPN 把这条线收进了隧道；平板会改成直接连手机）；");
+                    close(c);
+                    continue;
+                }
+                note("已连上平板 " + a.getHostAddress());
+                c.setSoTimeout(45_000);
                 Thread ping = new Thread(() -> {
                     try { while (true) { Thread.sleep(15_000); synchronized (c) { o.write('p'); o.flush(); } } }
                     catch (Exception e) { close(c); }
                 }, "xk-pad-ping");
                 ping.start();
-                InputStream in = c.getInputStream();
+                InputStream in = in0;
                 try {
                     for (int b; (b = in.read()) >= 0; ) if (b == 'c') pipe(ctx, a, port, padPort);
                 } finally { ping.interrupt(); }
