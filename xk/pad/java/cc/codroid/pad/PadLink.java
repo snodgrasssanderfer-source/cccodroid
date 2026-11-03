@@ -153,7 +153,7 @@ final class PadLink {
         String ok = reachable(hosts, p);
         // 手机开着 VPN 时这边连不过去，但手机会反过来连平板：再等它一会儿
         if (ok == null && hub.await(15_000)) return;
-        if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上");
+        if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上；手机开着 Hiddify 之类的 VPN 的话，要在 VPN 里打开「绕过局域网」");
         host = ok; port = p;
         sp.edit().putString("host", host).putInt("port", port).apply();
     }
