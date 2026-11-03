@@ -895,6 +895,215 @@
     exporting = false; syncDiaryExport();
   }
 
+  // ── 群聊导出长图（#66）：还是前端 canvas 自己画，再传给 /api/xk/room/export 落盘 ──
+  //    msgs: [{from:"owner"|"system"|角色id, text, at, kind?:"aside"}]，由群页多选那层传进来
+  let roomExporting = false;
+  function bubblePath(c, x, y, w, h, tl, tr, br, bl) {
+    const m = Math.max(0, Math.min(h / 2, w / 2));
+    [tl, tr, br, bl] = [tl, tr, br, bl].map((v) => Math.max(0, Math.min(v, m)));
+    c.beginPath();
+    c.moveTo(x + tl, y);
+    c.lineTo(x + w - tr, y); c.arcTo(x + w, y, x + w, y + tr, tr);
+    c.lineTo(x + w, y + h - br); c.arcTo(x + w, y + h, x + w - br, y + h, br);
+    c.lineTo(x + bl, y + h); c.arcTo(x, y + h, x, y + h - bl, bl);
+    c.lineTo(x, y + tl); c.arcTo(x, y, x + tl, y, tl);
+    c.closePath();
+  }
+  const rtd = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, "0"); return { day: `${d.getMonth() + 1}月${d.getDate()}日`, hm: `${p(d.getHours())}:${p(d.getMinutes())}` }; };
+  function roomSpan(list) {
+    const ats = list.map((m) => m.at).filter((x) => typeof x === "number");
+    if (!ats.length) return "";
+    const a = rtd(Math.min(...ats)), b = rtd(Math.max(...ats));
+    return a.day === b.day ? `${a.day} ${a.hm} ~ ${b.hm}` : `${a.day} ${a.hm} ~ ${b.day} ${b.hm}`;
+  }
+  async function roomCanvas(msgs, opts = {}) {
+    const hideNames = !!opts.hideNames;
+    const list = (msgs || []).filter((m) => m && m.text != null);
+    if (!list.length) throw new Error("没有选消息");
+    try { await document.fonts.ready; } catch {}
+    const root2 = getComputedStyle(document.documentElement);
+    const ink = (n, fb) => root2.getPropertyValue(n).trim() || fb;
+    const FONT = getComputedStyle(document.body).fontFamily || "sans-serif";
+    const bg = ink("--bg", "#f3efe8"), bg2 = ink("--bg2", "#fff"), bg3 = ink("--bg3", "#eee");
+    const fg = ink("--fg", "#333"), fg2 = ink("--fg2", "#666"), fg3 = ink("--fg3", "#999");
+    const accent = ink("--accent", "#d9692a"), onAccent = ink("--on-accent", "#fff"), line = ink("--line", "rgba(0,0,0,.12)");
+    const roleColor = (id) => ink("--xk-c-" + (id === "deepseek" ? "xiaoyu" : id), fg2);
+    const bFont = `400 15px ${FONT}`, aFont = `400 13.5px ${FONT}`, nFont = `500 12px ${FONT}`, sFont = `400 12px ${FONT}`, tFont = `700 20px ${FONT}`, tsFont = `400 11px ${FONT}`;
+    const W = 440, HEAD = 120, PX = 16, AV = 36, AVGAP = 8, GAP = 10;
+    const innerW = W - PX * 2, herMax = innerW - AV - AVGAP, meMax = Math.round(innerW * 0.82);
+    const lineH = 15 * 1.55, padY = 8, padX = 12, nameH = hideNames ? 0 : 16, asideH = 13.5 * 1.5;
+    const meter = document.createElement("canvas").getContext("2d");
+
+    // 先量高度（和日记导出一个路子）
+    const layout = [];
+    let bodyH = 0;
+    for (const m of list) {
+      let it;
+      if (m.from === "system") {
+        meter.font = sFont;
+        it = { km: "sys", lines: wrapLines(meter, String(m.text), innerW - 24) };
+        it.h = Math.max(20, it.lines.length * 17 + 6);
+      } else if (m.from === "owner") {
+        meter.font = bFont;
+        it = { km: "me", lines: wrapLines(meter, String(m.text), meMax - padX * 2) };
+        it.h = it.lines.length * lineH + padY * 2;
+      } else {
+        const aside = m.kind === "aside";
+        meter.font = aside ? aFont : bFont;
+        it = { km: aside ? "aside" : "her", lines: wrapLines(meter, String(m.text), herMax - (aside ? 20 : padX * 2)) };
+        it.bh = it.lines.length * (aside ? asideH : lineH) + (aside ? 4 : padY * 2);
+        it.h = Math.max(AV, nameH + it.bh);
+      }
+      it.m = m; it.y = bodyH; bodyH += it.h + GAP;
+      layout.push(it);
+    }
+    const contentBottom = HEAD + 14 + bodyH - GAP;
+    const totalH = contentBottom + 56;
+    let scale = 1080 / W;
+    if (totalH * scale > 10000) scale = 10000 / totalH;
+    if (scale < .75) throw new Error("选的太多，一张图放不下");
+
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(W * scale); cv.height = Math.round(totalH * scale);
+    const c = cv.getContext("2d");
+    c.scale(scale, scale);
+    c.fillStyle = bg; c.fillRect(0, 0, W, totalH);
+
+    // 头部：群头图上叠群名和时间跨度，再一条分隔线
+    const head = await imgOf(art("room/room_header")).catch(() => null);
+    if (head) {
+      const ir = head.width / head.height, hr = W / HEAD;
+      let sw = head.width, sh = head.height;
+      if (ir > hr) sw = head.height * hr; else sh = head.width / hr;
+      c.drawImage(head, (head.width - sw) / 2, (head.height - sh) / 2, sw, sh, 0, 0, W, HEAD);
+    } else { c.fillStyle = bg3; c.fillRect(0, 0, W, HEAD); }
+    const hg = c.createLinearGradient(0, HEAD - 70, 0, HEAD);
+    hg.addColorStop(0, "rgba(0,0,0,0)"); hg.addColorStop(1, "rgba(0,0,0,.42)");
+    c.fillStyle = hg; c.fillRect(0, HEAD - 70, W, 70);
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.shadowColor = "rgba(0,0,0,.45)"; c.shadowBlur = 6;
+    c.fillStyle = "#fff"; c.font = tFont; c.fillText("我们仨", W / 2, HEAD - 40);
+    c.font = tsFont; c.fillText(roomSpan(list), W / 2, HEAD - 20);
+    c.shadowColor = "transparent"; c.shadowBlur = 0;
+    c.fillStyle = line; c.fillRect(0, HEAD, W, 1);
+    c.textAlign = "left";
+
+    // 头像先读好，别在循环里一张张等
+    const avs = {};
+    for (const id of new Set(list.filter((m) => m.from !== "owner" && m.from !== "system").map((m) => m.from)))
+      avs[id] = await imgOf(bub(id, "idle")).catch(() => null);
+
+    let y = HEAD + 14;
+    for (const it of layout) {
+      const m = it.m;
+      if (it.km === "sys") {
+        c.font = sFont;
+        const tw = Math.min(innerW - 24, Math.max(0, ...it.lines.map((l) => c.measureText(l).width)));
+        const pw = tw + 24, ph = it.h, x = (W - pw) / 2;
+        bubblePath(c, x, y, pw, ph, ph / 2, ph / 2, ph / 2, ph / 2);
+        c.fillStyle = bg2; c.fill();
+        c.fillStyle = fg3; c.textAlign = "center";
+        it.lines.forEach((ln, i) => c.fillText(ln, W / 2, y + ph / 2 + (i - (it.lines.length - 1) / 2) * 17));
+        c.textAlign = "left";
+      } else if (it.km === "me") {
+        c.font = bFont;
+        const tw = Math.min(meMax - padX * 2, Math.max(0, ...it.lines.map((l) => c.measureText(l).width)));
+        const bw = tw + padX * 2, x = W - PX - bw;
+        bubblePath(c, x, y, bw, it.h, 16, 16, 4, 16);
+        c.fillStyle = accent; c.fill();
+        c.fillStyle = onAccent;
+        it.lines.forEach((ln, i) => c.fillText(ln, x + padX, y + padY + lineH / 2 + i * lineH));
+      } else {
+        const col = roleColor(m.from), av = avs[m.from];
+        c.save();
+        c.beginPath(); c.arc(PX + AV / 2, y + AV / 2, AV / 2, 0, Math.PI * 2); c.clip();
+        if (av) c.drawImage(av, PX, y, AV, AV); else { c.fillStyle = bg2; c.fillRect(PX, y, AV, AV); }
+        c.restore();
+        c.beginPath(); c.arc(PX + AV / 2, y + AV / 2, AV / 2 - .75, 0, Math.PI * 2); c.strokeStyle = col; c.lineWidth = 1.5; c.stroke();
+        c.font = nFont; c.fillStyle = col;
+        if (!hideNames) c.fillText(rname(m.from) + (m.kind === "aside" ? "  插了一句" : ""), PX + AV + AVGAP, y + nameH / 2 + 1);
+        const bx = PX + AV + AVGAP, by = y + nameH;
+        c.font = m.kind === "aside" ? aFont : bFont;
+        const mw = herMax - (m.kind === "aside" ? 20 : padX * 2);
+        const tw = Math.min(mw, Math.max(0, ...it.lines.map((l) => c.measureText(l).width)));
+        if (m.kind === "aside") {
+          c.fillStyle = col; c.fillRect(bx, by + 2, 2, Math.max(0, it.bh - 4));
+          c.fillStyle = fg2;
+          it.lines.forEach((ln, i) => c.fillText(ln, bx + 10, by + 2 + asideH / 2 + i * asideH));
+        } else {
+          const bw = tw + padX * 2;
+          bubblePath(c, bx, by, bw, it.bh, 4, 16, 16, 16);
+          c.fillStyle = bg2; c.fill();
+          c.fillStyle = col; c.fillRect(bx, by + 6, 3, Math.max(0, it.bh - 12));
+          c.fillStyle = fg;
+          it.lines.forEach((ln, i) => c.fillText(ln, bx + padX, by + padY + lineH / 2 + i * lineH));
+        }
+      }
+      y += it.h + GAP;
+    }
+
+    c.textAlign = "center"; c.fillStyle = fg3; c.font = `400 11px ${FONT}`;
+    c.fillText("cc.codroid · 聊天室记录", W / 2, totalH - 26);
+    c.textAlign = "left";
+
+    const blob = await new Promise((ok, no) => cv.toBlob((b) => (b ? ok(b) : no(new Error("图片没生成出来"))), "image/png"));
+    return blob;
+  }
+  // 生成前先给主人看一眼：预览 + 「隐藏昵称」开关，确认无误再保存或分享（#66，照着 QQ 的隐藏昵称做）
+  async function exportRoomImage(msgs, opts) {
+    if (roomExporting) return;
+    const list = (msgs || []).filter((m) => m && m.text != null);
+    if (!list.length) return toast("没有选消息", "先勾几条再生成");
+    const st = { hideNames: !!(opts && typeof opts === "object" && opts.hideNames), blob: null, url: "", busy: false };
+    const render = async () => {
+      if (st.busy) return;
+      st.busy = true;
+      try {
+        st.blob = await roomCanvas(list, { hideNames: st.hideNames });
+        if (st.url) URL.revokeObjectURL(st.url);
+        st.url = URL.createObjectURL(st.blob);
+        const img = $("#xk-prev-img", sheet); if (img) img.src = st.url;
+      } catch (e) { fail(e); }
+      st.busy = false;
+    };
+    const finish = async (share) => {
+      if (st.busy || !st.blob) return;
+      const blob = st.blob, name = "聊天室记录.png";
+      try {
+        const r = await fetch("/api/xk/room/export", { method: "POST", headers: { "content-type": "image/png" }, body: blob });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.message || j.error || "HTTP " + r.status);
+        closeSheet();
+        if (share) {
+          const s = await api("/api/app/share_file", { method: "POST", body: { path: j.path } });
+          if (!s.ok) throw new Error(s.message || "分享失败");
+          toast("发出去了", j.name || name);
+        } else if (shell && shell.saveAs) {
+          shell.saveAs(j.path, j.name || name, "image/png");
+        } else {
+          const u = URL.createObjectURL(blob), a = document.createElement("a");
+          a.href = u; a.download = j.name || name; document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(u), 10000);
+          toast("图片做好了", j.name || name);
+        }
+      } catch (e) { fail(e); }
+    };
+    roomExporting = true;
+    openSheet(`<h2>导出群聊记录</h2><p class="sub">共 ${list.length} 条 · 先看一眼，再保存或分享</p>
+      <img id="xk-prev-img" alt="预览" style="width:100%;max-height:46vh;object-fit:contain;border-radius:12px;background:var(--bg3)"/>
+      <div class="xk-row xk-press" id="xk-prev-hide-row" style="margin-top:8px"><span class="k">隐藏昵称</span><span class="xk-sw" id="xk-prev-hide"></span></div>
+      <button class="xk-wide xk-press" id="xk-prev-save">保存图片</button>
+      ${shell ? '<button class="xk-wide xk-soft xk-press" id="xk-prev-share">分享图片</button>' : ""}`,
+      (s) => {
+        $("#xk-prev-hide-row", s).onclick = () => { st.hideNames = !st.hideNames; $("#xk-prev-hide", s).classList.toggle("on", st.hideNames); render(); };
+        $("#xk-prev-save", s).onclick = () => finish(false);
+        const sh = $("#xk-prev-share", s); if (sh) sh.onclick = () => finish(true);
+      });
+    $("#xk-prev-hide", sheet)?.classList.toggle("on", st.hideNames);
+    await render();
+    roomExporting = false;
+  }
+
   // ── 我的页（主人 11-02 定的：伴侣设置；上游整套设置和工具收进「开发者」）──
   //    顶上三人健康卡（#15），下面六个分区，点开从右边滑进来一层
   const cc = () => window.__cc;
@@ -1275,5 +1484,5 @@
     if (!LS.get("onboarded", false)) onboard();
     loadBoard().catch(() => {});
   })();
-  window.XK = { api, toast, go, switchRole, applyRole, SFX, petals, openRoom };
+  window.XK = { api, toast, go, switchRole, applyRole, SFX, petals, openRoom, roomCanvas, exportRoomImage };
 })();

@@ -7,7 +7,7 @@ import path from "node:path";
 import { PATHS } from "../gw/config.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
-import { DIARY_PROMPT, agyDiaryDue, appendInputs, saveDiaryPng } from "../gw/xk-diary.mjs";
+import { DIARY_PROMPT, agyDiaryDue, appendInputs, saveDiaryPng, saveRoomPng } from "../gw/xk-diary.mjs";
 
 function fakeSession(role, sid, at, user, reply) {
   const cwd = fs.realpathSync(roleDir(role));
@@ -47,6 +47,15 @@ test("导出日记图片：只收真 PNG、只导真有的那篇，落进导出�
   assert.throws(() => saveDiaryPng("deepseek", "2026-11-01", Buffer.from("nope")), /图片数据不对/);
   assert.throws(() => saveDiaryPng("nobody", "2026-11-01", png), /没有这个角色/);
   assert.throws(() => saveDiaryPng("deepseek", "../x", png), /日期不对/);
+});
+
+test("导出群聊长图：只收真 PNG，落进导出目录，和日记的图分开清", () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("room")]);
+  const r = saveRoomPng(png);
+  assert.deepEqual(fs.readFileSync(r.path), png);
+  assert.equal(r.name, "聊天室记录.png");
+  assert.match(r.path, /\/exports\/room-[a-z0-9]+\.png$/);
+  assert.throws(() => saveRoomPng(Buffer.from("nope")), /图片数据不对/);
 });
 
 test("提示词按「还没写的那几天」，哈基米过了 22:00 才写当天，前几天的随时补", () => {
