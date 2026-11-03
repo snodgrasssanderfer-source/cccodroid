@@ -47,7 +47,7 @@ final class PadLink {
         sp = ctx.getSharedPreferences("pad", Context.MODE_PRIVATE);
         nsd = ctx.getSystemService(NsdManager.class);
         out = l;
-        hub = new PadHub(ctx);
+        hub = new PadHub(ctx, () -> { if (!"connected".equals(phase)) out.onState(state()); });
         host = sp.getString("host", "");
         port = sp.getInt("port", 0);
         id = sp.getString("id", "");
@@ -57,7 +57,7 @@ final class PadLink {
     boolean paired() { return !sp.getString("id", "").isEmpty(); }
 
     JSONObject state() {
-        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : host.isEmpty() ? "" : host + ":" + port); }
+        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("diag", "平板 " + myIps() + "；反连：" + hub.note()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : host.isEmpty() ? "" : host + ":" + port); }
         catch (Exception e) { throw new IllegalStateException(e); }
     }
     private void set(String p, String err) { phase = p; error = err == null ? "" : err; out.onState(state()); }
@@ -153,9 +153,19 @@ final class PadLink {
         String ok = reachable(hosts, p);
         // 手机开着 VPN 时这边连不过去，但手机会反过来连平板：再等它一会儿
         if (ok == null && hub.await(15_000)) return;
-        if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上");
+        if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上；手机开着 Hiddify 之类的 VPN 的话，要在 VPN 里打开「绕过局域网」");
         host = ok; port = p;
         sp.edit().putString("host", host).putInt("port", port).apply();
+    }
+
+    private static String myIps() {
+        StringBuilder b = new StringBuilder();
+        try {
+            for (java.net.NetworkInterface n : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces()))
+                for (java.net.InetAddress a : java.util.Collections.list(n.getInetAddresses()))
+                    if (a instanceof java.net.Inet4Address && !a.isLoopbackAddress()) b.append(b.length() > 0 ? "、" : "").append(a.getHostAddress());
+        } catch (Exception e) { return "（读不到 IP：" + e.getMessage() + "）"; }
+        return b.length() == 0 ? "没有局域网地址" : b.toString();
     }
 
     /** 挨个试连，回第一个连得上的（手机开着 VPN 时，Wi‑Fi 那个地址才连得上） */

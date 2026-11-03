@@ -70,6 +70,50 @@ final class XkPad {
     }
 
     // ── 反着连 ──
+    // 每一步都报给网关（「我的 → 平板」里看得到），开着 VPN 连不上时才知道卡在哪
+    private static volatile String lastNote = "";
+    private static void note(String text) {
+        Log.i(TAG, "反连：" + text);
+        if (text.equals(lastNote)) return;
+        lastNote = text;
+        new Thread(() -> {
+            try {
+                byte[] body = new JSONObject().put("text", text).toString().getBytes(StandardCharsets.UTF_8);
+                HttpURLConnection c = Env.gateway("PUT", "/api/xk/pad/back", body);
+                c.setDoOutput(true);
+                c.setRequestProperty("content-type", "application/json");
+                try (java.io.OutputStream o = c.getOutputStream()) { o.write(body); }
+                c.getResponseCode();
+                c.disconnect();
+            } catch (Exception e) { Log.w(TAG, "反连：报不了状态给网关：" + e.getMessage()); }
+        }, "xk-pad-note").start();
+    }
+
+    /** Wi‑Fi（或有线）那张网，不是 VPN。开着 VPN 时，不指定网的话找服务、连接都可能只走 VPN */
+    private static android.net.Network lan(Context ctx) {
+        android.net.ConnectivityManager cm = ctx.getSystemService(android.net.ConnectivityManager.class);
+        for (android.net.Network n : cm.getAllNetworks()) {
+            android.net.NetworkCapabilities c = cm.getNetworkCapabilities(n);
+            if (c != null && !c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+                    && (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET))) return n;
+        }
+        return null;
+    }
+
+    /** 连平板：先试绑在 Wi‑Fi 上直连（VPN 允许绕开时就不经过它），不行再照常连 */
+    private static java.net.Socket dialPad(Context ctx, java.net.InetAddress a, int port, String[] how) throws java.io.IOException {
+        android.net.Network w = lan(ctx);
+        String why = w == null ? "没找到 Wi‑Fi 网" : "";
+        if (w != null) {
+            java.net.Socket s = new java.net.Socket();
+            try { w.bindSocket(s); s.connect(new java.net.InetSocketAddress(a, port), 3000); how[0] = "绑在 Wi‑Fi 上"; return s; }
+            catch (java.io.IOException e) { close(s); why = "绑 Wi‑Fi 不行：" + e.getMessage(); }
+        }
+        java.net.Socket s = new java.net.Socket();
+        try { s.connect(new java.net.InetSocketAddress(a, port), 3000); how[0] = "照常连（" + why + "）"; return s; }
+        catch (java.io.IOException e) { close(s); throw new java.io.IOException(why + "；照常连也不行：" + e.getMessage()); }
+    }
+
     private static void back(Context ctx, int padPort) {
         NsdManager nsd = ctx.getSystemService(NsdManager.class);
         new Thread(() -> {
@@ -78,46 +122,55 @@ final class XkPad {
             while (true) {
                 if (LINKED.isEmpty()) {
                     if (d != null) try { nsd.stopServiceDiscovery(d); } catch (RuntimeException ignored) {}
-                    d = discover(nsd, padPort);
+                    d = discover(ctx, nsd, padPort);
                 }
                 try { Thread.sleep(30_000); } catch (InterruptedException e) { return; }
             }
         }, "xk-pad-back").start();
     }
 
-    private static NsdManager.DiscoveryListener discover(NsdManager nsd, int padPort) {
+    private static NsdManager.DiscoveryListener discover(Context ctx, NsdManager nsd, int padPort) {
         NsdManager.DiscoveryListener d = new NsdManager.DiscoveryListener() {
-            @Override public void onStartDiscoveryFailed(String t, int code) { Log.w(TAG, "找平板：开不了，错误码 " + code); }
+            @Override public void onStartDiscoveryFailed(String t, int code) { note("找平板开不了，错误码 " + code); }
             @Override public void onStopDiscoveryFailed(String t, int code) { }
             @Override public void onDiscoveryStarted(String t) { }
             @Override public void onDiscoveryStopped(String t) { }
             @Override public void onServiceLost(NsdServiceInfo s) { }
             @Override public void onServiceFound(NsdServiceInfo s) {
                 if (LINKED.contains(s.getServiceName())) return;
+                note("看到平板的广播了，在问它的地址");
                 nsd.resolveService(s, new NsdManager.ResolveListener() {
-                    @Override public void onResolveFailed(NsdServiceInfo s2, int code) { Log.w(TAG, "找平板：解析不了，错误码 " + code); }
+                    @Override public void onResolveFailed(NsdServiceInfo s2, int code) { note("看到平板了，但问不到地址，错误码 " + code); }
                     @Override public void onServiceResolved(NsdServiceInfo s2) {
                         java.util.List<java.net.InetAddress> as = android.os.Build.VERSION.SDK_INT >= 34 ? s2.getHostAddresses() : java.util.Collections.singletonList(s2.getHost());
                         String name = s2.getServiceName();
                         if (!LINKED.add(name)) return;
-                        new Thread(() -> { try { control(as, s2.getPort(), padPort); } finally { LINKED.remove(name); } }, "xk-pad-ctl").start();
+                        new Thread(() -> { try { control(ctx, as, s2.getPort(), padPort); } finally { LINKED.remove(name); } }, "xk-pad-ctl").start();
                     }
                 });
             }
         };
-        nsd.discoverServices(BACK, NsdManager.PROTOCOL_DNS_SD, d);
+        android.net.Network w = lan(ctx);
+        if (android.os.Build.VERSION.SDK_INT >= 33 && w != null) {
+            note("在 Wi‑Fi 里找平板…（平板上开着「小克 · 平板」才找得到）");
+            nsd.discoverServices(BACK, NsdManager.PROTOCOL_DNS_SD, w, java.util.concurrent.Executors.newSingleThreadExecutor(), d);
+        } else {
+            note(w == null ? "没连 Wi‑Fi，照常找平板…" : "在局域网里找平板…");
+            nsd.discoverServices(BACK, NsdManager.PROTOCOL_DNS_SD, d);
+        }
         return d;
     }
 
     /** 挂着控制线，平板要一条就开一条；断了就回去（外面会重新找） */
-    private static void control(java.util.List<java.net.InetAddress> as, int port, int padPort) {
+    private static void control(Context ctx, java.util.List<java.net.InetAddress> as, int port, int padPort) {
+        StringBuilder fails = new StringBuilder();
         for (java.net.InetAddress a : as) {
             if (!(a instanceof java.net.Inet4Address)) continue;
-            java.net.Socket c = new java.net.Socket();
-            try {
-                c.connect(new java.net.InetSocketAddress(a, port), 3000);
-            } catch (java.io.IOException e) { Log.i(TAG, "平板 " + a.getHostAddress() + " 连不上：" + e.getMessage()); close(c); continue; }
-            Log.i(TAG, "连上平板了：" + a.getHostAddress());
+            String[] how = new String[1];
+            java.net.Socket c;
+            try { c = dialPad(ctx, a, port, how); }
+            catch (java.io.IOException e) { fails.append(a.getHostAddress()).append(":").append(port).append(" ").append(e.getMessage()).append("；"); continue; }
+            note("已连上平板 " + a.getHostAddress() + "（" + how[0] + "）");
             try {
                 c.setSoTimeout(45_000);
                 java.io.OutputStream o = c.getOutputStream();
@@ -129,34 +182,34 @@ final class XkPad {
                 ping.start();
                 InputStream in = c.getInputStream();
                 try {
-                    for (int b; (b = in.read()) >= 0; ) if (b == 'c') pipe(a, port, padPort);
+                    for (int b; (b = in.read()) >= 0; ) if (b == 'c') pipe(ctx, a, port, padPort);
                 } finally { ping.interrupt(); }
+                note("和平板的线断了（平板关了或走远了），过一会儿重新找");
             } catch (java.io.IOException e) {
-                Log.i(TAG, "和平板的控制线断了：" + e.getMessage());
+                note("和平板的线断了：" + e.getMessage());
             } finally { close(c); }
             return;
         }
+        note("找到平板了，但连不上：" + fails);
     }
 
     /** 往平板开一条数据线，接到本机网关的平板口子上，两头互相搬 */
-    private static void pipe(java.net.InetAddress a, int port, int padPort) {
+    private static void pipe(Context ctx, java.net.InetAddress a, int port, int padPort) {
         new Thread(() -> {
-            java.net.Socket t = new java.net.Socket(), g = new java.net.Socket();
+            java.net.Socket t = null, g = new java.net.Socket();
             try {
-                t.connect(new java.net.InetSocketAddress(a, port), 3000);
+                t = dialPad(ctx, a, port, new String[1]);
                 t.setTcpNoDelay(true);
                 t.getOutputStream().write("XKDATA\n".getBytes(StandardCharsets.US_ASCII));
+            } catch (java.io.IOException e) { note("给平板开数据线失败：" + e.getMessage()); close(t); return; }
+            try {
                 g.connect(new java.net.InetSocketAddress("127.0.0.1", padPort), 3000);
                 g.setTcpNoDelay(true);
-            } catch (java.io.IOException e) {
-                Log.w(TAG, "给平板开数据线失败：" + e.getMessage());
-                close(t); close(g); return;
-            }
+            } catch (java.io.IOException e) { note("本机网关的平板口子连不上（" + padPort + "）：" + e.getMessage() + "。在「我的 → 平板」点一下「配对新平板」会打开它"); close(t); close(g); return; }
             java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(2);
             copy(t, g, left); copy(g, t, left);
         }, "xk-pad-pipe").start();
     }
-
     private static void copy(java.net.Socket from, java.net.Socket to, java.util.concurrent.atomic.AtomicInteger left) {
         new Thread(() -> {
             try {
