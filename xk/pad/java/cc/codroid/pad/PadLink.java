@@ -99,6 +99,13 @@ final class PadLink {
                 Log.w(TAG, "连接断了：" + e.getMessage());
                 // 配对没成：停下来把原因给主人看，等他再点「配对」
                 if (pairing || !paired()) { pairing = false; id = ""; key = null; sas = ""; set("idle", e.getMessage()); return; }
+                // 手机那边没有这台平板了（在手机上取消了配对）：再连也没用，清掉这边的，回到配对页让主人点「配对」
+                if (String.valueOf(e.getMessage()).contains("没配对过")) {
+                    sp.edit().remove("id").remove("key").remove("seq").apply();
+                    id = ""; key = null; sas = "";
+                    set("idle", "手机上已经没有这台平板的配对了（可能在手机上取消过），在手机上点「配对新平板」，再点下面的「配对」");
+                    return;
+                }
                 set("searching", e.getMessage());
                 host = ""; port = 0;   // 手机可能换了地址：下一圈重新找
                 try { Thread.sleep(backoff); } catch (InterruptedException ie) { return; }
