@@ -47,8 +47,10 @@ export const called = (text, but) => ROLES.map((r) => r.id).filter((id) => id !=
 // ── 谁开口（#61，主人 11-03 定的混合做法）：明确的按规则定，拿不准的才用便宜档问一次「谁想接」，上限用规则卡死 ──
 // 节奏：主人连着发的几句攒成一批再定（等他说完）；点了名的等得短些
 export const PACE = { quietMs: 2000, maxMs: 8000, calledMs: 1000, followMs: 5 * 60 * 1000 };
-// 上限：一批主人的话，第一波最多两个人开口；之后她们之间（互相点名、自己插话）最多再说三句，主人不开口就停。插话和接话都用她平时的模型（#64）
-export const CAP = { wave: 2, chain: 3 };
+// 上限：一批主人的话，第一波最多两个人开口；之后主人不开口，她们之间点名交办的最多再接六句、没点名自己插话的最多三句，两样分开算，
+// 免得派活被闲聊吃掉（主人 11-03 定的）。到了上限群里说一声，不然看着像谁不理人。插话和接话都用她平时的模型（#64）
+export const CAP = { wave: 2, chain: 3, named: 6 };
+export const CAPPED = "她们这一轮说到上限了，等你开口再接着聊";
 const TRAITS = { xiaoke: "讲究、较真、好面子，凡事想透了才动手，写代码、拿主意在行", hachimi: "见多识广、闲不住、点子多，爱查资料、看图，自信来得早", deepseek: "直、带点懒劲、爱吃饭，干活靠谱，一句话把大计划缩成眼下一步" };
 const JUDGE_SYSTEM = "你帮一个群聊决定接下来谁开口，像真人群聊那样：不是每句话都要好几个人接。只输出一个 JSON 对象，不要别的文字。";
 
@@ -161,14 +163,20 @@ END_HOOKS.push((run, f = {}) => {
 });
 
 // ── 这一批里她们之间怎么接：点了名的必接（小克把事交给小鱼就是这么交的）；没点名、这一波都说完了，才问一次有没有人想接 ──
-const ROUNDS = new Map();   // 批号 → { left: 还能再说几句, pending: 这批还在说的人数, aside: 已经有人自己插过话 }
+const ROUNDS = new Map();   // 批号 → { left: 还能自己插几句, named: 点名还能接几句, pending: 这批还在说的人数, aside: 已经有人自己插过话, capped: 已经说过到上限了 }
+/** 点了名的叫她接；点名的额度用完了，群里说一声（一批只说一次） */
+function callNamed(r, round, ids, caller) {
+  let dropped = false;
+  for (const id of ids) { if (r.named > 0) { r.named--; speak(id, "reply", round, caller); } else dropped = true; }
+  if (dropped && !r.capped) { r.capped = true; append({ from: "system", text: CAPPED }); saveState(); }
+}
 let ROUND = 0;
 const asideOk = (id) => !asleep(id) && !BUSY.has(id) && Date.now() - (STATE.room.lastAside[id] || 0) >= ASIDE_GAP.ms;
 async function afterSaid(who, text, round) {
   const r = ROUNDS.get(round);
   if (!r || round !== ROUND) return;   // 主人又开口了：旧的那批不再往下接
   const named = called(text, who).filter((id) => !asleep(id));
-  if (named.length) { for (const id of named) if (r.left > 0) { r.left--; speak(id, "reply", round, who); } return; }
+  if (named.length) { callNamed(r, round, named, who); return; }
   if (r.left <= 0 || r.aside || r.pending > 0) return;
   let j = {};
   try { j = await judge("chain", who); } catch (e) { log("聊天室：判断有没有人接话失败（这次就不接了）：" + e.message); }
@@ -194,7 +202,7 @@ export function ownerSays(text, to = []) {
 }
 
 async function decide(b) {
-  const round = ++ROUND, r = { left: CAP.chain, pending: 0, aside: false };
+  const round = ++ROUND, r = { left: CAP.chain, named: CAP.named, pending: 0, aside: false, capped: false };
   ROUNDS.set(round, r);
   if (ROUNDS.size > 20) ROUNDS.delete(ROUNDS.keys().next().value);
   // 规则先定：@ 的、叫到名字的；没有就是正和主人一来一回的那位
@@ -219,9 +227,9 @@ const OUTBOX = path.join(ROLES_DIR, ".room", "outbox");
 /** 她说一句（不是在群里轮到她，是她自己用工具贴进来的）：点了名的叫她接，不叫别人插话 */
 export function memberSays(from, text) {
   const msg = append({ from, text: String(text).trim() });
-  const round = ++ROUND, r = { left: CAP.chain, pending: 0, aside: true };
+  const round = ++ROUND, r = { left: CAP.chain, named: CAP.named, pending: 0, aside: true, capped: false };
   ROUNDS.set(round, r);
-  for (const id of called(msg.text, from).filter((x) => !asleep(x))) if (r.left > 0) { r.left--; speak(id, "reply", round, from); }
+  callNamed(r, round, called(msg.text, from).filter((x) => !asleep(x)), from);
   return msg;
 }
 export function drainOutbox() {
