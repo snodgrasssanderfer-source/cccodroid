@@ -1259,10 +1259,13 @@
   const bub = (id, st) => art("overlay/" + (ROLE[id]?.dir || id) + "/bubble_" + st);
   let roomEl = null, roomLast = -1, roomTo = new Set();
   const roomTalking = new Set();
+  // 导出长图（#66）：点右上角进多选，点气泡勾上 / 取消，顶上按人一键选，确定后交给 exportRoomImage 画图
+  const roomMsgs = new Map(), roomPick = new Set();
+  const PICK_WHO = [["all", "全选"], ["owner", "主人"], ["xiaoke", "小克"], ["hachimi", "哈基米"], ["deepseek", "小鱼"]];
   function roomRow(m) {
-    if (m.from === "system") return `<div class="xk-rm-sys">${esc(m.text)}</div>`;
-    if (m.from === "owner") return `<div class="xk-rm-me"><p>${esc(m.text)}</p></div>`;
-    return `<div class="xk-rm-her${m.kind === "aside" ? " aside" : ""}" style="--c:${rc(m.from)}"><button class="xk-rm-av" data-id="${m.from}"><img src="${bub(m.from, "idle")}" alt=""></button><div><b>${rname(m.from)}${m.kind === "aside" ? "<small>插了一句</small>" : ""}</b><p>${esc(m.text)}</p></div></div>`;
+    if (m.from === "system") return `<div class="xk-rm-sys" data-n="${m.n}">${esc(m.text)}</div>`;
+    if (m.from === "owner") return `<div class="xk-rm-me" data-n="${m.n}"><p>${esc(m.text)}</p></div>`;
+    return `<div class="xk-rm-her${m.kind === "aside" ? " aside" : ""}" data-n="${m.n}" style="--c:${rc(m.from)}"><button class="xk-rm-av" data-id="${m.from}"><img src="${bub(m.from, "idle")}" alt=""></button><div><b>${rname(m.from)}${m.kind === "aside" ? "<small>插了一句</small>" : ""}</b><p>${esc(m.text)}</p></div></div>`;
   }
   function roomPaintMembers(ms) {
     const box = roomEl && $(".xk-rm-mem", roomEl); if (!box) return;
@@ -1278,7 +1281,7 @@
   function roomScroll() { const l = roomEl && $(".xk-rm-list", roomEl); if (l) l.scrollTop = l.scrollHeight; }
   function roomMsg(m, quiet) {
     if (!roomEl || m.n <= roomLast) { if (!roomEl && m.from !== "owner" && m.from !== "system") $("#xk-room-dot")?.classList.add("on"); return; }
-    roomLast = m.n;
+    roomLast = m.n; roomMsgs.set(m.n, m);
     const l = $(".xk-rm-list", roomEl);
     $(".xk-rm-empty", roomEl)?.remove();
     l.insertAdjacentHTML("beforeend", roomRow(m));
@@ -1310,18 +1313,42 @@
     if (roomEl) return;
     $("#xk-room-dot")?.classList.remove("on");
     roomEl = document.createElement("section"); roomEl.id = "xk-room"; roomEl.setAttribute("aria-label", "我们仨的群");
-    roomEl.innerHTML = `<div class="xk-subh xk-rm-h" style="background-image:url('${art("room/room_header")}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>我们仨</h2></div>
+    roomEl.innerHTML = `<div class="xk-subh xk-rm-h" style="background-image:url('${art("room/room_header")}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>我们仨</h2><button class="xk-rm-exp xk-press" aria-label="导出长图">${svg("export")}</button></div>
       <div class="xk-rm-mem"></div>
+      <div class="xk-rm-pickwho">${PICK_WHO.map(([id, n]) => `<button class="xk-press" data-who="${id}"${id === "all" ? "" : ` style="--c:${id === "owner" ? "var(--accent)" : rc(id)}"`}>${n}</button>`).join("")}</div>
       <div class="xk-rm-list"><div class="xk-rm-empty"><img src="${art("room/room_empty")}" alt=""><p>三个人都在，等你开口。点上面的头像可以只叫她接话。</p></div></div>
       <div class="xk-rm-typing"></div>
+      <div class="xk-rm-pickbar"><button class="xk-press xk-rm-pick-no">取消</button><span></span><button class="xk-press xk-rm-pick-go">生成长图</button></div>
       <form class="xk-rm-in"><textarea rows="1" placeholder="在群里说点什么…" enterkeyhint="send"></textarea><button class="xk-press" aria-label="发送">${svg("go")}</button></form>`;
     document.body.appendChild(roomEl); void roomEl.offsetWidth; roomEl.classList.add("on"); SFX.play("sheet");
-    roomLast = -1; roomTo = new Set();
-    $(".xk-back", roomEl).onclick = () => closeRoom();
+    roomLast = -1; roomTo = new Set(); roomMsgs.clear(); roomPick.clear();
+    $(".xk-back", roomEl).onclick = () => { if (!pickOff()) closeRoom(); };
+    $(".xk-rm-exp", roomEl).onclick = () => pickOn();
+    $(".xk-rm-pick-no", roomEl).onclick = () => pickOff();
+    $(".xk-rm-pick-go", roomEl).onclick = () => {
+      const list = [...roomPick].sort((a, b) => a - b).map((n) => roomMsgs.get(n)).filter(Boolean);
+      if (!list.length) return toast("还没勾消息", "点气泡勾上，或者用上面按人选");
+      pickOff();
+      exportRoomImage(list).catch(fail);
+    };
+    $(".xk-rm-pickwho", roomEl).onclick = (e) => {
+      const b = e.target.closest("[data-who]"); if (!b) return;
+      const who = b.dataset.who, ns = [...roomMsgs.values()].filter((m) => who === "all" || m.from === who).map((m) => m.n);
+      const all = ns.length && ns.every((n) => roomPick.has(n));
+      for (const n of ns) all ? roomPick.delete(n) : roomPick.add(n);
+      SFX.play("toggle"); pickPaint();
+    };
     // 点上面的头像：只叫她（再点取消，可以叫好几个）；长按看她的上下文和额度
     $(".xk-rm-mem", roomEl).onclick = (e) => { const c = e.target.closest("[data-id]"); if (!c) return; const id = c.dataset.id; roomTo.has(id) ? roomTo.delete(id) : roomTo.add(id); c.classList.toggle("on"); SFX.play("toggle"); };
     $(".xk-rm-mem", roomEl).oncontextmenu = (e) => { const c = e.target.closest("[data-id]"); if (!c) return; e.preventDefault(); memberSheet(c.dataset.id).catch(fail); };
-    $(".xk-rm-list", roomEl).onclick = (e) => { const a = e.target.closest(".xk-rm-av"); if (a) memberSheet(a.dataset.id).catch(fail); };
+    $(".xk-rm-list", roomEl).onclick = (e) => {
+      if (roomEl.classList.contains("pick")) {
+        const r = e.target.closest("[data-n]"); if (!r) return;
+        const n = +r.dataset.n; roomPick.has(n) ? roomPick.delete(n) : roomPick.add(n);
+        SFX.play("toggle"); pickPaint(); return;
+      }
+      const a = e.target.closest(".xk-rm-av"); if (a) memberSheet(a.dataset.id).catch(fail);
+    };
     const ta = $("textarea", roomEl), form = $(".xk-rm-in", roomEl);
     ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; };
     ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } };
@@ -1334,6 +1361,24 @@
     };
     roomLoad().catch(fail);
     roomTyping(null, false);
+  }
+  function pickOn() {
+    if (!roomEl || !roomMsgs.size) return toast("群里还没有消息", "说过几句再来导出");
+    roomPick.clear(); roomEl.classList.add("pick"); SFX.play("toggle"); pickPaint();
+  }
+  function pickOff() {
+    if (!roomEl || !roomEl.classList.contains("pick")) return false;
+    roomEl.classList.remove("pick"); roomPick.clear(); pickPaint(); return true;
+  }
+  function pickPaint() {
+    if (!roomEl) return;
+    roomEl.querySelectorAll(".xk-rm-list [data-n]").forEach((r) => r.classList.toggle("picked", roomPick.has(+r.dataset.n)));
+    roomEl.querySelectorAll(".xk-rm-pickwho [data-who]").forEach((b) => {
+      const ns = [...roomMsgs.values()].filter((m) => b.dataset.who === "all" || m.from === b.dataset.who).map((m) => m.n);
+      b.classList.toggle("on", !!ns.length && ns.every((n) => roomPick.has(n)));
+      b.disabled = !ns.length;
+    });
+    const t = $(".xk-rm-pickbar span", roomEl); if (t) t.textContent = `已选 ${roomPick.size} 条`;
   }
   function closeRoom() {
     const el = roomEl; if (!el) return false; roomEl = null;
@@ -1348,7 +1393,7 @@
     try {
       if (obEl) { if (obI) obTo(obI - 1); else obDone(); return true; }
       if (sheet.classList.contains("on")) { closeSheet(); return true; }
-      if (roomEl) { closeRoom(); return true; }
+      if (roomEl) { if (!pickOff()) closeRoom(); return true; }
       if (tab === 4 && !root.classList.contains("xk-cover") && closeMeSub()) return true;
       if (typeof upBack === "function" && upBack()) return true;
       if (tab !== 0) { go(0); return true; }
