@@ -35,6 +35,7 @@
       $("#manual").hidden = st.phase === "confirm";
       $("#sas").hidden = st.phase !== "confirm"; $("#sas").textContent = st.sas || "";
       $("#setup-err").hidden = !st.error; $("#setup-err").textContent = st.error || "";
+      $("#diag").textContent = st.diag || "";
     } else {
       $("#phone").textContent = "已连上手机 " + (st.phone || "");
       load().catch(fail);

@@ -30,15 +30,18 @@ final class PadHub {
     private NsdManager.RegistrationListener reg;
     private volatile Socket ctl;
     private volatile String peer = "";
+    private volatile String note = "反连口子还没开";
     private final LinkedBlockingQueue<Socket> data = new LinkedBlockingQueue<>();
     private final Object lk = new Object();
 
-    PadHub(Context c) { nsd = c.getSystemService(NsdManager.class); }
+    private final Runnable changed;
+    PadHub(Context c, Runnable changed) { nsd = c.getSystemService(NsdManager.class); this.changed = changed; }
+    private void say(String n) { note = n; Log.i(TAG, n); changed.run(); }
 
     synchronized void start() {
         if (ss != null) return;
         try { ss = new ServerSocket(0); }
-        catch (IOException e) { Log.w(TAG, "反连口子开不了：" + e.getMessage()); return; }
+        catch (IOException e) { say("反连口子开不了：" + e.getMessage()); return; }
         final ServerSocket s = ss;
         new Thread(() -> accept(s), "xkpad-hub").start();
         NsdServiceInfo info = new NsdServiceInfo();
@@ -46,8 +49,8 @@ final class PadHub {
         info.setServiceType(TYPE);
         info.setPort(s.getLocalPort());
         reg = new NsdManager.RegistrationListener() {
-            @Override public void onServiceRegistered(NsdServiceInfo i) { Log.i(TAG, "反连口子已广播：端口 " + s.getLocalPort()); }
-            @Override public void onRegistrationFailed(NsdServiceInfo i, int code) { Log.w(TAG, "反连口子广播不了，错误码 " + code); }
+            @Override public void onServiceRegistered(NsdServiceInfo i) { say("已广播（口子 " + s.getLocalPort() + "），等手机连过来"); }
+            @Override public void onRegistrationFailed(NsdServiceInfo i, int code) { say("广播不了，错误码 " + code); }
             @Override public void onServiceUnregistered(NsdServiceInfo i) { }
             @Override public void onUnregistrationFailed(NsdServiceInfo i, int code) { }
         };
@@ -64,6 +67,7 @@ final class PadHub {
 
     boolean ready() { return ctl != null; }
     String peer() { return peer; }
+    String note() { return note; }
 
     /** 等手机连过来，最多等 ms 毫秒 */
     boolean await(long ms) throws InterruptedException {
@@ -105,14 +109,14 @@ final class PadHub {
         Socket old = ctl;
         synchronized (lk) { ctl = s; peer = s.getInetAddress().getHostAddress(); lk.notifyAll(); }
         if (old != null) close(old);
-        Log.i(TAG, "手机连过来了：" + peer);
+        say("手机 " + peer + " 连过来了");
         s.setSoTimeout(45_000);
         InputStream in = s.getInputStream();
         try {
             // 手机每 15 秒发 'p'，回它一个 'p'，它也就知道平板还在
             while (in.read() >= 0) synchronized (s) { s.getOutputStream().write('p'); s.getOutputStream().flush(); }
         } catch (SocketTimeoutException e) {
-            Log.i(TAG, "手机 45 秒没动静，当断了");
+            say("手机 45 秒没动静，当断了，等它重连");
         } finally {
             synchronized (lk) { if (ctl == s) { ctl = null; peer = ""; } }
             close(s);

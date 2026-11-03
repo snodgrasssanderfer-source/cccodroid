@@ -43,3 +43,4 @@ header small { color: var(--fg3); font-size: 12px; }
 #manual summary { cursor: pointer; }
 #manual form { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
 #manual input { border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--bg2); color: var(--fg); font: inherit; width: 14em; }
+.diag { color: var(--fg3); font-size: 12px; max-width: 36em; margin-top: 10px; }

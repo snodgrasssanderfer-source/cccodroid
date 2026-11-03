@@ -254,12 +254,15 @@ export function ensureServer() {
 }
 if (LIVE && devices().devices.length) ensureServer();
 
+// 外壳反连平板（XkPad.java）走到哪一步了：只给「我的 → 平板」看，开着 VPN 连不上时好知道卡在哪
+export const BACK = { text: "", at: 0 };
+
 // ── 手机上的界面（「我的 → 平板」）：开配对、确认、看已配对的、取消配对 ──
 addRoute(async (req, res, u, p) => {
   if (!p.startsWith("/api/xk/pad")) return NEXT;
   if (p === "/api/xk/pad" && req.method === "GET") {
     return sendJson(res, 200, {
-      devices: devices().devices.map(({ key, seq, seen, ...d }) => d), port: PAD_PORT, addrs: lanAddrs(),
+      devices: devices().devices.map(({ key, seq, seen, ...d }) => d), port: PAD_PORT, addrs: lanAddrs(), back: BACK,
       pairing: Date.now() < PAIR.until ? { until: PAIR.until, pending: [...PAIR.pending].map(([id, x]) => ({ id, name: x.name, sas: x.sas })) } : null,
     });
   }
@@ -270,6 +273,10 @@ addRoute(async (req, res, u, p) => {
     if (b.sid === STREAM.sid) STREAM.error = String(b.error || "");
     if (STREAM.error) log("串流：" + STREAM.error);
     return sendJson(res, 200, { sid: STREAM.sid, error: STREAM.error });
+  }
+  if (p === "/api/xk/pad/back" && req.method === "PUT") {
+    BACK.text = String((await json(req)).text || ""); BACK.at = Date.now();
+    return sendJson(res, 200, BACK);
   }
   if (p === "/api/xk/pad/confirm" && req.method === "POST") return sendJson(res, 200, confirmPair(String((await json(req)).id || "")));
   const m = p.match(/^\/api\/xk\/pad\/([0-9a-f]+)$/);
