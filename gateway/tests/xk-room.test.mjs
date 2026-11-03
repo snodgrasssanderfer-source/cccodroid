@@ -11,7 +11,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { routeXk } from "../gw/xk.mjs";
-import { ASIDE_GAP, CAP, CAPPED, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom } from "../gw/xk-room.mjs";
+import { ASIDE_GAP, CAP, CAPPED, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom, roomReply } from "../gw/xk-room.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ASK } from "../gw/xk-memory.mjs";
@@ -209,3 +209,17 @@ test("room_say：她在私聊里用工具往群里说一句，点了名的那位
   assert.equal(messages().length, 2);
 });
 
+
+test("群里的话插进她正在跑的私聊那轮：只贴群聊那条后面的回话，她回主人的私聊不进群（11-03 小克的私聊被整段贴进群）", () => {
+  const at = Date.now();
+  const ts = [
+    { role: "user", text: "重启吧", at },
+    { role: "assistant", text: "这是给主人的私聊：哈基米的链接是编的", at },
+    { role: "user", text: "（群聊：主人把你们三个叫到一个群里了）\n哈基米：小克你看", at },
+    { role: "assistant", text: "群里这句可以说", at },
+    { role: "user", text: "私聊又一句", at },
+    { role: "assistant", text: "私聊又一句的回复", at },
+  ];
+  assert.equal(roomReply(ts), "群里这句可以说");
+  assert.equal(roomReply(ts.slice(0, 2)), "", "这一轮里没有群聊那条：什么都不贴");
+});
