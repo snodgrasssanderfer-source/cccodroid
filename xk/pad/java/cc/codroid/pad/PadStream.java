@@ -131,10 +131,9 @@ final class PadStream {
         byte[] salt = new byte[16];
         new SecureRandom().nextBytes(salt);
         String hello = link.hello(new JSONObject().put("ch", ch).put("sid", sid).put("salt", PadCrypto.b64(salt)));
-        Socket s = new Socket(link.host(), link.port());
-        s.setTcpNoDelay(true);
+        Socket s = link.dial();
         OutputStream o = s.getOutputStream();
-        o.write(("GET /pad/stream HTTP/1.1\r\nhost: " + link.host() + "\r\nupgrade: xkpad\r\nconnection: Upgrade\r\nx-pad: " + hello + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        o.write(("GET /pad/stream HTTP/1.1\r\nhost: xkpad\r\nupgrade: xkpad\r\nconnection: Upgrade\r\nx-pad: " + hello + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         o.flush();
         InputStream raw = s.getInputStream();
         // 读响应头到空行；不是 101 就把手机说的原因带回来

@@ -12,8 +12,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 
@@ -42,12 +40,14 @@ final class PadLink {
     private volatile byte[] key;
     private Thread loop;
     private NsdManager.DiscoveryListener discovery;
+    private final PadHub hub;
 
     PadLink(Context c, Listener l) {
         ctx = c.getApplicationContext();
         sp = ctx.getSharedPreferences("pad", Context.MODE_PRIVATE);
         nsd = ctx.getSystemService(NsdManager.class);
         out = l;
+        hub = new PadHub(ctx);
         host = sp.getString("host", "");
         port = sp.getInt("port", 0);
         id = sp.getString("id", "");
@@ -57,7 +57,7 @@ final class PadLink {
     boolean paired() { return !sp.getString("id", "").isEmpty(); }
 
     JSONObject state() {
-        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("phone", host.isEmpty() ? "" : host + ":" + port); }
+        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : host.isEmpty() ? "" : host + ":" + port); }
         catch (Exception e) { throw new IllegalStateException(e); }
     }
     private void set(String p, String err) { phase = p; error = err == null ? "" : err; out.onState(state()); }
@@ -65,10 +65,11 @@ final class PadLink {
     /** 打开 App 时：配对过就去连，没配对就等主人点「配对」 */
     void start() {
         stopped = false;
+        hub.start();
         if (paired()) run();
         else set("idle", null);
     }
-    void stop() { stopped = true; stopDiscovery(); if (loop != null) loop.interrupt(); }
+    void stop() { stopped = true; stopDiscovery(); hub.stop(); if (loop != null) loop.interrupt(); }
 
     /** 主人点「配对」：先找到手机，再交换公钥（手机上要先点「配对新平板」） */
     void pair() { pairing = true; sp.edit().remove("id").remove("key").remove("seq").apply(); id = ""; key = null; run(); }
@@ -77,6 +78,7 @@ final class PadLink {
 
     private synchronized void run() {
         stopped = false;   // 「忘掉」之后再点配对也要能跑起来
+        hub.start();
         if (loop != null && loop.isAlive()) loop.interrupt();
         loop = new Thread(this::main, "xkpad-link");
         loop.start();
@@ -86,7 +88,7 @@ final class PadLink {
         long backoff = 2000;
         while (!stopped && !Thread.currentThread().isInterrupted()) {
             try {
-                if (host.isEmpty() || port == 0) { set("searching", null); find(); }
+                if (!hub.ready() && (host.isEmpty() || port == 0)) { set("searching", null); find(); }
                 if (pairing) { doPair(); pairing = false; }
                 set("connected", null);
                 backoff = 2000;
@@ -107,6 +109,7 @@ final class PadLink {
 
     // ── 找手机：NSD 找到第一台就用（一个家里一般只有一台装了小克的手机） ──
     private void find() throws Exception {
+        if (hub.await(3000)) return;   // 手机已经连过来了（反着连），不用找
         // 主人手动填过地址：先试它（手机开着 VPN 时，局域网里的广播有时根本找不到手机）
         String m = sp.getString("manual", "");
         if (!m.isEmpty()) {
@@ -140,14 +143,17 @@ final class PadLink {
         nsd.discoverServices(TYPE, NsdManager.PROTOCOL_DNS_SD, discovery);
         try {
             synchronized (lk) {
-                while (got[0] == null && got[1] == null) lk.wait(1000);
+                while (got[0] == null && got[1] == null && !hub.ready()) lk.wait(1000);
             }
         } finally { stopDiscovery(); }
+        if (hub.ready()) return;
         if (got[1] != null) throw new java.io.IOException(got[1]);
         int p = Integer.parseInt(got[0].substring(got[0].indexOf('|') + 1));
         String[] hosts = got[0].substring(0, got[0].indexOf('|')).split(",");
         String ok = reachable(hosts, p);
-        if (ok == null) throw new java.io.IOException("找到手机了，但它报的地址（" + String.join("、", hosts) + "）都连不上。可以在下面手动填手机的地址（手机上「我的 → 平板」里写着）");
+        // 手机开着 VPN 时这边连不过去，但手机会反过来连平板：再等它一会儿
+        if (ok == null && hub.await(15_000)) return;
+        if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上");
         host = ok; port = p;
         sp.edit().putString("host", host).putInt("port", port).apply();
     }
@@ -219,8 +225,15 @@ final class PadLink {
         String j = new JSONObject().put("id", id).put("n", env[0]).put("c", env[1]).toString();
         return java.util.Base64.getEncoder().encodeToString(j.getBytes(StandardCharsets.UTF_8));
     }
-    String host() { return host; }
-    int port() { return port; }
+    /** 到手机网关平板口子的一条新连接：手机连过来了就走它给的（开着 VPN 也通），不然直接连 */
+    java.net.Socket dial() throws Exception {
+        if (hub.ready()) return hub.dial();
+        java.net.Socket s = new java.net.Socket();
+        try { s.connect(new java.net.InetSocketAddress(host, port), 5000); }
+        catch (Exception e) { s.close(); throw e; }
+        s.setTcpNoDelay(true);
+        return s;
+    }
     byte[] key() { return key; }
 
     // ── 事件：加密长轮询，光标从 -1 起（-1 = 刚连上，只要现在的光标） ──
@@ -236,22 +249,38 @@ final class PadLink {
         }
     }
 
+    /** 一个请求一条连接（connection: close），所以手机连过来的线也能直接用 */
     private JSONObject post(String path, String body, int timeoutMs) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL("http://" + host + ":" + port + path).openConnection();
-        try {
-            c.setConnectTimeout(5000); c.setReadTimeout(timeoutMs);
-            c.setRequestMethod("POST"); c.setDoOutput(true);
-            c.setRequestProperty("content-type", "application/json");
+        try (java.net.Socket sk = dial()) {
+            sk.setSoTimeout(timeoutMs);
             byte[] b = body.getBytes(StandardCharsets.UTF_8);
-            try (OutputStream o = c.getOutputStream()) { o.write(b); }
-            int code = c.getResponseCode();
-            InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+            OutputStream o = sk.getOutputStream();
+            o.write(("POST " + path + " HTTP/1.1\r\nhost: xkpad\r\ncontent-type: application/json\r\ncontent-length: " + b.length + "\r\nconnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            o.write(b); o.flush();
+            java.io.DataInputStream in = new java.io.DataInputStream(new java.io.BufferedInputStream(sk.getInputStream()));
+            String status = headLine(in);
+            if (!status.startsWith("HTTP/1.")) throw new java.io.IOException("手机回的不是 HTTP：" + status);
+            int code = Integer.parseInt(status.split(" ")[1]);
+            int len = -1; boolean chunked = false;
+            for (String h; !(h = headLine(in)).isEmpty(); ) {
+                String k = h.toLowerCase(java.util.Locale.ROOT);
+                if (k.startsWith("content-length:")) len = Integer.parseInt(k.substring(15).trim());
+                else if (k.startsWith("transfer-encoding:") && k.contains("chunked")) chunked = true;
+            }
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
-            if (in != null) try (InputStream i2 = in) { byte[] buf = new byte[8192]; for (int n; (n = i2.read(buf)) > 0; ) bo.write(buf, 0, n); }
+            if (chunked) {
+                for (int n; (n = Integer.parseInt(headLine(in).split(";")[0].trim(), 16)) > 0; headLine(in)) { byte[] c = new byte[n]; in.readFully(c); bo.write(c); }
+            } else if (len >= 0) { byte[] c = new byte[len]; in.readFully(c); bo.write(c); }
+            else { byte[] buf = new byte[8192]; for (int n; (n = in.read(buf)) > 0; ) bo.write(buf, 0, n); }
             String t = new String(bo.toByteArray(), StandardCharsets.UTF_8);
             JSONObject j = t.isEmpty() ? new JSONObject() : new JSONObject(t);
             if (code >= 400 && !j.has("error")) j.put("error", "HTTP " + code);
             return j;
-        } finally { c.disconnect(); }
+        }
+    }
+    private static String headLine(java.io.InputStream in) throws java.io.IOException {
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        for (int c; (c = in.read()) != '\n'; ) { if (c < 0) throw new java.io.IOException("手机那边断了"); if (c != '\r') b.write(c); }
+        return new String(b.toByteArray(), StandardCharsets.UTF_8);
     }
 }
