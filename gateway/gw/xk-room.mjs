@@ -3,13 +3,13 @@
 // 她的回复贴回群里。所以人设、记忆注入、工具都照常，主人回到私聊时群里聊过的她都记得；记忆整理也照旧按她那段来。
 import fs from "node:fs";
 import path from "node:path";
-import { log } from "./config.mjs";
+import { LIVE, log } from "./config.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { NEXT, sendJson } from "./http.mjs";
 import { END_HOOKS, enqueue } from "./queue.mjs";
 import { RUNS } from "./runs.mjs";
 import { providerById } from "./providers.mjs";
-import { ROLES, roleById, roleOfDir, roleOfSession } from "./xk-roles.mjs";
+import { ROLES, ROLES_DIR, roleById, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { ASK, cheapModel } from "./xk-memory.mjs";
 import { ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, projectOf, saveState } from "./xk-core.mjs";
@@ -214,6 +214,31 @@ async function decide(b) {
   if (aside && !ids.includes(aside) && ids.length < CAP.wave && asideOk(aside)) { r.aside = true; STATE.room.lastAside[aside] = Date.now(); speak(aside, "aside", round); }
   return ids;
 }
+
+// ── 她们在别处（私聊里）往群里说的话：记忆工具 room_say 写进 roles/.room/outbox/，这里每秒收一次 ──
+const OUTBOX = path.join(ROLES_DIR, ".room", "outbox");
+/** 她说一句（不是在群里轮到她，是她自己用工具贴进来的）：点了名的叫她接，不叫别人插话 */
+export function memberSays(from, text) {
+  const msg = append({ from, text: String(text).trim() });
+  const round = ++ROUND, r = { left: CAP.chain, pending: 0, aside: true };
+  ROUNDS.set(round, r);
+  for (const id of called(msg.text, from).filter((x) => !asleep(x))) if (r.left > 0) { r.left--; speak(id, "reply", round, from); }
+  return msg;
+}
+export function drainOutbox() {
+  let fs0 = [];
+  try { fs0 = fs.readdirSync(OUTBOX).filter((f) => f.endsWith(".json")).sort(); } catch (e) { if (e.code !== "ENOENT") throw e; return; }
+  for (const f of fs0) {
+    const p = path.join(OUTBOX, f);
+    try {
+      const o = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (!roleById(o.from) || !String(o.text || "").trim()) throw new Error("不是她们贴的话：" + JSON.stringify(o).slice(0, 80));
+      memberSays(o.from, o.text);
+    } catch (e) { log(`聊天室：收不了 ${f}：${e.message}`); }
+    fs.rmSync(p, { force: true });
+  }
+}
+if (LIVE) setInterval(() => { try { drainOutbox(); } catch (e) { log("聊天室：收 outbox 出错：" + e.message); } }, 1000).unref();
 
 export function members() {
   return ROLES.map((r) => ({

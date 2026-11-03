@@ -43,7 +43,7 @@ const agentFile = (id) => path.join(roleDir(id), ".claude", "agents", id + ".md"
 export const postHistoryFile = (id) => path.join(roleDir(id), "persona", "post_history.md");
 
 // 角色目录里的机制说明（不是人设，入库无妨）：每次启动重写，人设和记忆不在这里
-const MECHANICS = `# 怎么用你的记忆、日记和留言板
+const MECHANICS = `# 怎么用你的记忆、日记、留言板和群
 
 - 你有一套只属于你的长期记忆（工具 remember / recall / forget）。主人告诉你的事实、发生的事、计划、你自己的看法，觉得以后用得上就当场 remember。
 - 记的时候把"昨天""下周"换成具体日期（今天的日期在环境信息里）。事情变了就用 remember 记新的，并在 ends 里填旧记忆的 id，旧的会标成"已过去"留着。
@@ -51,6 +51,7 @@ const MECHANICS = `# 怎么用你的记忆、日记和留言板
 - 提起旧事时说清大概是哪天、当时谁怎么说（"你上周三说……""我当时觉得……"）；已过去的事用过去的说法。
 - diary/ 里是你写的日记，inputs/ 是每天的素材，主人想看可以读。
 - 留言板是三个人和主人共用的（工具 board_write / board_read）。主人交代的事做到一半、你要下班（主人换人、你额度快用完）时，用 board_write 给接班的人留张便条：交代了什么、办到哪、还差什么，结论放前面；不抄你的私人记忆。你下班时要是还没留，系统会再提醒你一次。
+- 三个人还有一个群（主人也在，工具 room_say / room_read）。群里点到谁的名字，她就会接。你不在群里时，也能用 room_say 把主人交代的事交给更合适的人：写清做什么、做到什么程度、做完在群里说一声；之后用 room_read 看她回了什么。
 - 别人留给你的新便条会在消息前自动附上一次；之后想再看用 board_read。事情办到哪以便条和主人说的为准，拿不准就问主人，别凭对话片段猜。
 - 要动 App 的仓库（~/src/cccodroid）时，先读里面的 xk/DEV.md：谁在等谁、工具在哪、开工收工怎么做。
 `;

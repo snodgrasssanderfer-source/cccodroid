@@ -11,7 +11,9 @@ import { projectSlug } from "../gw/projects.mjs";
 import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { routeXk } from "../gw/xk.mjs";
-import { ASIDE_GAP, CAP, PACE, PASS, messages, ownerSays, resetRoom } from "../gw/xk-room.mjs";
+import { ASIDE_GAP, CAP, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom } from "../gw/xk-room.mjs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { ASK } from "../gw/xk-memory.mjs";
 
 ensureRoles();
@@ -180,5 +182,28 @@ test("头像卡片的上下文：她那段每轮结束都记（私聊也算）�
   for (const h of END_HOOKS) h({ id: "p1", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 48000, context_window: 200000 } });
   for (const h of END_HOOKS) h({ id: "p2", auto: "xk-diary", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 999, context_window: 200000 } });
   assert.deepEqual({ ...STATE.room.usage.xiaoke, at: 0 }, { used: 48000, window: 200000, at: 0 });
+});
+
+test("room_say：她在私聊里用工具往群里说一句，点了名的那位接（分派）；room_read 看得到群里的话", () => {
+  const mcp = (role, calls) => {
+    const msgs = [{ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, ...calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 2, method: "tools/call", params: c }))];
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), roleDir(role)], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8" });
+    return r.stdout.trim().split("\n").map((l) => JSON.parse(l)).slice(1).map((x) => x.result.content[0].text);
+  };
+  const [ok] = mcp("xiaoke", [{ name: "room_say", arguments: { text: "小鱼，主人要的歌单交给你：按心情分三组，做完在群里说一声" } }]);
+  assert.match(ok, /贴进群里了/);
+  drainOutbox();
+  assert.deepEqual(messages().map((m) => [m.from, m.text.slice(0, 3)]), [["xiaoke", "小鱼，"]]);
+  assert.equal(queued.length, 1);
+  assert.match(queued[0].message, /小克：小鱼，主人要的歌单交给你[\s\S]*小克在群里叫你了，接她的话；交给你的事能做就做/);
+  answer(queued[0], "deepseek", "收到，晚点给你");
+  const [read] = mcp("xiaoke", [{ name: "room_read", arguments: {} }]);
+  assert.match(read, /小克：小鱼，主人要的歌单[\s\S]*小鱼：收到，晚点给你/);
+  // 不是她们的、空的：扔掉，不贴
+  const box = path.join(path.dirname(roleDir("xiaoke")), ".room", "outbox");
+  fs.writeFileSync(path.join(box, "1-x.json"), JSON.stringify({ from: "nobody", text: "hi" }));
+  drainOutbox();
+  assert.equal(fs.readdirSync(box).length, 0);
+  assert.equal(messages().length, 2);
 });
 
