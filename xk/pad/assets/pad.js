@@ -81,19 +81,22 @@
   ta.onblur = () => window.scrollTo(0, 0);
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#in").requestSubmit(); } };
+  async function send(text) {
+    await call("POST", "/api/xk/room", { text, to: [...to] });
+    to.clear(); document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on"));
+  }
   $("#in").onsubmit = async (e) => {
     e.preventDefault();
     const text = ta.value.trim(); if (!text) return;
     ta.value = ""; ta.oninput();
-    try { await call("POST", "/api/xk/room", { text, to: [...to] }); to.clear(); document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on")); }
-    catch (err) { ta.value = text; fail(err); }
+    try { await send(text); } catch (err) { ta.value = text; fail(err); }
   };
   function fail(e) { const p = $("#stream-err"); p.hidden = false; p.textContent = e.message || String(e); setTimeout(() => { p.hidden = true; }, 6000); }
 
   // ── 手机推过来的事件（加密长轮询，Java 解好了递过来） ──
   window.padEvent = (ev) => {
     if (ev.type !== "xk") return;
-    if (ev.op === "room") add(ev.msg);
+    if (ev.op === "room") { add(ev.msg); if (ROLE[ev.msg.from] && voiceOk) Pad.say(ev.msg.from, ev.msg.text); }
     else if (ev.op === "room_typing") {
       if (ev.on) talking.add(ev.role); else talking.delete(ev.role);
       $("#typing").innerHTML = [...talking].map((id) => `<span style="--c:${ROLE[id]?.c}">${esc(ROLE[id]?.name || id)}在说…</span>`).join("");
@@ -112,6 +115,39 @@
   };
   $("#upd").onclick = () => Pad.update();
 
+  // ── 声音：直连主人电脑上的语音服务（xk/voice），念她们的话、按住说话 ──
+  let voiceOk = false;
+  window.padVoice = (v) => {
+    voiceOk = v.ok && v.on;
+    $("#mic").hidden = !v.ok;
+    $("#von").checked = v.on;
+    const names = (v.voices || []).map((id) => ROLE[id]?.name || id).join("、");
+    $("#vstate").textContent = v.ok ? `连上电脑了（${v.host}）。挑好音色的：${names || "还没有（在电脑上运行 design.bat、pick.bat）"}`
+      : v.error || (v.found ? "找到电脑了" : "在家里 Wi‑Fi 里找电脑上的语音服务…（电脑上要开着 start.bat，两台连同一个 Wi‑Fi）");
+    $("#vbtn").classList.toggle("on", voiceOk);
+  };
+  $("#vbtn").onclick = () => { $("#voice").hidden = !$("#voice").hidden; };
+  $("#vcode-f").onsubmit = (e) => { e.preventDefault(); if ($("#vcode").value.trim()) Pad.voiceCode($("#vcode").value); $("#vcode").value = ""; };
+  $("#von").onchange = () => Pad.voiceOn($("#von").checked);
+  $("#vfind").onclick = () => Pad.voiceFind();
+  // 按住说话：按下开始录，松手（或手指滑出按钮）停下送去转文字
+  const mic = $("#mic");
+  let holding = false;
+  const down = (e) => {
+    e.preventDefault(); if (holding) return; holding = true;
+    const who = to.size ? [...to] : Object.keys(ROLE);
+    $("#lart").innerHTML = who.map((id) => `<img src="art/mini/listening_${ROLE[id].dir}.webp" alt="">`).join("");
+    $("#listening").hidden = false; mic.classList.add("on");
+    Pad.listen(true);
+  };
+  const up = () => { if (!holding) return; holding = false; $("#listening").hidden = true; mic.classList.remove("on"); Pad.listen(false); };
+  mic.onpointerdown = down; mic.onpointerup = up; mic.onpointercancel = up; mic.onpointerleave = up;
+  mic.oncontextmenu = (e) => e.preventDefault();
+  window.padHeard = async (r) => {
+    if (!r.text) return fail(new Error(r.error || "没听清"));
+    try { await send(r.text); } catch (err) { ta.value = r.text; ta.oninput(); fail(err); }
+  };
+
   // ── 手机画面（串流）：点了才开，省电 ──
   let streaming = false;
   $("#screen").onclick = () => { streaming = !streaming; Pad.stream(streaming); $("#screen").textContent = streaming ? "收起画面" : "看手机画面"; };
@@ -122,4 +158,5 @@
   };
 
   window.padState(JSON.parse(Pad.state()));
+  window.padVoice(JSON.parse(Pad.voiceState()));
 })();

@@ -26,10 +26,11 @@ import org.json.JSONObject;
  * 小克 · 平板的唯一一页：一边是手机画面（串流，点了才开），一边是聊天页（assets/pad.html，WebView）。
  * 横着放左右分，竖着放上下分。网页只管画；找手机、配对、加密都在 PadLink，网页经 window.Pad 调它。
  */
-public class PadActivity extends Activity implements PadLink.Listener, PadStream.Listener, PadUpdate.Out {
+public class PadActivity extends Activity implements PadLink.Listener, PadStream.Listener, PadUpdate.Out, PadVoice.Out {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private PadLink link;
     private PadUpdate upd;
+    private PadVoice voice;
     private PadStream stream;
     private WebView web;
     private LinearLayout root;
@@ -81,6 +82,8 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         }
         link = new PadLink(this, this);
         upd = new PadUpdate(this, link, this);
+        voice = new PadVoice(this, this);
+        voice.check();
         link.start();
     }
 
@@ -131,6 +134,10 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         else ui.post(this::stopStream);
     }
     @Override public void onUpdate(JSONObject st) { js("padUpdate", st.toString()); }
+    @Override public void onVoice(JSONObject st) { js("padVoice", st.toString()); }
+    @Override public void onHeard(String text, String error) {
+        try { js("padHeard", new JSONObject().put("text", text).put("error", error == null ? "" : error).toString()); } catch (Exception ignored) {}
+    }
     @Override public void onEvent(JSONObject ev) { js("padEvent", ev.toString()); }
 
     // ── PadStream ──
@@ -162,6 +169,21 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         @JavascriptInterface public void pair() { link.pair(); }
         @JavascriptInterface public void forget() { link.forget(); }
         @JavascriptInterface public void update() { upd.install(); }
+        @JavascriptInterface public String voiceState() { return voice.state().toString(); }
+        @JavascriptInterface public void voiceOn(boolean on) { voice.setOn(on); }
+        @JavascriptInterface public void voiceCode(String code) { voice.setCode(code); }
+        @JavascriptInterface public void voiceFind() { voice.check(); }
+        @JavascriptInterface public void say(String role, String text) { voice.say(role, text); }
+        /** 按住说话：第一次先要录音权限（要到了再按一次） */
+        @JavascriptInterface public void listen(boolean down) {
+            if (!down) { voice.listenStop(); return; }
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                ui.post(() -> requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 1));
+                onHeard("", "允许录音后再按住说一次");
+                return;
+            }
+            voice.listenStart();
+        }
         @JavascriptInterface public void manual(String host, int port) { link.manual(host, port); }
         @JavascriptInterface public void stream(boolean on) { ui.post(() -> { if (on) startStream(); else stopStream(); }); }
         /** 异步：结果回 window.padReply(id, {s, b} 或 {error}) */
