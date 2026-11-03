@@ -1,22 +1,25 @@
 """小克的语音服务，跑在主人电脑上（设计稿 xk/design/presence.md 第五节）：
-  念：POST /tts {role, text} → WAV。VoxCPM 照 voices/<角色>.wav（和 .txt 里它说的原话）的音色念。
+  念：POST /tts {role, text} → WAV。交给 GPT-SoVITS（它自己的整合包、单独的进程），照 voices/<角色>.wav（和 .txt 里它说的原话）的音色念。
   听：POST /asr（请求体是 16kHz 单声道 WAV）→ {text}。SenseVoice，默认在 CPU 上跑，省显存给念。
   GET /health → 模型、哪几个人挑好了音色。
 平板在家里 Wi‑Fi 里自己找到它（mDNS _xkvoice._tcp），请求头 x-xk-code 带配对码（第一次运行时生成，存在 config.json）。
 平板不开 VPN，所以不经手机、直接连这里。用法：python server.py（或双击 start.bat）。
 """
-import io, json, os, secrets, socket, tempfile, threading, time, traceback
+import io, json, os, secrets, socket, tempfile, threading, time, traceback, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import soundfile as sf
 
-from common import HERE, ROLES, VOICES, load_tts, safe_text
+from common import HERE, ROLES, VOICES, safe_text, voice
 
 CONF = os.path.join(HERE, "config.json")
 
 
 def load_conf():
-    c = {"port": 8790, "tts_model": "VoxCPM1.5", "asr_device": "cpu", "code": ""}
+    # 念：GPT-SoVITS 的接口地址；gsv_dir 填整合包的位置就由这里顺手起它；gsv_config 是它自己的配置（版本、显卡、半精度在那里改）；
+    # gsv_base_* 是底模权重（有人训练过、要来回换时才用得上）；gsv_extra 原样加进每次请求（语速 speed_factor 之类）
+    c = {"port": 8790, "gsv_url": "http://127.0.0.1:9880", "gsv_dir": "", "gsv_config": "GPT_SoVITS/configs/tts_infer.yaml",
+         "gsv_base_gpt": "", "gsv_base_sovits": "", "gsv_extra": {}, "asr_device": "cpu", "code": ""}
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
     if not c["code"]:
@@ -29,28 +32,73 @@ C = load_conf()
 GPU = threading.Lock()   # 一次只念一句：显存就这么多
 
 
-class Tts:
-    def __init__(self, name):
-        self.name, self.v2 = name, name.startswith("VoxCPM2")
-        self.m = load_tts(name)
-        self.rate = self.m.tts_model.sample_rate
+def wav_bytes(samples, rate):
+    buf = io.BytesIO()
+    sf.write(buf, samples, rate, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
 
-    def voice(self, role):
-        wav, txt = os.path.join(VOICES, role + ".wav"), os.path.join(VOICES, role + ".txt")
-        if not (os.path.exists(wav) and os.path.exists(txt)):
-            raise LookupError(f"还没给 {role} 挑音色：先运行 design.py 再 pick.py")
-        return wav, open(txt, encoding="utf-8").read().strip()
+
+class GsvTts:
+    """GPT-SoVITS：它用自己的整合包单独跑（api_v2.py，默认 127.0.0.1:9880），这里把每句话交给它的 /tts。
+    每人一段参考录音 voices/<角色>.wav（3–10 秒）和原话 .txt；给谁训练过，就把她的 voices/<角色>.ckpt（GPT）和
+    voices/<角色>.pth（SoVITS）放进去，轮到她说话时先换上她的权重，没有就用整合包默认的底模直接克隆。"""
+    def __init__(self):
+        self.name, self.url = "GPT-SoVITS", C["gsv_url"].rstrip("/")
+        self.loaded = None   # 现在装着谁的权重（None＝底模）
+        self.proc = None
+        if C["gsv_dir"]:
+            self.start()
+
+    def start(self):
+        """config.json 写了整合包的位置，就顺手把它的接口起起来，等它加载完"""
+        import subprocess
+        d = C["gsv_dir"]
+        py = os.path.join(d, "runtime", "python.exe")
+        port = C["gsv_url"].rsplit(":", 1)[1].split("/")[0]
+        self.proc = subprocess.Popen([py if os.path.exists(py) else "python", "api_v2.py", "-a", "127.0.0.1", "-p", port, "-c", C["gsv_config"]], cwd=d)
+        for _ in range(300):
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"GPT-SoVITS 的接口没起来（退出码 {self.proc.returncode}），看上面它自己的报错")
+            try:
+                urllib.request.urlopen(self.url + "/control", timeout=2)
+            except urllib.error.HTTPError:
+                return   # 有回应（哪怕是参数不对）就是起来了
+            except OSError:
+                time.sleep(1)
+                continue
+            return
+        raise RuntimeError("GPT-SoVITS 的接口 5 分钟还没起来")
+
+    def get(self, path, q=None, body=None):
+        url = self.url + path + ("?" + urllib.parse.urlencode(q) if q else "")
+        req = urllib.request.Request(url, data=None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                     headers={"content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"GPT-SoVITS 说：{e.read().decode('utf-8', 'replace')}") from e
+
+    def weights(self, role):
+        """她有自己训练的权重就换上；没有就回到底模（底模路径照 config.json）"""
+        ckpt, pth = (os.path.join(VOICES, role + x) for x in (".ckpt", ".pth"))
+        want = role if os.path.exists(ckpt) and os.path.exists(pth) else None
+        if want == self.loaded:
+            return
+        g, s = (ckpt, pth) if want else (C["gsv_base_gpt"], C["gsv_base_sovits"])
+        if not (g and s):
+            raise RuntimeError(f"现在装着 {self.loaded} 训练的权重，{role} 没训练过，要换回底模：在 config.json 填 gsv_base_gpt 和 gsv_base_sovits")
+        self.get("/set_gpt_weights", {"weights_path": g})
+        self.get("/set_sovits_weights", {"weights_path": s})
+        self.loaded = want
 
     def say(self, role, text):
-        wav, said = self.voice(role)
-        kw = dict(text=safe_text(text), prompt_wav_path=wav, prompt_text=said, cfg_value=2.0, inference_timesteps=10)
-        if self.v2:
-            kw["reference_wav_path"] = wav   # VoxCPM2 才有：音色更像
+        wav, said = voice(role)
+        body = {"text": safe_text(text), "text_lang": "zh", "ref_audio_path": wav, "prompt_text": said, "prompt_lang": "zh",
+                "text_split_method": "cut5", "batch_size": 1, "media_type": "wav", "streaming_mode": False, **C["gsv_extra"]}
         with GPU:
-            out = self.m.generate(**kw)
-        buf = io.BytesIO()
-        sf.write(buf, out, self.rate, format="WAV", subtype="PCM_16")
-        return buf.getvalue()
+            self.weights(role)
+            return self.get("/tts", body=body)
 
 
 class Asr:
@@ -135,8 +183,8 @@ def advertise(port, addrs):
 
 
 if __name__ == "__main__":
-    print(f"加载念的模型 {C['tts_model']}…", flush=True)
-    TTS = Tts(C["tts_model"])
+    print("连 GPT-SoVITS…" + ("（顺手起它的接口，等它加载完）" if C["gsv_dir"] else f"（{C['gsv_url']}，要先开着它的 api_v2.py）"), flush=True)
+    TTS = GsvTts()
     print(f"加载听的模型 SenseVoice（{C['asr_device']}）…", flush=True)
     ASR = Asr(C["asr_device"])
     addrs = lan_addrs()
@@ -147,9 +195,12 @@ if __name__ == "__main__":
     print(f"  配对码：{C['code']}（在平板「小克 · 平板」里填一次）", flush=True)
     port = C["port"]
     print(f"  地址：{'、'.join(f'{a}:{port}' for a in addrs)}", flush=True)
-    print(f"  挑好音色的：{'、'.join(have) or '还没有（先 design.py 再 pick.py）'}", flush=True)
+    none = "还没有（把录音和它说的原话放进 voices 文件夹，见 README）"
+    print(f"  放好音色的：{'、'.join(have) or none}", flush=True)
     print("  关掉这个窗口就停了。\n", flush=True)
     try:
         srv.serve_forever()
     finally:
         zc.close()
+        if TTS.proc:
+            TTS.proc.terminate()

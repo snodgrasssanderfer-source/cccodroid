@@ -1,5 +1,4 @@
-# torch / torchaudio 要 CUDA 12.8 版（RTX 50 系），setup.bat 先单独装，这里不写
-voxcpm
+# 语音服务自己的依赖（只管「听」和转发）。torch / torchaudio 由 setup.bat 装 CPU 版；念的 GPT-SoVITS 用它自己的整合包
 funasr
 modelscope
 soundfile
