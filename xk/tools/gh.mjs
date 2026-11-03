@@ -9,7 +9,7 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 
 const REPO = "snodgrasssanderfer-source/cccodroid";
-const WAIT = ["等主人", "等云端", "等小克"];   // 标签是唯一的状态源，DEV.md 不抄清单
+const WAIT = ["等主人", "等云端", "等小克", "等小鱼", "等哈基米"];   // 标签是唯一的状态源，DEV.md 不抄清单
 // 查过、确认不用开 PR 的旧分支（写清为什么）
 const STALE = { "claude/phase1-20261101": "11-01 第一批，dev 在它之上重建过" };
 const token = process.env.GH_TOKEN || (() => { try { return fs.readFileSync(os.homedir() + "/.config/xiaoke/gh-pr-token", "utf8").trim(); } catch { return ""; } })();
