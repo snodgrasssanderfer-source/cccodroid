@@ -71,6 +71,9 @@ export function carryText(fromSid, fromRole, toRole, reason, back = false) {
   const talk = fromSid ? recentText(fromSid, 6, { assistant: fromRole ? roleById(fromRole).name : "她" }) : "";
   if (back) return `（交回说明，给你自己看的）${reason}。你不在的时候主人在和${who}聊，现在回到你们原来这段对话接着聊。` +
     (talk ? `下面是你不在时最近几轮，只是让你知道聊到哪了；这是${who}的对话，不是你的记忆：\n${talk}` : "");
+  // 自己换自己（#72 上下文到 20% 换新对话）：带到的是她自己的话，不是别人的记忆
+  if (fromRole && fromRole === toRole) return `（换新对话说明，给你自己看的）${reason}。下面是你上一段对话最新的几轮，带着它接着聊；这就是你自己的话：` +
+    (talk ? `\n${talk}` : "（上一段没有可带的内容）");
   return `（接班说明，给你自己看的）主人刚才在和${who}聊，${reason}，现在换成你接着聊。` +
     (talk ? `下面是刚才最近几轮，只是让你知道在聊什么；这不是你的记忆，你用自己的人设和记忆回应：\n${talk}` : "");
 }

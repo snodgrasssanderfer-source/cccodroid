@@ -22,7 +22,7 @@ const session = (role, sid) => {
 const X = session("xiaoke", "bbbbbbbb-2222-4222-8222-000000000001");    // 小克原来那段
 const H = session("hachimi", "bbbbbbbb-2222-4222-8222-000000000002");   // 哈基米接班那段
 const GONE = "bbbbbbbb-2222-4222-8222-0000000000ff";                     // 已经删掉的会话
-const reset = (o = {}) => Object.assign(STATE, { cooldown: {}, origin: {}, originRun: {}, pending: {}, ...o });
+const reset = (o = {}) => Object.assign(STATE, { cooldown: {}, origin: {}, originRun: {}, pending: {}, rollover: {}, ...o });
 
 test("额度用完换人：接班会话记下来源会话号", async () => {
   reset({ cooldown: { xiaoke: { until: Date.now() + 3600e3, reason: "订阅额度用完了" } } });
@@ -108,3 +108,16 @@ test("主人手动换过去：在她那段里接着发，不会被「额度恢�
   // 主人手动换回小克：照样回到原来那段
   assert.equal(switchTo("xiaoke", H, "主人手动换了角色").resume, X);
 });
+
+test("上下文到 20%：下一句就换新对话，带上上一段的交接（#72）", async () => {
+  reset({ rollover: { xiaoke: { sid: X, pct: 0.23 } } });
+  const c = await planChat({ message: "接着说", sessionId: X });
+  assert.equal(c.role, "xiaoke");
+  assert.equal(c.body.sessionId, null, "换新对话：会话号置空");
+  assert.equal(c.body.projectId, "p-x");
+  assert.deepEqual([c.carry.fromSid, c.carry.fromRole], [X, "xiaoke"]);
+  assert.equal(c.notice.rollover, true);
+  assert.match(c.carry.reason, /23%/);
+  assert.equal(STATE.rollover.xiaoke, undefined, "标记用掉了");
+});
+
