@@ -56,10 +56,19 @@ test("她最近那段被删了：照旧新开；从空的新对话换过去也�
   assert.equal(switchTo("hachimi", null, "主人手动换了角色").resume, null);
 });
 
-test("交回被替班前那段优先于她最近那段（#1）", () => {
+test("交回原角色：被替班前那段和她最近那段，接更近的那段（#1；11-03 换回接到两段前的旧对话）", () => {
   reset();
   const X0 = session("xiaoke", "cccccccc-3333-4333-8333-000000000005");
-  ended("xiaoke", X);                                    // 最近那段是 X
+  const touch = (sid, sec) => { const t = new Date(Date.UTC(2026, 10, 3, 0, 0, sec)); for (const r of ["xiaoke"]) fs.utimesSync(path.join(CFG.home, ".claude", "projects", projectSlug(cwdOf(r)), sid + ".jsonl"), t, t); };
   STATE.origin[H] = { from: "xiaoke", fromSid: X0, reason: "x", manual: true };
+  ended("xiaoke", X);
+  // 被替班前那段更近（额度用完、替班会话刚开）：接它
+  touch(X, 1); touch(X0, 2);
+  assert.equal(switchTo("xiaoke", H, "主人手动换了角色").resume, X0);
+  // 替班会话后来又被接着用，这期间小克在新的一段里聊过：接新的那段，不回旧的
+  touch(X0, 1); touch(X, 2);
+  assert.equal(switchTo("xiaoke", H, "主人手动换了角色").resume, X);
+  // 最近那段记录没了：照旧接被替班前那段
+  STATE.lastByRole = {};
   assert.equal(switchTo("xiaoke", H, "主人手动换了角色").resume, X0);
 });
