@@ -85,3 +85,55 @@ test("事件长轮询：加密送出聊天页要用的那几种，别的不给",
   assert.deepEqual(got.events.map((e) => e.op), ["room"]);
   unpair(r.id);
 });
+
+test("串流中转：开串流 → 升级连接 → 本机服务端的数据加密到平板、平板的加密数据解开送到服务端；改一个字节就断", async () => {
+  const http = await import("node:http"), net = await import("node:net");
+  const { STREAM, SPAWN, opener, sealer, streamKey, streamUpgrade } = await import("../gw/xk-pad.mjs");
+  openPairing();
+  const t = tablet(); const r = pairRequest({ pub: t.pub }); t.finish(r); confirmPair(r.id);
+  // 开串流：网关发 stream_start 给外壳
+  let started = null;
+  const off = onPublish((e) => { if (e.op === "stream_start") started = e; });
+  const { s, b } = await t.call({ m: "POST", p: "/pad/stream/start", b: { h265: true } });
+  off();
+  assert.equal(s, 200);
+  assert.equal(started.sid, b.sid);
+  assert.equal(started.opts.supportH265, 1);
+  assert.equal(started.opts.serverPort, STREAM.port);
+  // 假的易控服务端：把收到的原样回去，再主动发一句
+  const fake = net.createServer((c) => { c.write("hello"); c.on("data", (d) => c.write(d)); });
+  await new Promise((ok) => fake.listen(0, "127.0.0.1", ok));
+  SPAWN.connect = () => net.connect(fake.address().port, "127.0.0.1");
+  const gw = http.createServer();
+  gw.on("upgrade", (req, sock, head) => streamUpgrade(req, sock, head));
+  await new Promise((ok) => gw.listen(0, "127.0.0.1", ok));
+  const salt = crypto.randomBytes(16);
+  const hello = Buffer.from(JSON.stringify(t.req({ ch: "main", sid: b.sid, salt: salt.toString("base64") }))).toString("base64");
+  const sock = net.connect(gw.address().port, "127.0.0.1");
+  sock.write(`GET /pad/stream HTTP/1.1\r\nhost: x\r\nupgrade: xkpad\r\nconnection: Upgrade\r\nx-pad: ${hello}\r\n\r\n`);
+  const got = [];
+  let headerDone = false, pre = Buffer.alloc(0);
+  const dec = opener(streamKey(t.key, salt, "main", 0), 0, (p) => got.push(p.toString()));
+  sock.on("data", (d) => {
+    if (!headerDone) { pre = Buffer.concat([pre, d]); const i = pre.indexOf("\r\n\r\n"); if (i < 0) return; assert.match(pre.subarray(0, i).toString(), /^HTTP\/1.1 101/); headerDone = true; d = pre.subarray(i + 4); }
+    if (d.length) dec(d);
+  });
+  const enc = sealer(streamKey(t.key, salt, "main", 1), 1);
+  await new Promise((r) => setTimeout(r, 200));
+  sock.write(enc(Buffer.from(" world")));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(got.join(""), "hello world", "服务端→平板加密、平板→服务端解开");
+  // 改一个字节：网关解不开就断
+  const bad = enc(Buffer.from("x")); bad[bad.length - 1] ^= 1;
+  const closed = new Promise((ok) => sock.on("close", ok));
+  sock.write(bad);
+  await closed;
+  // 同一个升级请求再用一次：序号旧了
+  const again = net.connect(gw.address().port, "127.0.0.1");
+  let resp = "";
+  again.on("data", (d) => { resp += d; });
+  again.write(`GET /pad/stream HTTP/1.1\r\nhost: x\r\nupgrade: xkpad\r\nconnection: Upgrade\r\nx-pad: ${hello}\r\n\r\n`);
+  await new Promise((ok) => again.on("close", ok));
+  assert.match(resp, /^HTTP\/1.1 401[\s\S]*序号旧了/);
+  gw.close(); fake.close(); unpair(r.id);
+});
