@@ -1274,6 +1274,7 @@
         <div class="xk-gt">已配对的平板</div>
         <div class="xk-list">${st.devices.length ? st.devices.map((d) => `<div class="xk-row"><span class="k">${esc(d.name)}<small>${ago(d.lastSeen)}</small></span><button class="xk-mini xk-press danger" data-del="${esc(d.id)}">取消配对</button></div>`).join("") : `<div class="xk-row"><span class="k">还没有<small>平板上装「小克 · 平板」（和小克一起发在 Release 里的 xiaoke-pad.apk）</small></span></div>`}</div>
         <button class="xk-wide xk-press" id="xk-pad-pair" style="margin-top:14px">配对新平板</button>
+        <p class="xk-hint">平板自动找不到手机时（比如手机开着 VPN），在平板上手动填：${st.addrs.map((a) => `<b>${esc(a)}:${st.port}</b>`).join("、") || "（手机现在没连局域网）"}。一般用第一个。</p>
         <p class="xk-hint">平板只能看群聊、在群里说话、看手机画面；文件、终端、设置都碰不到。通信用配对时那把密钥加密。看手机画面要开着 Shizuku。</p>`;
       $("#xk-pad-pair", b).onclick = () => { SFX.play("tap"); api("/api/xk/pad/pair", { method: "POST", body: {} }).then(() => SUB.pad(b)).catch(fail); };
       b.querySelectorAll("[data-ok]").forEach((x) => x.onclick = () => { SFX.play("done"); api("/api/xk/pad/confirm", { method: "POST", body: { id: x.dataset.ok } }).then(() => { toast("配好了", "平板上会自己连上来", art("pad/pair")); SUB.pad(b); }).catch(fail); });

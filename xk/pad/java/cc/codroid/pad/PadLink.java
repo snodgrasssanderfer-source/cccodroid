@@ -76,6 +76,7 @@ final class PadLink {
     void forget() { stop(); sp.edit().clear().apply(); host = ""; port = 0; id = ""; key = null; set("idle", null); }
 
     private synchronized void run() {
+        stopped = false;   // 「忘掉」之后再点配对也要能跑起来
         if (loop != null && loop.isAlive()) loop.interrupt();
         loop = new Thread(this::main, "xkpad-link");
         loop.start();
@@ -106,6 +107,13 @@ final class PadLink {
 
     // ── 找手机：NSD 找到第一台就用（一个家里一般只有一台装了小克的手机） ──
     private void find() throws Exception {
+        // 主人手动填过地址：先试它（手机开着 VPN 时，局域网里的广播有时根本找不到手机）
+        String m = sp.getString("manual", "");
+        if (!m.isEmpty()) {
+            int i = m.lastIndexOf(':');
+            String ok = reachable(new String[] { m.substring(0, i) }, Integer.parseInt(m.substring(i + 1)));
+            if (ok != null) { host = ok; port = Integer.parseInt(m.substring(i + 1)); return; }
+        }
         final Object lk = new Object();
         final String[] got = new String[2];
         discovery = new NsdManager.DiscoveryListener() {
@@ -119,7 +127,12 @@ final class PadLink {
                 nsd.resolveService(s, new NsdManager.ResolveListener() {
                     @Override public void onResolveFailed(NsdServiceInfo s2, int code) { Log.w(TAG, "解析不了：" + code); }
                     @Override public void onServiceResolved(NsdServiceInfo s2) {
-                        synchronized (lk) { got[0] = s2.getHost().getHostAddress() + ":" + s2.getPort(); lk.notifyAll(); }
+                        // 手机开着 VPN 时会多报一个 VPN 的虚拟地址（198.18.x.x、172.19.x.x 之类），只拿第一个可能连不上：全记下来，下面挨个试
+                        StringBuilder all = new StringBuilder();
+                        java.util.List<java.net.InetAddress> as = android.os.Build.VERSION.SDK_INT >= 34 ? s2.getHostAddresses() : java.util.Collections.singletonList(s2.getHost());
+                        for (java.net.InetAddress a : as) if (a instanceof java.net.Inet4Address) all.append(all.length() > 0 ? "," : "").append(a.getHostAddress());
+                        if (all.length() == 0) all.append(s2.getHost().getHostAddress());
+                        synchronized (lk) { got[0] = all + "|" + s2.getPort(); lk.notifyAll(); }
                     }
                 });
             }
@@ -131,9 +144,28 @@ final class PadLink {
             }
         } finally { stopDiscovery(); }
         if (got[1] != null) throw new java.io.IOException(got[1]);
-        int i = got[0].lastIndexOf(':');
-        host = got[0].substring(0, i); port = Integer.parseInt(got[0].substring(i + 1));
+        int p = Integer.parseInt(got[0].substring(got[0].indexOf('|') + 1));
+        String[] hosts = got[0].substring(0, got[0].indexOf('|')).split(",");
+        String ok = reachable(hosts, p);
+        if (ok == null) throw new java.io.IOException("找到手机了，但它报的地址（" + String.join("、", hosts) + "）都连不上。可以在下面手动填手机的地址（手机上「我的 → 平板」里写着）");
+        host = ok; port = p;
         sp.edit().putString("host", host).putInt("port", port).apply();
+    }
+
+    /** 挨个试连，回第一个连得上的（手机开着 VPN 时，Wi‑Fi 那个地址才连得上） */
+    private static String reachable(String[] hosts, int port) {
+        for (String h : hosts) {
+            try (java.net.Socket t = new java.net.Socket()) { t.connect(new java.net.InetSocketAddress(h, port), 1500); return h; }
+            catch (Exception e) { Log.i(TAG, "连不上 " + h + ":" + port + "：" + e.getMessage()); }
+        }
+        return null;
+    }
+
+    /** 自动找不到时，主人手动填手机的地址（手机上「我的 → 平板」里写着），之后照常配对或连接 */
+    void manual(String h, int p) {
+        host = h.trim(); port = p;
+        sp.edit().putString("host", host).putInt("port", port).putString("manual", host + ":" + port).apply();
+        if (paired()) run(); else pair();
     }
     private void stopDiscovery() {
         NsdManager.DiscoveryListener d = discovery; discovery = null;

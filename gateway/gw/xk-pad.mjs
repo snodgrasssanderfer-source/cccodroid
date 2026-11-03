@@ -221,8 +221,12 @@ export async function streamUpgrade(req, sock, head, now = Date.now()) {
 }
 
 // ── 局域网监听：只有 /pad/pair、/pad/v1 和串流的升级连接，别的一律 404 ──
+// Wi‑Fi / 热点的排前面，VPN 的（tun、ppp）排最后：主人照着手填时第一个就是对的
 function lanAddrs() {
-  return Object.values(os.networkInterfaces()).flat().filter((a) => a && a.family === "IPv4" && !a.internal).map((a) => a.address);
+  const vpn = (n) => /^(tun|ppp|ipsec|wg)/.test(n);
+  return Object.entries(os.networkInterfaces())
+    .sort(([a], [b]) => vpn(a) - vpn(b))
+    .flatMap(([, as]) => as.filter((a) => a.family === "IPv4" && !a.internal).map((a) => a.address));
 }
 let SERVER = null;
 async function body(req) {
