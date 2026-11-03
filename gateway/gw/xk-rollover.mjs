@@ -144,7 +144,8 @@ END_HOOKS.push((run, f = {}) => {
     const pick = readJson(choiceFile(role.id));
     rm(choiceFile(role.id));
     if (pick && pick.mode === "compact") {
-      delete STATE.rollover[role.id];
+      // 记下「刚压过」：压完下一轮要是还在线上就直接换新，不再问第二遍
+      STATE.rollover[role.id] = { sid, pct: contextRatio(run, f) || now.pct, afterCompact: true };
       saveState();
       startCompact(role, sid);
       return;

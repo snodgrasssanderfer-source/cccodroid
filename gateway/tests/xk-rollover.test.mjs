@@ -106,7 +106,8 @@ test("她选 compact：同一段里起一个 /compact 的内部轮次，不换�
   const r = mcp("deepseek", "context_next", { mode: "compact", why: "同一件事" });
   assert.match(r.content[0].text, /压缩/);
   end("deepseek", "s-d", { usage: { context_tokens: 260000, context_window: 1000000 } });
-  assert.equal(STATE.rollover.deepseek, undefined, "她选好了，不再挂着换新");
+  assert.equal(STATE.rollover.deepseek.afterCompact, true, "记下刚压过");
+  assert.equal(takeRollover("deepseek", "s-d"), null, "选了压缩，下一句不换新");
   assert.ok([...INTERNAL.values()].some((j) => j.kind === "compact"), "起了 /compact 内部轮次");
   assert.ok(!fs.existsSync(askedPath("deepseek")));
   clear("deepseek");
