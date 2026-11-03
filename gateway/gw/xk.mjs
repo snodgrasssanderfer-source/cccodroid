@@ -140,6 +140,8 @@ export function switchTo(to, fromSessionId, reason) {
   const resume = fromSessionId && fromRole !== to ? newer(resumeSid(fromSessionId, to), lastSidOf(to)) : null;
   if (fromSessionId && fromRole !== to) STATE.pending[to] = resume ? { fromSid: fromSessionId, fromRole, reason: "主人把你换了回来", back: true, resumeSid: resume } : { fromSid: fromSessionId, fromRole, reason };
   saveState();
+  // 广播一声：悬浮窗等着它换人（以前要等她第一句话的接班通知才换，11-03 主人看到圆片慢半拍）
+  publish({ type: "xk", op: "switched", active: to });
   return { ok: true, active: to, projectId: projectOf(to), resume };
 }
 addRoute(async (req, res, u, p) => {
