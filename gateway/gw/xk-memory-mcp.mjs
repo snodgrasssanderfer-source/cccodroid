@@ -34,12 +34,12 @@ const TOOLS = [
       text: { type: "string", description: "便条正文，几句话写清楚，结论放前面" },
       to: { type: "string", description: "给谁：小克、哈基米、小鱼；不填就是给大家" },
       replaces: { type: "string", description: "写错了要更正时填：自己贴过的那张的便条号（board_read 里方括号那串）。旧的撤下，读过旧的人会再收到这张更正" } } } },
+  { name: "board_read", description: "看留言板上最近的便条（三个人和主人贴的都在）。想知道别人做到哪了、主人交代过什么时用。",
+    inputSchema: { type: "object", properties: { limit: { type: "number", description: "最多几张，默认 10" } } } },
   { name: "room_say", description: "往三个人的群里说一句（主人也看得到）。话里点到谁的名字（小克、哈基米、小鱼），她就会在群里接。你不在群里的时候也能用：把主人交代的事交给更合适的人——写清做什么、做到什么程度、做完在群里说一声。之后用 room_read 看她回了什么。",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要在群里说的话；要交给谁就点她的名" } } } },
   { name: "room_read", description: "看三个人的群里最近说了什么（主人和三个人的话都在）。交出去的事办到哪了、群里聊过什么，用它看。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最近几条，默认 20" } } } },
-  { name: "board_read", description: "看留言板上最近的便条（三个人和主人贴的都在）。想知道别人做到哪了、主人交代过什么时用。",
-    inputSchema: { type: "object", properties: { limit: { type: "number", description: "最多几张，默认 10" } } } },
 ];
 
 function call(name, a) {
