@@ -1,0 +1,7 @@
+# torch / torchaudio 要 CUDA 12.8 版（RTX 50 系），setup.bat 先单独装，这里不写
+voxcpm
+funasr
+modelscope
+soundfile
+zeroconf
+ifaddr
