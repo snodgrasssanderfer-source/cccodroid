@@ -86,7 +86,7 @@ function feed(id, kind, caller) {
   const ask = kind === "aside"
     ? `你可以插一句（一两句话就好）；不想插就只回「${PASS}」。`
     : caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。";
-  return { upTo: all.length - 1, fresh: lines.length > 0, text: `（群聊：主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）\n${lines.join("\n")}\n\n（${ask}）` };
+  return { upTo: all.length - 1, fresh: lines.length > 0, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）\n${lines.join("\n")}\n\n（${ask}）` };
 }
 
 // 她当前那段会话：#23 记的「最近那段」，得还在、还是她的；没有就在她的项目里新开
@@ -150,7 +150,8 @@ END_HOOKS.push((run, f = {}) => {
   // 新开的那段这时才有会话号：下一轮接着它（xk.mjs 记「最近那段」的钩子排在后面，等不到它）
   if (run.sessionId) STATE.lastByRole = { ...(STATE.lastByRole || {}), [t.role]: String(run.sessionId) };
   // 她说的话从她那段会话记录里取（普通轮次的结束事件里没有正文）；哈基米的 agy 也写同样格式的记录
-  const said = run.sessionId ? turns(String(run.sessionId), t.at).filter((x) => x.role === "assistant").map((x) => x.text).join("\n").trim() : "";
+  // 只取紧跟在群聊那条后面的回话：群里的话插进她正在跑的私聊那轮时（item.injected），同一轮里还有她回主人的私聊，那段不能贴进群
+  const said = run.sessionId ? roomReply(turns(String(run.sessionId), t.at)) : "";
   const bad = f.failed || f.isError || run.aborted;
   if (bad) { const why = ERRS.get(run.id) || f.subtype; append({ from: "system", text: `${nameOf(t.role)}没说出来${why ? "：" + why : ""}` }); }
   else if (said && said !== PASS && !said.endsWith(PASS)) append({ from: t.role, text: said, ...(t.kind === "aside" ? { kind: "aside" } : {}) });
@@ -161,6 +162,18 @@ END_HOOKS.push((run, f = {}) => {
   if (AGAIN.has(t.role)) { const a = AGAIN.get(t.role); AGAIN.delete(t.role); speak(t.role, a.kind, a.round, a.caller); return; }
   if (!bad && said && said !== PASS && !said.endsWith(PASS)) afterSaid(t.role, said, t.round).catch((e) => log("聊天室接话出错：" + e.message));
 });
+
+export const FEED_HEAD = "（群聊：";
+/** 会话里的问答 → 她在群里说的话：只要群聊递进去的那条后面的回复，私聊的问答一概不要 */
+export function roomReply(ts) {
+  let inRoom = false;
+  const parts = [];
+  for (const x of ts) {
+    if (x.role === "user") inRoom = x.text.startsWith(FEED_HEAD);
+    else if (inRoom) parts.push(x.text);
+  }
+  return parts.join("\n").trim();
+}
 
 // ── 这一批里她们之间怎么接：点了名的必接（小克把事交给小鱼就是这么交的）；没点名、这一波都说完了，才问一次有没有人想接 ──
 const ROUNDS = new Map();   // 批号 → { left: 还能自己插几句, named: 点名还能接几句, pending: 这批还在说的人数, aside: 已经有人自己插过话, capped: 已经说过到上限了 }
