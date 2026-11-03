@@ -6,7 +6,7 @@ import { onPublish, publish } from "../gw/bus.mjs";
 import { RUNS } from "../gw/runs.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
-import { routeXk } from "../gw/xk.mjs";
+import { routeXk, switchTo } from "../gw/xk.mjs";
 import { OV, lastLine, stepLine } from "../gw/xk-overlay.mjs";
 
 ensureRoles();
@@ -106,4 +106,12 @@ test("开关和权限存下来并广播；推一句话、倒计时带上 pid", a
   } finally { off(); }
   assert.deepEqual(got.map((e) => e.op), ["overlay_config", "overlay_config", "overlay_say", "overlay_countdown"]);
   assert.equal(STATE.overlay.permitted, false);
+});
+
+test("手动换人：浮层马上换成她，不等她开口", () => {
+  const { got, off } = watch();
+  try { switchTo("hachimi", null, "主人手动换了角色"); } finally { off(); }
+  assert.equal(OV.role, "hachimi");
+  assert.deepEqual(got.filter((e) => e.op === "overlay").map((e) => e.role), ["hachimi"]);
+  switchTo("xiaoke", null, "主人手动换了角色");
 });
