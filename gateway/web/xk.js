@@ -988,9 +988,10 @@
       // 悬浮窗（#32）：离开 App 也看得到她在做什么、网关重启倒数。权限由外壳在打开时带去系统设置，给没给它报回网关
       const ov = await api("/api/xk/overlay");
       const need = ov.enabled && !ov.permitted;
-      b.insertAdjacentHTML("beforeend", `<div class="xk-gt">悬浮窗</div><div class="xk-list">${meRow("xk-n-ov", "离开小克时显示悬浮窗", "小圆片 + 顶上一行字：她在做什么、说到哪；网关重启时倒数", sw(ov.enabled))}</div>
+      b.insertAdjacentHTML("beforeend", `<div class="xk-gt">悬浮窗</div><div class="xk-list">${meRow("xk-n-ov", "离开小克时显示悬浮窗", "小圆片 + 顶上一行字：她在做什么、说到哪；网关重启时倒数", sw(ov.enabled))}${ov.enabled ? meRow("xk-n-ovcmd", "字幕里不写命令内容", "只显示「跑命令」；录屏、投屏时别人看不到她跑了什么", sw(ov.hideCmd)) : ""}</div>
         ${need ? `<img class="xk-ovperm" src="${art("overlay/permission")}" alt=""><p class="xk-hint xk-warn">还差一步：在系统设置里允许小克「显示在其他应用的上层」。打开开关时会自动带你过去；没跳过去的话，到系统设置 → 应用 → 小克里找。</p>` : ""}`);
       $("#xk-n-ov", b).onclick = () => { SFX.play("toggle"); api("/api/xk/overlay/config", { method: "PUT", body: { enabled: !ov.enabled } }).then(() => SUB.notify(b)).catch(fail); };
+      if (ov.enabled) $("#xk-n-ovcmd", b).onclick = () => { SFX.play("toggle"); api("/api/xk/overlay/config", { method: "PUT", body: { hideCmd: !ov.hideCmd } }).then(() => SUB.notify(b)).catch(fail); };
     },
     async usage(b) {
       const u = await api("/api/xk/usage");

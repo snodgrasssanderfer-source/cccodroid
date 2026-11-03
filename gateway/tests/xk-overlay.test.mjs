@@ -31,6 +31,13 @@ test("工具名换成一句人话；设备、记忆工具按 MCP 名字最后一
   assert.equal(lastLine("第一句。\n\n第二句说到一半"), "第二句说到一半");
 });
 
+test("开关 hideCmd：字幕只写「跑命令」，不带命令内容", async () => {
+  assert.equal((await call("PUT", "/api/xk/overlay/config", { hideCmd: true })).body.hideCmd, true);
+  try { assert.equal(stepLine("Bash", { command: "cat ~/secret" }), "跑命令"); }
+  finally { await call("PUT", "/api/xk/overlay/config", { hideCmd: false }); }
+  assert.equal(stepLine("Bash", { command: "ls" }), "跑命令：ls");
+});
+
 test("主人的一轮：想 → 干活 → 说话 → 跑完，浮层跟着换；按目录认出是谁", async () => {
   const { got, off } = watch();
   RUNS.set("r1", { id: "r1", cwd: roleDir("deepseek") });

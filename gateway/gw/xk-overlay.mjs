@@ -8,6 +8,7 @@ import { STATE, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 import { sidOfAgyRun } from "./xk-agy.mjs";
 
 STATE.overlay ||= { enabled: false, permitted: false };
+// hideCmd：字幕里只写「跑命令」，不带命令内容（录屏、投屏时别人看得到浮层；主人 11-03 定的：做成开关，默认照显示）
 
 // 浮层现在显示的：当前角色、状态（idle / busy / talk / sleep）、一行字
 export const OV = { role: STATE.active, state: "idle", line: "", runId: null };
@@ -19,7 +20,7 @@ const cut = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return 
 const STEP = {
   screen_read: () => "看屏幕", screenshot: () => "截屏", screen_tap: () => "点一下", screen_swipe: () => "滑一下",
   screen_type: (i) => "输入：" + cut(i.text, 20), screen_key: (i) => "按键 " + cut(i.key, 12),
-  Bash: (i) => "跑命令：" + cut(i.command, 40), Read: (i) => "读 " + base(i.file_path),
+  Bash: (i) => (STATE.overlay.hideCmd ? "跑命令" : "跑命令：" + cut(i.command, 40)), Read: (i) => "读 " + base(i.file_path),
   Edit: (i) => "改 " + base(i.file_path), MultiEdit: (i) => "改 " + base(i.file_path), Write: (i) => "写 " + base(i.file_path),
   Grep: (i) => "搜：" + cut(i.pattern, 30), Glob: () => "找文件", WebSearch: (i) => "上网搜：" + cut(i.query, 30), WebFetch: () => "看网页",
   Task: (i) => "派小帮手：" + cut(i.description, 30), Agent: (i) => "派小帮手：" + cut(i.description, 30), TodoWrite: () => "排待办",
@@ -83,7 +84,7 @@ addRoute(async (req, res, u, p) => {
   // 开关（界面）和权限（外壳报上来）：存下来，广播给另一边
   if (p === "/api/xk/overlay/config" && req.method === "PUT") {
     const b = await json(req);
-    for (const k of ["enabled", "permitted"]) if (typeof b[k] === "boolean") STATE.overlay[k] = b[k];
+    for (const k of ["enabled", "permitted", "hideCmd"]) if (typeof b[k] === "boolean") STATE.overlay[k] = b[k];
     saveState();
     publish({ type: "xk", op: "overlay_config", ...STATE.overlay });
     return sendJson(res, 200, STATE.overlay);
