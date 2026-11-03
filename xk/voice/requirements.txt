@@ -1,4 +1,4 @@
-# 语音服务自己的依赖。torch / torchaudio（CUDA 12.8 版）和 CosyVoice 的依赖由 setup.bat 另装
+# 语音服务自己的依赖（只管「听」和转发）。torch / torchaudio 由 setup.bat 装 CPU 版；念的 GPT-SoVITS 用它自己的整合包
 funasr
 modelscope
 soundfile

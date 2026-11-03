@@ -5,5 +5,3 @@ candidates/
 voices/
 config.json
 __pycache__/
-CosyVoice/
-cosyvoice-req.txt
