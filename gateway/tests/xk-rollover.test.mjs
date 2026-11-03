@@ -5,8 +5,10 @@ import path from "node:path";
 import "../gw/config.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ROLLOVER_AT, agyTokens, contextRatio, takeRollover } from "../gw/xk-rollover.mjs";
+import { ROLLOVER_AT, agyTokens, agyUsage, contextRatio, rolloverAt, takeRollover } from "../gw/xk-rollover.mjs";
 import { STATE, carryText } from "../gw/xk-core.mjs";
+import { END_HOOKS } from "../gw/queue.mjs";
+import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 
 test("上下文占用：按 context_tokens / context_window 算，两成到线", () => {
   assert.equal(ROLLOVER_AT, 0.2);
@@ -36,7 +38,24 @@ test("哈基米走 agy：读日志最后一条 PLANNER_RESPONSE 的实际上下�
   ].join("\n"));
   assert.equal(agyTokens("s1", brain), 161742, "只读 input_tokens 会小一个数量级");
   assert.equal(agyTokens("没跑过的会话", brain), 0, "不知道 agy 会话号就退回字数估");
+  const u = agyUsage("s1", brain);
+  assert.deepEqual([u.context_tokens, u.context_window], [161742, 1000000], "卡片和换新线共用这份数");
   STATE.agyConv = {};
+});
+
+test("换新线按角色分开：哈基米 60%，别人照 20%", () => {
+  ensureRoles();
+  assert.equal(rolloverAt("hachimi"), 0.6);
+  assert.equal(rolloverAt("xiaoke"), 0.2);
+  assert.equal(rolloverAt("deepseek"), 0.2);
+  const cwd = fs.realpathSync(roleDir("hachimi"));
+  const end = (sid, f) => END_HOOKS.forEach((h) => { try { h({ id: "r-" + sid, sessionId: sid, cwd }, f); } catch {} });
+  STATE.rollover = {};
+  end("s-h", { usage: { context_tokens: 590000, context_window: 1000000 } });
+  assert.equal(STATE.rollover.hachimi, undefined, "五成九还没到她的线");
+  end("s-h", { usage: { context_tokens: 610000, context_window: 1000000 } });
+  assert.equal(STATE.rollover.hachimi.sid, "s-h", "过了六成才换");
+  STATE.rollover = {};
 });
 
 test("自己换自己的交接说明：带的是她自己上一段，不是别人的记忆", () => {

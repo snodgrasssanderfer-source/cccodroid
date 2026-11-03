@@ -19,6 +19,7 @@ import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
 import { line, search } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
+import { agyUsage } from "./xk-rollover.mjs";
 
 const DIR = roleDir("hachimi");
 // 放在上游加进 PATH 的 ~/.cccodroid/bin：主人在应用内终端里直接敲 agy 登录
@@ -149,8 +150,11 @@ export function runAgy(item, extra = {}) {
   let parent = null;
   const finish = (fields) => {
     const run = { id: runId, text: item.message, sessionId: sid, cwd: DIR, startedAt, provider: "agy", ...(extra.internal ? { auto: "xk-agy" } : {}) };
-    for (const h of END_HOOKS) { try { h(run, fields); } catch (e) { log("结束钩子出错: " + e.message); } }
-    publish({ type: "run_end", runId, sessionId: sid, aborted: false, durationMs: Date.now() - startedAt, ...(extra.internal ? { auto: "xk-agy" } : {}), ...fields });
+    // agy 的 stdout 没有 usage，但本地日志有：走同一个 agyUsage，卡片上的百分比和换新线的判断就不会对不上
+    const usage = agyUsage(sid);
+    const f = usage ? { ...fields, usage } : fields;
+    for (const h of END_HOOKS) { try { h(run, f); } catch (e) { log("结束钩子出错: " + e.message); } }
+    publish({ type: "run_end", runId, sessionId: sid, aborted: false, durationMs: Date.now() - startedAt, ...(extra.internal ? { auto: "xk-agy" } : {}), ...f });
     extra.onEnd?.();
   };
   try {
