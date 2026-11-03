@@ -101,6 +101,17 @@
     }
   };
 
+  // ── 新版：手机代下好了才提示，点了才装（系统会再弹一次确认） ──
+  window.padUpdate = (u) => {
+    const b = $("#upd");
+    b.hidden = false; b.disabled = u.state === "downloading" || u.state === "installing";
+    b.textContent = u.state === "new" ? `有新版 ${u.version}，点这里更新`
+      : u.state === "downloading" ? `正在从手机拿新版… ${u.pct}%`
+      : u.state === "installing" ? "拿好了，在系统弹窗里点「更新」"
+      : `${u.error}（点这里再试）`;
+  };
+  $("#upd").onclick = () => Pad.update();
+
   // ── 手机画面（串流）：点了才开，省电 ──
   let streaming = false;
   $("#screen").onclick = () => { streaming = !streaming; Pad.stream(streaming); $("#screen").textContent = streaming ? "收起画面" : "看手机画面"; };

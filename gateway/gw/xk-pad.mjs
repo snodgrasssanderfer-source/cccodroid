@@ -96,6 +96,8 @@ export function unpair(id) {
 }
 
 // ── 平板发来的加密请求 ──
+// 不转给本机接口、网关自己答的（平板更新：xk-padupd.mjs）：路径 → (请求体, 设备) => { s, b } 或 { s, error }
+export const PAD_SPECIAL = {};
 export const PROXY = { call: (method, p, body) => selfApi(method, p, body) };
 /** 解开 → 核对时间和序号 → 放行的接口转给本机 → 加密回去。序号要一直变大：截下来的旧请求再发一遍不认 */
 /** 解开平板发来的一个信封，核对时间和序号：回 { d: 设备, key, q: 明文 } */
@@ -114,6 +116,7 @@ function verify(env, now) {
 export async function padCall(env, now = Date.now()) {
   const { d, key, q } = verify(env, now);
   if (q.p === "/pad/stream/start") return seal(key, startStream(d, q.b || {}), d.id);
+  if (PAD_SPECIAL[q.p]) return seal(key, await PAD_SPECIAL[q.p](q.b || {}, d), d.id);
   if (q.p === "/pad/stream/status") return seal(key, { s: 200, b: { sid: STREAM.sid, error: STREAM.error || "" } }, d.id);
   const method = String(q.m || "GET").toUpperCase(), p = String(q.p || "");
   // 事件：ev = 上次拿到的光标；-1 = 刚连上，只要现在的光标，马上回
