@@ -35,6 +35,7 @@
   - 标题字体站酷小薇有 26 个字（回、吃、查、画、鱼……）画成实心方块，修好了（`xk/tools/font-fix-contours.py`）
 - **留言板（#7）**：PR #21，主人说自己验，先发了 0.2.6；#7 等主人验完再关。主人 11-02 定的：她们有「留便条」工具随时写；下班（交回、被换走）时这一班主人跟她说过话却没写，网关补跑一轮让她写，额度用完写不了就从对话里摘一份（标明是摘的）；三人都能看，主人能看能贴能撕；世界书那段改成已装好（**主人要重新导入世界书才生效**，机制说明网关启动时自己重写）；界面在角色页三张卡下面，有新便条角色栏标点。
   - 存在 `roles/.board/`（一张一个文件、各人已读各一个文件）；工具 board_write / board_read 在记忆的 MCP 里（agy 也用它）；每轮由 hook / agy 上下文带上没读过的，网关自己起的轮次不读掉（`.board/quiet/<run>` 记号）。
+- 美术·聊天室（#35）：3 张 11-03 到了，原图在 `xk/art-ref/room/src/`，App 用的 WebP 在 `gateway/web/xk-art/room/`。
 - 美术·悬浮窗（#32）：22 张 11-03 到了，原图包在 `xiaoke-art-overlay-2026-11-03` 分支（**别删**），App 用的 WebP 在 `gateway/web/xk-art/overlay/`（小圆片 256px），总览小图在 `xk/art-ref/overlay/`。
 - 美术：第 2 版（50 张）11-02 到了，原图包在 `xiaoke-art-v2-2026-11-02` 分支（**别删**），App 用的 WebP 在 `gateway/web/xk-art/` 的 me/、health/、onboard/、state/、diary/、help/ 等目录，总览小图在 `xk/art-ref/v2/`。通知图标 `icon/notify_flower` 还没接进外壳（要改 Java，放第三批）。
 
