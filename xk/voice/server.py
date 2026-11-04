@@ -29,8 +29,10 @@ def load_conf():
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
     if not c["code"]:
+        # 只在第一次生成配对码时写回去：别的默认值留在内存里，不改动主人和 Codex 调好的 config.json
         c["code"] = "".join(secrets.choice("23456789ABCDEFGHJKMNPQRSTUVWXYZ") for _ in range(8))
-    json.dump(c, open(CONF, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        own = json.load(open(CONF, encoding="utf-8")) if os.path.exists(CONF) else {}
+        json.dump({**own, "code": c["code"]}, open(CONF, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     return c
 
 
@@ -198,7 +200,7 @@ if __name__ == "__main__":
     ASR = Asr(C["asr_device"])
     addrs = lan_addrs()
     from relay import Relay
-    Relay(C["relay_port"], C["code"])
+    Relay(C["relay_port"])
     zc = advertise(C["port"], C["relay_port"], addrs)
     srv = ThreadingHTTPServer(("0.0.0.0", C["port"]), H)
     have = [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav"))]

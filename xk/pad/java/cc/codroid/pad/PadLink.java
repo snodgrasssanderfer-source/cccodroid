@@ -41,7 +41,7 @@ final class PadLink {
     private Thread loop;
     private NsdManager.DiscoveryListener discovery;
     private final PadHub hub;
-    /** 电脑上的中转（xk/voice/relay.py）：{地址, 端口, 配对码}，没有就 null。手机平板互相连不上时走它 */
+    /** 电脑上的中转（xk/voice/relay.py）：{地址, 端口}，没有就 null。手机平板互相连不上时走它 */
     interface Relay { String[] get(); }
     private volatile Relay relay = () -> null;
     private volatile boolean viaRelay;
@@ -62,7 +62,7 @@ final class PadLink {
     boolean paired() { return !sp.getString("id", "").isEmpty(); }
 
     JSONObject state() {
-        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("diag", "平板 " + myIps() + "；反连：" + hub.note()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : viaRelay ? "（经电脑 " + host + " 中转）" : host.isEmpty() ? "" : host + ":" + port); }
+        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("diag", "平板 " + myIps() + "；反连：" + hub.note() + "；电脑中转：" + (relay.get() == null ? "还没找到电脑" : relay.get()[0] + ":" + relay.get()[1])).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : viaRelay ? "（经电脑 " + host + " 中转）" : host.isEmpty() ? "" : host + ":" + port); }
         catch (Exception e) { throw new IllegalStateException(e); }
     }
     private void set(String p, String err) { phase = p; error = err == null ? "" : err; out.onState(state()); }
@@ -259,7 +259,7 @@ final class PadLink {
         try (java.net.Socket s = new java.net.Socket()) {
             s.connect(new java.net.InetSocketAddress(r[0], Integer.parseInt(r[1])), 1500);
             s.setSoTimeout(3000);
-            s.getOutputStream().write(("XKSTAT " + r[2] + "\n").getBytes(StandardCharsets.UTF_8));
+            s.getOutputStream().write("XKSTAT\n".getBytes(StandardCharsets.UTF_8));
             if (!"1".equals(headLine(s.getInputStream()))) return false;
         } catch (Exception e) { Log.i(TAG, "电脑中转问不了：" + e.getMessage()); return false; }
         host = r[0]; port = Integer.parseInt(r[1]); viaRelay = true;
@@ -276,7 +276,7 @@ final class PadLink {
             try {
                 s.connect(new java.net.InetSocketAddress(host, port), 5000);
                 s.setTcpNoDelay(true);
-                s.getOutputStream().write(("XKWANT " + r[2] + "\n").getBytes(StandardCharsets.UTF_8));
+                s.getOutputStream().write("XKWANT\n".getBytes(StandardCharsets.UTF_8));
                 s.setSoTimeout(8000);
                 String ok = headLine(s.getInputStream());
                 if (!"OK".equals(ok)) throw new java.io.IOException("电脑中转：" + ok);

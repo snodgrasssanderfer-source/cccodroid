@@ -1,8 +1,10 @@
 """手机和平板之间的中转（主人 11-04：电脑开热点、手机平板都连在上面时，两台互相连不上，可两台都连得到电脑）。
 手机那头和平板 App 的 PadHub 一样（xk/pad/java/cc/codroid/pad/PadHub.java）：手机找到 _xkpadc._tcp 就连过来挂控制线
 （写 XKREV → 这里回 OK → 两边每 15 秒互发 p），这里要一条连接就在控制线上写 c，手机连回来一条（先写 XKDATA）。
-平板那头：XKSTAT <配对码> → 回 1（手机挂着）或 0；XKWANT <配对码> → 叫手机连回来一条，回 OK 后两条接上，之后就是平板和手机网关之间的字节。
-这里只搬字节：加密在平板和手机网关两头，看不到也改不了内容。
+平板那头：XKSTAT → 回 1（手机挂着）或 0；XKWANT → 叫手机连回来一条，回 OK 后两条接上，之后就是平板和手机网关之间的字节。
+不要语音服务的配对码（11-04 Codex 在 #99 查出来的：码要在平板「声音」里填，可那一页要和手机配对后才看得到，
+第一次配对就走不了中转）。不要码也不会多放谁进来：这里只搬字节，内容在平板和手机网关两头加密，
+手机那边只认配对过的平板，新平板配对要主人在手机上看着 6 位数点确认。
 """
 import queue, socket, threading
 
@@ -11,6 +13,8 @@ def readline(s):
     b = b""
     while not b.endswith(b"\n"):
         c = s.recv(1)
+        if not c and not b:
+            return ""   # 只敲门不说话（手机试网关上有没有中转）：不算错
         if not c or len(b) > 64:
             raise OSError("开头不对")
         b += c
@@ -50,8 +54,8 @@ def splice(a, b):
 
 
 class Relay:
-    def __init__(self, port, code):
-        self.code, self.port = code, port
+    def __init__(self, port):
+        self.port = port
         self.ctl = None                    # 手机的控制线
         self.ctl_lock = threading.Lock()   # 控制线上写东西的锁
         self.want_lock = threading.Lock()  # 一次只要一条，免得拿错
@@ -73,10 +77,7 @@ class Relay:
             if line == "XKDATA":
                 s.settimeout(None)
                 return self.data.put(s)
-            cmd, _, code = line.partition(" ")
-            if cmd in ("XKSTAT", "XKWANT") and code.strip().upper() != self.code:
-                s.sendall(b"NO code\n")
-                return close(s)
+            cmd = line.split(" ")[0]   # 0.3.16 的平板后面还带着配对码，不管它
             if cmd == "XKSTAT":
                 s.sendall(b"1\n" if self.ctl else b"0\n")
                 return close(s)
