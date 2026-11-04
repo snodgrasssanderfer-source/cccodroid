@@ -1,0 +1,5 @@
+*.apk
+*.zip
+*.build.json
+build*/
+Mods/

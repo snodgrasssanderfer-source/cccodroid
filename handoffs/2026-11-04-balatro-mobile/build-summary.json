@@ -1,0 +1,44 @@
+{
+  "issue": 115,
+  "base_dev": "59f4a2ee0fd10c42a4ebbbdecfb8559e5354c921",
+  "package": "org.xiaoke.balatro.bridge",
+  "label": "小丑牌·小克实验版",
+  "apk": {
+    "filename": "xiaoke-balatro-mobile.apk",
+    "bytes": 70379304,
+    "sha256": "a3433376ff470991bbee58a4bc83049e805a70141a8e97d79d1e8a369c443729"
+  },
+  "files_zip": {
+    "filename": "xiaoke-balatro-mobile-files.zip",
+    "bytes": 866049,
+    "sha256": "b16e088c8769fe4d46c1666948f7f6e3f5ddf8ddb85ff39a764325bdcc8f421d",
+    "entries": 246
+  },
+  "base_apk": {
+    "source": "https://lmm.shorty.systems/base.apk",
+    "sha256": "b2e06e936dc2686926409be8837dc3ebc7e24938522566b9c7b2faeb3e5318db"
+  },
+  "tools": {
+    "java": "Temurin JRE 21.0.13+9",
+    "apktool": "3.0.3",
+    "uber_apk_signer": "1.3.0"
+  },
+  "mods": {
+    "Steamodded": "26.1002.0",
+    "balatrobot_release": "1.5.2",
+    "balatrobot_manifest": "1.5.1",
+    "xk_game_bridge": "0.1.0"
+  },
+  "checked": [
+    "actual signed APK package/providers",
+    "APK zipalign",
+    "APK signatures v1/v2/v3",
+    "ZIP integrity and three mod roots",
+    "phone shell script LF endings",
+    "two patched Lua files compile on desktop LuaJIT"
+  ],
+  "phone_runtime": "NOT RUN: user chose package/files handoff; connected USB device was not the target phone",
+  "phone_action_latency_ms": null,
+  "background_status": "UNTESTED; source indicates Activity onStop may pause game update/network handling",
+  "desktop_changed": false
+}
