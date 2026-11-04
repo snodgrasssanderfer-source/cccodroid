@@ -111,10 +111,13 @@ final class PadVoice {
         return null;
     }
 
-    /** 电脑上的中转（手机平板互相连不上时走它）：{地址, 端口, 配对码}；电脑没连上就是 null */
+    /** 电脑上的中转（手机平板互相连不上时走它）：{地址, 端口}；还没找到电脑就是 null。
+     *  只要找到电脑就给，不等配对码：码要在「声音」里填，那一页和手机配对后才看得到（#99） */
     String[] relay() {
-        JSONObject h = health;
-        return h == null || h.optInt("relay") <= 0 ? null : new String[] { host, String.valueOf(h.optInt("relay")), code() };
+        String h = host;
+        JSONObject hl = health;
+        if (h.isEmpty()) return null;
+        return new String[] { h, String.valueOf(hl != null && hl.optInt("relay") > 0 ? hl.optInt("relay") : 8791) };
     }
 
     private synchronized void stopFind() {

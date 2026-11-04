@@ -71,9 +71,17 @@ final class XkPad {
 
     // ── 反着连 ──
     // 每一步都报给网关（「我的 → 平板」里看得到），开着 VPN 连不上时才知道卡在哪
+    // 平板、电脑中转各记各的一行，拼起来报（只有一行时，一条路失败会盖掉另一条路成功的显示：#99）
+    private static final java.util.Map<String, String> NOTES = new java.util.LinkedHashMap<>();
     private static volatile String lastNote = "";
-    private static void note(String text) {
-        Log.i(TAG, "反连：" + text);
+    private static void note(String text) { noteFor("", text); }
+    private static void noteFor(String who, String line) {
+        Log.i(TAG, "反连：" + line);
+        String text;
+        synchronized (NOTES) {
+            NOTES.put(who, line);
+            text = String.join("；", NOTES.values());
+        }
         if (text.equals(lastNote)) return;
         lastNote = text;
         new Thread(() -> {
@@ -139,8 +147,8 @@ final class XkPad {
             try {
                 try (java.net.Socket t = new java.net.Socket()) { t.connect(new java.net.InetSocketAddress(g, 8791), 1500); }
                 catch (java.io.IOException e) { return; }
-                note("在网关 " + g.getHostAddress() + " 上找到电脑的中转，连过去");
-                control(ctx, java.util.Collections.singletonList(g), 8791, padPort);
+                noteFor("电脑中转（网关）", "在网关 " + g.getHostAddress() + " 上找到电脑的中转，连过去");
+                control(ctx, java.util.Collections.singletonList(g), 8791, padPort, "电脑中转（网关）");
             } finally { LINKED.remove("gw"); }
         }, "xk-pad-gw").start();
     }
@@ -154,14 +162,15 @@ final class XkPad {
             @Override public void onServiceLost(NsdServiceInfo s) { }
             @Override public void onServiceFound(NsdServiceInfo s) {
                 if (LINKED.contains(s.getServiceName())) return;
-                note("看到平板的广播了，在问它的地址");
+                note("看到广播了（平板或电脑中转），在问地址");
                 nsd.resolveService(s, new NsdManager.ResolveListener() {
-                    @Override public void onResolveFailed(NsdServiceInfo s2, int code) { note("看到平板了，但问不到地址，错误码 " + code); }
+                    @Override public void onResolveFailed(NsdServiceInfo s2, int code) { note("看到广播了，但问不到地址，错误码 " + code); }
                     @Override public void onServiceResolved(NsdServiceInfo s2) {
                         java.util.List<java.net.InetAddress> as = android.os.Build.VERSION.SDK_INT >= 34 ? s2.getHostAddresses() : java.util.Collections.singletonList(s2.getHost());
                         String name = s2.getServiceName();
                         if (!LINKED.add(name)) return;
-                        new Thread(() -> { try { control(ctx, as, s2.getPort(), padPort); } finally { LINKED.remove(name); } }, "xk-pad-ctl").start();
+                        String who = name.startsWith("xkrelay") ? "电脑中转" : "平板";   // 电脑的中转报的名字是 xkrelay（xk/voice/server.py）
+                        new Thread(() -> { try { control(ctx, as, s2.getPort(), padPort, who); } finally { LINKED.remove(name); } }, "xk-pad-ctl").start();
                     }
                 });
             }
@@ -178,7 +187,7 @@ final class XkPad {
     }
 
     /** 挂着控制线，平板要一条就开一条；断了就回去（外面会重新找） */
-    private static void control(Context ctx, java.util.List<java.net.InetAddress> as, int port, int padPort) {
+    private static void control(Context ctx, java.util.List<java.net.InetAddress> as, int port, int padPort, String who) {
         StringBuilder fails = new StringBuilder();
         for (java.net.InetAddress a : as) {
             if (!(a instanceof java.net.Inet4Address)) continue;
@@ -195,11 +204,11 @@ final class XkPad {
                 try { for (int b; (b = in0.read()) >= 0 && b != '\n' && ok.length() < 8; ) ok.append((char) b); }
                 catch (java.net.SocketTimeoutException e) { ok.setLength(0); }
                 if (!"OK".equals(ok.toString())) {
-                    fails.append(a.getHostAddress()).append(" 连上了但平板没回话（多半是 VPN 把这条线收进了隧道；平板会改成直接连手机）；");
+                    fails.append(a.getHostAddress()).append(" 连上了但没回话（这条线没真到对面：可能被 VPN 或热点拦下了）；");
                     close(c);
                     continue;
                 }
-                note("已连上 " + a.getHostAddress() + "（平板，或电脑上的中转）");
+                noteFor(who, who + " " + a.getHostAddress() + "：连上了");
                 c.setSoTimeout(45_000);
                 Thread ping = new Thread(() -> {
                     try { while (true) { Thread.sleep(15_000); synchronized (c) { o.write('p'); o.flush(); } } }
@@ -210,13 +219,13 @@ final class XkPad {
                 try {
                     for (int b; (b = in.read()) >= 0; ) if (b == 'c') pipe(ctx, a, port, padPort);
                 } finally { ping.interrupt(); }
-                note("和平板的线断了（平板关了或走远了），过一会儿重新找");
+                noteFor(who, who + " " + a.getHostAddress() + "：线断了（对面关了或网断了），过一会儿重新找");
             } catch (java.io.IOException e) {
-                note("和平板的线断了：" + e.getMessage());
+                noteFor(who, who + " " + a.getHostAddress() + "：线断了：" + e.getMessage());
             } finally { close(c); }
             return;
         }
-        note("找到平板了，但连不上：" + fails);
+        noteFor(who, "找到" + who + "了，但连不上：" + fails);
     }
 
     /** 往平板开一条数据线，接到本机网关的平板口子上，两头互相搬 */
