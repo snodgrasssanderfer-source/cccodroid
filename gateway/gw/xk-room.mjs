@@ -163,14 +163,19 @@ END_HOOKS.push((run, f = {}) => {
   // 只取紧跟在群聊那条后面的回话：群里的话插进她正在跑的私聊那轮时（item.injected），同一轮里还有她回主人的私聊，那段不能贴进群
   const said = run.sessionId ? roomReply(turns(String(run.sessionId), t.at)) : "";
   const bad = f.failed || f.isError || run.aborted;
-  if (bad) { const why = ERRS.get(run.id) || f.subtype; append({ from: "system", text: `${nameOf(t.role)}没说出来${why ? "：" + why : ""}` }); }
-  else if (said && said !== PASS && !said.endsWith(PASS)) append({ from: t.role, text: said, ...(t.kind === "aside" ? { kind: "aside" } : {}) });
+  const spoke = !!said && said !== PASS && !said.endsWith(PASS);
+  // 话说完了、收尾才报错的（哈基米的 agy 常在结尾报「流中断」，#101）：话照样贴，再说一声收尾出了错
+  if (spoke) append({ from: t.role, text: said, ...(t.kind === "aside" ? { kind: "aside" } : {}) });
+  if (bad) {
+    const why = ERRS.get(run.id) || f.subtype;
+    append({ from: "system", text: spoke ? `${nameOf(t.role)}这一轮收尾报了错${why ? "：" + why : ""}（上面的话是她说完了的）` : `${nameOf(t.role)}没说出来${why ? "：" + why : ""}` });
+  }
   ERRS.delete(run.id);
   saveState();
   const r = ROUNDS.get(t.round);
   if (r) r.pending--;
   if (AGAIN.has(t.role)) { const a = AGAIN.get(t.role); AGAIN.delete(t.role); speak(t.role, a.kind, a.round, a.caller); return; }
-  if (!bad && said && said !== PASS && !said.endsWith(PASS)) afterSaid(t.role, said, t.round).catch((e) => log("聊天室接话出错：" + e.message));
+  if (spoke) afterSaid(t.role, said, t.round).catch((e) => log("聊天室接话出错：" + e.message));
 });
 
 export const FEED_HEAD = "（群聊：";

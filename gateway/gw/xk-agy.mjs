@@ -20,6 +20,7 @@ import { line, search } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 import { agyUsage } from "./xk-rollover.mjs";
+import { deviceMcpConfig } from "./usage.mjs";
 
 const DIR = roleDir("hachimi");
 // 放在上游加进 PATH 的 ~/.cccodroid/bin：主人在应用内终端里直接敲 agy 登录
@@ -87,18 +88,24 @@ function writeAgents() {
   fs.writeFileSync(path.join(DIR, "AGENTS.md"), [persona.trim(), wb.trim(), mech.trim()].filter(Boolean).join("\n\n---\n\n") + "\n");
 }
 
-/** 记忆工具：登记到 agy 的全局 MCP 配置（~/.gemini/config/mcp_config.json），只指向哈基米的目录 */
-function ensureMcp() {
-  const f = path.join(CFG.home, ".gemini", "config", "mcp_config.json");
-  let cfg = {};
-  // agy 第一次跑会建一个 0 字节的空文件（11-02 真机）：当空配置；里面有东西却不是 JSON 才报错，不覆盖主人的文件
-  try { const t = fs.readFileSync(f, "utf8"); if (t.trim()) cfg = JSON.parse(t); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
-  cfg.mcpServers ||= {};
-  const want = { command: process.execPath, args: [MEM_MCP, DIR] };
-  if (JSON.stringify(cfg.mcpServers["xk-memory"]) === JSON.stringify(want)) return;
-  cfg.mcpServers["xk-memory"] = want;
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify(cfg, null, 1));
+/** 记忆工具和设备工具：登记到 agy 的全局 MCP 配置，只指向哈基米的目录。
+ *  两个位置都写：~/.gemini/config/ 是早先的（11-02 真机能用），命令行版后来读 ~/.gemini/antigravity-cli/
+ *  （google-antigravity/antigravity-cli#60；11-03 起她的工具全没了，agy 会自己更新，#101）。别的条目原样留着 */
+export const AGY_MCP_FILES = () => ["config", "antigravity-cli"].map((d) => path.join(CFG.home, ".gemini", d, "mcp_config.json"));
+export function ensureMcp() {
+  const want = { "xk-memory": { command: process.execPath, args: [MEM_MCP, DIR] } };
+  // 设备工具（通知、剪贴板、读屏点按…）：和 Claude 那两位挂的是同一个（usage.mjs），用哪些由应用里的开关定
+  const dev = deviceMcpConfig();
+  if (dev) { const { type, ...d } = JSON.parse(dev).mcpServers.device; want.device = d; }
+  for (const f of AGY_MCP_FILES()) {
+    let cfg = {};
+    // agy 第一次跑会建一个 0 字节的空文件（11-02 真机）：当空配置；里面有东西却不是 JSON 才报错，不覆盖主人的文件
+    try { const t = fs.readFileSync(f, "utf8"); if (t.trim()) cfg = JSON.parse(t); } catch (e) { if (e.code !== "ENOENT") throw new Error(`读不了 ${f}：${e.message}`); }
+    const next = { ...cfg, mcpServers: { ...(cfg.mcpServers || {}), ...want } };
+    if (JSON.stringify(next) === JSON.stringify(cfg)) continue;
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(next, null, 1));
+  }
 }
 
 // ── 会话记录（Claude Code 的格式，上游的会话列表 / 历史接口直接认） ──
@@ -172,7 +179,8 @@ export function runAgy(item, extra = {}) {
     if (result?.conversation_id && STATE.agyConv[sid] !== result.conversation_id) { STATE.agyConv[sid] = result.conversation_id; saveState(); }
     const ok = result && result.status === "SUCCESS";
     const reply = (result && result.response) || text;
-    if (ok && reply.trim() && !extra.internal) appendTurn(sid, "assistant", reply.trim(), parent);
+    // 没 SUCCESS 但话已经出来了的（收尾报「流中断」，#101）也记进会话：群聊从这里取她的话，私聊翻历史也看得到；错误照样报
+    if (reply.trim() && !extra.internal) appendTurn(sid, "assistant", reply.trim(), parent);
     const verify = !ok && (agyValidation(result && result.error) || agyValidation(turnErr));
     if (verify) {
       // 先认这个：原文里有「signing in」，别落进下面的「没登录」
