@@ -1,0 +1,66 @@
+# 给手机编一个能跑的 Codex（#112）：官方只发 aarch64 的 musl 静态版（固定地址的 EXEC），安卓上 linker64 加载不了，
+# 应用目录里又不让直接 exec。所以在 GitHub 的 arm64 机器上照官方源码编一个 aarch64 glibc 版，
+# 手机上和 claude 一样经 glibc 加载器起（gateway/gw/config.mjs 的 PATHS.loader）。
+# 版本写在 xk/codex/version，推到 claude/codex-build 分支时编；发成预发布 codex-<版本>（不算「最新」，App 更新检查不会拿到它）。
+name: xk-codex
+
+on:
+  push:
+    branches: ["claude/codex-build"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - name: 这一版编过没有
+        id: v
+        run: |
+          ver=$(tr -d ' \n' < xk/codex/version)
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          if gh release view "codex-$ver" >/dev/null 2>&1; then echo "codex-$ver 已经有了"; echo "skip=1" >> "$GITHUB_OUTPUT"; fi
+      - name: 拿官方源码
+        if: steps.v.outputs.skip != '1'
+        run: git clone --depth 1 --branch "rust-v${{ steps.v.outputs.ver }}" https://github.com/openai/codex.git codex
+      - name: 装编译要的东西
+        if: steps.v.outputs.skip != '1'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential pkg-config libssl-dev clang libclang-dev cmake
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: 编
+        if: steps.v.outputs.skip != '1'
+        working-directory: codex/codex-rs
+        # 第一次（11-04）编到最后被机器关掉了，多半是内存不够（LTO 加带调试行号链一个两百多兆的程序）：
+        # 不做 LTO、不带调试信息、少开几路，再加 8G 交换
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          free -h; df -h .
+          rustup show active-toolchain || rustup toolchain install
+          cargo build --release -p codex-cli --bin codex
+          strip target/release/codex
+          file target/release/codex
+          # 手机上的 glibc 要不比这个旧（Termux 的 glibc 仓库）
+          echo "要的 glibc 最高版本：$(objdump -T target/release/codex | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
+      - name: 发成预发布
+        if: steps.v.outputs.skip != '1'
+        run: |
+          ver=${{ steps.v.outputs.ver }}
+          tar -C codex/codex-rs/target/release -czf codex-aarch64-linux-gnu.tar.gz codex
+          sha256sum codex-aarch64-linux-gnu.tar.gz | tee codex-aarch64-linux-gnu.tar.gz.sha256
+          glibc=$(objdump -T codex/codex-rs/target/release/codex | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          gh release create "codex-$ver" --prerelease --target "$GITHUB_SHA" --title "Codex $ver（手机用，aarch64 glibc）" \
+            --notes "照 openai/codex rust-v$ver 的源码在 GitHub arm64 机器上编的 aarch64-unknown-linux-gnu 版（Apache-2.0）。要 ${glibc} 以上。手机上经 glibc 加载器起。见 #112。" \
+            codex-aarch64-linux-gnu.tar.gz codex-aarch64-linux-gnu.tar.gz.sha256
