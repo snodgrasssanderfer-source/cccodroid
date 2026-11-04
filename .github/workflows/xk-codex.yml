@@ -38,7 +38,16 @@ jobs:
       - name: 编
         if: steps.v.outputs.skip != '1'
         working-directory: codex/codex-rs
+        # 第一次（11-04）编到最后被机器关掉了，多半是内存不够（LTO 加带调试行号链一个两百多兆的程序）：
+        # 不做 LTO、不带调试信息、少开几路，再加 8G 交换
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_BUILD_JOBS: "3"
         run: |
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          free -h; df -h .
           rustup show active-toolchain || rustup toolchain install
           cargo build --release -p codex-cli --bin codex
           strip target/release/codex
