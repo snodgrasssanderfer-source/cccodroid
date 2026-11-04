@@ -45,6 +45,10 @@ jobs:
           CARGO_PROFILE_RELEASE_DEBUG: "0"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           CARGO_BUILD_JOBS: "3"
+          # 0.166.0 第一版在手机上缺 libssl.so.3、libcrypto.so.3、libgcc_s.so.1（手机的 glibc 目录里只有 libc、libm，#112 小克真机）：
+          # openssl 静态链进去，libgcc 也静态，最后 NEEDED 只剩 libc、libm、ld-linux
+          OPENSSL_STATIC: "1"
+          RUSTFLAGS: "-C link-arg=-static-libgcc"
         run: |
           sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           free -h; df -h .
@@ -52,6 +56,8 @@ jobs:
           cargo build --release -p codex-cli --bin codex
           strip target/release/codex
           file target/release/codex
+          readelf -d target/release/codex | grep NEEDED
+          if readelf -d target/release/codex | grep -E "NEEDED.*(libssl|libcrypto|libgcc_s)"; then echo "::error::还依赖手机上没有的库"; exit 1; fi
           # 手机上的 glibc 要不比这个旧（Termux 的 glibc 仓库）
           echo "要的 glibc 最高版本：$(objdump -T target/release/codex | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
       - name: 发成预发布
