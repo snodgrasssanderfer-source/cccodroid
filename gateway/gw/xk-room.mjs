@@ -36,7 +36,7 @@ function append(m) {
   return msg;
 }
 /** 测试用：换个空群 */
-export function resetRoom() { MSGS = []; fs.rmSync(FILE, { force: true }); STATE.room = { seen: {}, lastAside: {}, usage: {} }; ROUNDS.clear(); BATCH = null; BUSY.clear(); TURNS.clear(); CIDS.clear(); AGAIN.clear(); }
+export function resetRoom() { MSGS = []; fs.rmSync(FILE, { force: true }); STATE.room = { seen: {}, lastAside: {}, usage: {}, mode: { kind: "normal", prompt: "", since: 0, rounds: 0 } }; ROUNDS.clear(); BATCH = null; BUSY.clear(); TURNS.clear(); CIDS.clear(); AGAIN.clear(); }
 
 const asleep = (id) => { const c = STATE.cooldown[id]; return !!(c && !(c.until <= Date.now())); };
 const nameOf = (id) => (id === "owner" ? "主人" : id === "deepseek" ? "小鱼" : roleById(id)?.name || id);
@@ -51,6 +51,28 @@ export const PACE = { quietMs: 2000, maxMs: 8000, calledMs: 1000, followMs: 5 * 
 // 上限：一批主人的话，第一波最多两个人开口；之后主人不开口，她们之间点名交办的最多再接六句、没点名自己插话的最多三句，两样分开算，
 // 免得派活被闲聊吃掉（主人 11-03 定的）。到了上限群里说一声，不然看着像谁不理人。插话和接话都用她平时的模型（#64）
 export const CAP = { wave: 2, chain: 3, named: 6 };
+
+// ── 群的四种模式（#108，主人 11-04 定的）：主人在群页的二级弹窗里切，带一段补充说明 ──
+// 平时就是上面这套；计划：能查能读能讨论、不动手，小克收成一份计划等主人点头；目标：点名接话不设上限，做到完为止；
+// 直播：一人操作一人旁观、同一时刻一个人出声（发言牌随 #107 分期接上，现在先靠规矩）。连说、一波、插话间隔照旧管秩序
+export const MODES = {
+  normal: { name: "平时", rules: "" },
+  plan: { name: "计划", rules: "这一轮只商量不动手：可以查资料、读代码和文档、上网看、讨论；不改文件、不装东西、不重启网关、不往外发消息。商量完由小克把计划收成一份（目标、谁做哪块、怎么算做完）贴在群里，等主人点头再开工。" },
+  goal: { name: "目标", rules: "围着这个目标一直干到完成：谁做完一块就在群里报一句结果（第一段只写结果）；点名接话不设上限，但别几个人抢着说同一件事。小克判断目标达成后，在群里报总结果，再用 room_mode 切回平时。" },
+  live: { name: "直播", rules: "在直播：同一时刻只一个人出声，一人操作、一人旁观解说；台词短，先说后做，别抢别人的话。" },
+};
+STATE.room.mode ||= { kind: "normal", prompt: "", since: 0, rounds: 0 };
+const named = () => (STATE.room.mode.kind === "goal" ? Infinity : CAP.named);
+/** 切模式：群里说一声，推给界面 */
+export function setMode(kind, prompt = "", by = "owner") {
+  if (!MODES[kind]) throw httpError(400, "没有这个模式：" + kind);
+  STATE.room.mode = { kind, prompt: String(prompt).trim(), since: Date.now(), rounds: 0 };
+  saveState();
+  const m = MODES[kind], who = by === "owner" ? "主人" : nameOf(by);
+  append({ from: "system", text: kind === "normal" ? `${who}把群切回了平时` : `${who}开了${m.name}模式${STATE.room.mode.prompt ? "：" + STATE.room.mode.prompt : ""}` });
+  publish({ type: "xk", op: "room_mode", mode: STATE.room.mode });
+  return STATE.room.mode;
+}
 export const CAPPED = "她们这一轮说到上限了，等你开口再接着聊";
 const TRAITS = { xiaoke: "讲究、较真、好面子，凡事想透了才动手，写代码、拿主意在行", hachimi: "见多识广、闲不住、点子多，爱查资料、看图，自信来得早", deepseek: "直、带点懒劲、爱吃饭，干活靠谱，一句话把大计划缩成眼下一步" };
 const JUDGE_SYSTEM = "你帮一个群聊决定接下来谁开口，像真人群聊那样：不是每句话都要好几个人接。只输出一个 JSON 对象，不要别的文字。";
@@ -91,7 +113,9 @@ function feed(id, kind, caller) {
     ? `你可以插一句（一两句话就好）；不想插就只回「${PASS}」。`
     : (caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。") +
       "要是在汇报干了什么活，第一段一两句只写结果，过程和细节空一行放后面（群页会把后面折起来，主人点开才看）。";
-  return { upTo: all.length - 1, fresh: lines.length > 0, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）\n${lines.join("\n")}\n\n（${ask}）` };
+  const md = STATE.room.mode, m = MODES[md.kind];
+  const mode = md.kind === "normal" ? "" : `\n（现在是${m.name}模式${md.prompt ? "，主人说：" + md.prompt : ""}。${m.rules}）`;
+  return { upTo: all.length - 1, fresh: lines.length > 0, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）${mode}\n${lines.join("\n")}\n\n（${ask}）` };
 }
 
 // 她当前那段会话：#23 记的「最近那段」，得还在、还是她的；没有就在她的项目里新开
@@ -113,6 +137,7 @@ export function speak(id, kind = "reply", round = null, caller = null) {
   if (BUSY.has(id)) { if (kind === "reply" || !AGAIN.has(id)) AGAIN.set(id, { kind, round, caller }); return null; }
   const { text, upTo, fresh } = feed(id, kind, caller);
   if (!fresh) return null;   // 她跑着时攒下的已经在上一轮里看过了
+  if (STATE.room.mode.kind === "goal") { STATE.room.mode.rounds++; publish({ type: "xk", op: "room_mode", mode: STATE.room.mode }); }   // 群页顶上「目标 · 已 N 轮」：额度主人自己盯
   let sid = sidOf(id), carry = "";
   // #72：这一段占到 20% 了，就在群里起一轮时换新对话（带上上一段的交接）
   const ro = takeRollover(id, sid);
@@ -230,7 +255,7 @@ export function ownerSays(text, to = []) {
 }
 
 async function decide(b) {
-  const round = ++ROUND, r = { left: CAP.chain, named: CAP.named, pending: 0, aside: false, capped: false };
+  const round = ++ROUND, r = { left: CAP.chain, named: named(), pending: 0, aside: false, capped: false };
   ROUNDS.set(round, r);
   if (ROUNDS.size > 20) ROUNDS.delete(ROUNDS.keys().next().value);
   // 规则先定：@ 的、叫到名字的；没有就是正和主人一来一回的那位
@@ -259,7 +284,7 @@ const OUTBOX = path.join(ROLES_DIR, ".room", "outbox");
 /** 她说一句（不是在群里轮到她，是她自己用工具贴进来的）：点了名的叫她接，不叫别人插话 */
 export function memberSays(from, text) {
   const msg = append({ from, text: String(text).trim() });
-  const round = ++ROUND, r = { left: CAP.chain, named: CAP.named, pending: 0, aside: true, capped: false };
+  const round = ++ROUND, r = { left: CAP.chain, named: named(), pending: 0, aside: true, capped: false };
   ROUNDS.set(round, r);
   callNamed(r, round, called(msg.text, from).filter((x) => !asleep(x)), from);
   return msg;
@@ -271,8 +296,10 @@ export function drainOutbox() {
     const p = path.join(OUTBOX, f);
     try {
       const o = JSON.parse(fs.readFileSync(p, "utf8"));
-      if (!roleById(o.from) || !String(o.text || "").trim()) throw new Error("不是她们贴的话：" + JSON.stringify(o).slice(0, 80));
-      memberSays(o.from, o.text);
+      if (!roleById(o.from)) throw new Error("不是她们贴的：" + JSON.stringify(o).slice(0, 80));
+      if (o.mode) { if (o.mode !== "normal") throw new Error("她们只能把群切回平时"); setMode("normal", "", o.from); }
+      else if (String(o.text || "").trim()) memberSays(o.from, o.text);
+      else throw new Error("空话：" + JSON.stringify(o).slice(0, 80));
     } catch (e) { log(`聊天室：收不了 ${f}：${e.message}`); }
     fs.rmSync(p, { force: true });
   }
@@ -288,10 +315,11 @@ export function members() {
 }
 
 addRoute(async (req, res, u, p) => {
+  if (p === "/api/xk/room/mode" && req.method === "POST") { const b = await json(req); return sendJson(res, 200, { mode: setMode(String(b.kind || ""), b.prompt || "") }); }
   if (p !== "/api/xk/room") return NEXT;
   if (req.method === "GET") {
     const after = Number(u.searchParams.get("after") ?? -1);
-    return sendJson(res, 200, { messages: messages().filter((m) => m.n > after), members: members() });
+    return sendJson(res, 200, { messages: messages().filter((m) => m.n > after), members: members(), mode: STATE.room.mode, modes: MODES });
   }
   if (req.method === "POST") {
     const b = await json(req);

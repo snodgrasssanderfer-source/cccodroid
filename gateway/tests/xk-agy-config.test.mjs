@@ -83,7 +83,6 @@ test("安卓上 agy（Go）起不了应用目录里的程序（#101）：MCP 让
     assert.match(m.args[1], /xk-memory-mcp\.mjs$/);
     const env = agyEnv();
     assert.equal(env.SHELL, "/system/bin/sh");
-    assert.ok(env.TERMUX_VERSION, "让 agy 认成 Termux：一开始就用文件存凭证，不起 dbus-launch");
     const dir = env.PATH.split(":")[0];
     for (const n of ["bash", "sh"]) assert.equal(fs.readlinkSync(path.join(dir, n)), "/system/bin/sh", "PATH 最前面的 bash / sh 指向系统的 sh");
   } finally { GO_EXEC.android = false; fs.writeFileSync(MCP, ""); }

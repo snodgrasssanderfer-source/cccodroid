@@ -11,7 +11,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { routeXk } from "../gw/xk.mjs";
-import { ASIDE_GAP, CAP, CAPPED, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom, roomReply } from "../gw/xk-room.mjs";
+import { ASIDE_GAP, CAP, CAPPED, PACE, PASS, drainOutbox, messages, ownerSays, resetRoom, roomReply, setMode } from "../gw/xk-room.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ASK } from "../gw/xk-memory.mjs";
@@ -198,6 +198,56 @@ test("头像卡片的上下文：她那段每轮结束都记（私聊也算）�
   for (const h of END_HOOKS) h({ id: "p1", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 48000, context_window: 200000 } });
   for (const h of END_HOOKS) h({ id: "p2", auto: "xk-diary", sessionId: null, cwd: fs.realpathSync(roleDir("xiaoke")) }, { usage: { context_tokens: 999, context_window: 200000 } });
   assert.deepEqual({ ...STATE.room.usage.xiaoke, at: 0 }, { used: 48000, window: 200000, at: 0 });
+});
+
+test("目标模式（#108）：点名接话不设上限、群上下文带目标和规矩、算轮数；小克用 room_mode 切回平时，只能切回平时", async () => {
+  setMode("goal", "把小丑牌的出牌工具做完");
+  assert.match(said().at(-1)[1], /主人开了目标模式：把小丑牌的出牌工具做完/);
+  await ownerSays("小克，开始吧").decided;
+  assert.match(queued[0].message, /现在是目标模式，主人说：把小丑牌的出牌工具做完。围着这个目标一直干到完成/);
+  answer(queued[0], "xiaoke", "小鱼，你先写桩子");
+  await tick();
+  let last = queued.at(-1), who = "deepseek";
+  for (let i = 0; i < CAP.named + 4; i++) {
+    const next = who === "deepseek" ? "xiaoke" : "deepseek";
+    answer(last, who, `${next === "xiaoke" ? "小克" : "小鱼"}，该你了`);
+    await tick();
+    last = queued.at(-1); who = next;
+  }
+  assert.ok(queued.length > 1 + CAP.named, "目标模式里点名接话不停在六句");
+  assert.ok(!said().some(([f, t]) => f === "system" && t === CAPPED));
+  assert.ok(STATE.room.mode.rounds >= queued.length, "每次开口都算一轮");
+  // 小克判断做完了：room_mode 走 outbox 切回平时；她们开不了别的模式
+  const box = path.join(path.dirname(roleDir("xiaoke")), ".room", "outbox");
+  fs.mkdirSync(box, { recursive: true });
+  fs.writeFileSync(path.join(box, "1-a.json"), JSON.stringify({ from: "deepseek", mode: "goal" }));
+  drainOutbox();
+  assert.equal(STATE.room.mode.kind, "goal", "她们只能切回平时");
+  const mcp = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), roleDir("xiaoke")], { encoding: "utf8",
+    input: [{ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "room_mode", arguments: {} } }].map((m) => JSON.stringify(m)).join("\n") + "\n" });
+  assert.match(mcp.stdout, /切回平时/);
+  drainOutbox();
+  assert.equal(STATE.room.mode.kind, "normal");
+  assert.equal(said().at(-1)[1], "小克把群切回了平时");
+});
+
+test("计划模式（#108）：群上下文带「不动手」的规矩；平时不带；接口能切，没有的模式报错", async () => {
+  const call = async (method, p, body) => {
+    const req = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []); req.method = method; req.url = p; req.headers = {};
+    let code = 0, out = "";
+    const res = { headersSent: false, writeHead(c) { code = c; this.headersSent = true; }, setHeader() {}, end(b) { out = String(b || ""); } };
+    await routeXk(req, res, new URL(p, "http://x"), p);
+    return { code, body: out ? JSON.parse(out) : null };
+  };
+  assert.equal((await call("POST", "/api/xk/room/mode", { kind: "plan", prompt: "先商量直播怎么排" })).code, 200);
+  assert.equal((await call("GET", "/api/xk/room")).body.mode.kind, "plan");
+  await ownerSays("小克你怎么看").decided;
+  assert.match(queued[0].message, /现在是计划模式，主人说：先商量直播怎么排。这一轮只商量不动手[\s\S]*不改文件、不装东西、不重启网关/);
+  assert.equal((await call("POST", "/api/xk/room/mode", { kind: "nope" })).code, 400);
+  await call("POST", "/api/xk/room/mode", { kind: "normal" });
+  answer(queued[0], "xiaoke", "好");
+  await ownerSays("小克在吗").decided;
+  assert.doesNotMatch(queued.at(-1).message, /模式/);
 });
 
 test("room_say：她在私聊里用工具往群里说一句，点了名的那位接（分派）；room_read 看得到群里的话", () => {

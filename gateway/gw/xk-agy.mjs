@@ -98,9 +98,8 @@ function shellDir() {
 }
 export const agyEnv = () => {
   const env = { ...process.env, HOME: CFG.home };
-  // TERMUX_VERSION：agy 有个专认 Termux 的检测（keyring_detector_termux.go），认出来就一开始用文件存凭证、不去起 dbus-launch。
-  // 不然它先试系统凭证管理器、起 dbus-launch 被拒，MCP 正好在这个空档查登录用户、查不到就不再加载（0.3.20 真机，#101）
-  if (GO_EXEC.android) Object.assign(env, { SHELL: SYS_SH, PATH: shellDir() + ":" + (process.env.PATH || ""), TERMUX_VERSION: process.env.TERMUX_VERSION || "0.118.0" });
+  // MCP 能挂上靠的是上面 linker64 那一层（0.3.21 真机，#101）；它照样认得出是安卓（日志「Android (no OS keyring) detected」）
+  if (GO_EXEC.android) Object.assign(env, { SHELL: SYS_SH, PATH: shellDir() + ":" + (process.env.PATH || "") });
   return env;
 };
 
