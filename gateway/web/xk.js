@@ -333,6 +333,7 @@
           loadRoles().then(() => { paintHead(); if ($("#xk-p-roles.on")) renderRoles(); }).catch(() => {});
         } else if (ev.op === "handover_none") { peek("sleeping"); toast(`${rname(ev.from)}睡着了`, ev.reason, sprite(ev.from, "sleeping"), true); }
         else if (ev.op === "room") roomMsg(ev.msg);
+        else if (ev.op === "room_mode") roomModePaint(ev.mode);
         else if (ev.op === "room_typing") roomTyping(ev.role, ev.on);
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
         else if (ev.op === "pad_pending" || ev.op === "pad_paired") {
@@ -1354,10 +1355,35 @@
     box.innerHTML = ms.map((m) => { const st = roomTalking.has(m.id) ? "talk" : m.state === "sleep" ? "sleep" : m.state === "talk" ? "talk" : "idle";
       return `<button class="xk-rm-chip xk-press${roomTo.has(m.id) ? " on" : ""}" data-id="${m.id}" style="--c:${rc(m.id)}"><img src="${bub(m.id, st)}" alt=""><span>${rname(m.id)}<small>${st === "sleep" ? "睡着了" : st === "talk" ? "在说…" : "在群里"}</small></span></button>`; }).join("");
   }
+  // 群的四种模式（#108）：平时 / 计划 / 目标 / 直播，带一段补充说明；不是平时就在成员下面挂一条
+  let roomModes = {}, roomModeNow = { kind: "normal", prompt: "", rounds: 0 };
+  function roomModePaint(m) {
+    roomModeNow = m || roomModeNow;
+    if (!roomEl) return;
+    const k = roomModeNow.kind, name = (roomModes[k] || {}).name || k, bar = $(".xk-rm-mode", roomEl);
+    $(".xk-rm-modebtn", roomEl).textContent = name;
+    $(".xk-rm-modebtn", roomEl).classList.toggle("on", k !== "normal");
+    bar.hidden = k === "normal";
+    bar.textContent = `${name}模式${roomModeNow.prompt ? "：" + roomModeNow.prompt : ""}${k === "goal" ? ` · 已 ${roomModeNow.rounds || 0} 轮` : ""}`;
+  }
+  const MODE_TIP = { normal: "闲聊，接话照平时的上限", plan: "只商量不动手：查、读、讨论，小克收成计划等你点头", goal: "给一个目标做到完：点名接话不设上限，小克判断做完了切回平时", live: "直播：一人操作一人旁观，同一时刻一个人出声" };
+  function modeSheet() {
+    let pick = roomModeNow.kind;
+    openSheet(`<h2>群的模式</h2><div class="xk-rm-modes">${Object.entries(roomModes).map(([k, m]) => `<button class="xk-press${k === pick ? " on" : ""}" data-k="${k}"><b>${esc(m.name)}</b><small>${esc(MODE_TIP[k] || "")}</small></button>`).join("")}</div>
+      <textarea class="xk-rm-modeprompt" rows="3" placeholder="补充说明：这一轮的目标、要商量的事、今天播什么（平时可以不填）">${pick === "normal" ? "" : esc(roomModeNow.prompt || "")}</textarea>
+      <button class="xk-wide xk-press" id="xk-rm-modego">切换</button>`, (s) => {
+      $(".xk-rm-modes", s).onclick = (e) => { const b = e.target.closest("[data-k]"); if (!b) return; pick = b.dataset.k; s.querySelectorAll(".xk-rm-modes [data-k]").forEach((x) => x.classList.toggle("on", x === b)); SFX.play("toggle"); };
+      $("#xk-rm-modego", s).onclick = async () => {
+        try { roomModePaint((await api("/api/xk/room/mode", { method: "POST", body: { kind: pick, prompt: $(".xk-rm-modeprompt", s).value } })).mode); closeSheet(); }
+        catch (e) { fail(e); }
+      };
+    });
+  }
   async function roomLoad() {
     const r = await api("/api/xk/room?after=" + roomLast);
     for (const m of r.messages) roomMsg(m, true);
     roomPaintMembers(r.members);
+    roomModes = r.modes || roomModes; roomModePaint(r.mode);
     roomScroll();
   }
   function roomScroll() { const l = roomEl && $(".xk-rm-list", roomEl); if (l) l.scrollTop = l.scrollHeight; }
@@ -1397,15 +1423,18 @@
     roomEl = document.createElement("section"); roomEl.id = "xk-room"; roomEl.setAttribute("aria-label", "我们仨的群");
     roomEl.innerHTML = `<div class="xk-subh xk-rm-h" style="background-image:url('${art("room/room_header")}')"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>我们仨</h2><button class="xk-rm-exp xk-press" aria-label="导出长图">${svg("export")}</button></div>
       <div class="xk-rm-mem"></div>
+      <button class="xk-rm-mode xk-press" hidden></button>
       <div class="xk-rm-pickwho">${PICK_WHO.map(([id, n]) => `<button class="xk-press" data-who="${id}"${id === "all" ? "" : ` style="--c:${id === "owner" ? "var(--accent)" : rc(id)}"`}>${n}</button>`).join("")}</div>
       <div class="xk-rm-list"><div class="xk-rm-empty"><img src="${art("room/room_empty")}" alt=""><p>三个人都在，等你开口。点上面的头像可以只叫她接话。</p></div></div>
       <div class="xk-rm-typing"></div>
       <div class="xk-rm-pickbar"><button class="xk-press xk-rm-pick-no">取消</button><span></span><button class="xk-press xk-rm-pick-go">生成长图</button></div>
-      <form class="xk-rm-in"><textarea rows="1" placeholder="在群里说点什么…" enterkeyhint="send"></textarea><button class="xk-press" aria-label="发送">${svg("go")}</button></form>`;
+      <form class="xk-rm-in"><button type="button" class="xk-rm-modebtn xk-press" aria-label="切换群的模式">平时</button><textarea rows="1" placeholder="在群里说点什么…" enterkeyhint="send"></textarea><button class="xk-press" aria-label="发送">${svg("go")}</button></form>`;
     document.body.appendChild(roomEl); void roomEl.offsetWidth; roomEl.classList.add("on"); SFX.play("sheet");
     roomLast = -1; roomTo = new Set(); roomMsgs.clear(); roomPick.clear();
     $(".xk-back", roomEl).onclick = () => { if (!pickOff()) closeRoom(); };
     $(".xk-rm-exp", roomEl).onclick = () => pickOn();
+    $(".xk-rm-modebtn", roomEl).onclick = () => modeSheet();
+    $(".xk-rm-mode", roomEl).onclick = () => modeSheet();
     $(".xk-rm-pick-no", roomEl).onclick = () => pickOff();
     $(".xk-rm-pick-go", roomEl).onclick = () => {
       const list = [...roomPick].sort((a, b) => a - b).map((n) => roomMsgs.get(n)).filter(Boolean);

@@ -38,6 +38,8 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最多几张，默认 10" } } } },
   { name: "room_say", description: "往三个人的群里说一句（主人也看得到）。话里点到谁的名字（小克、哈基米、小鱼），她就会在群里接。你不在群里的时候也能用：把主人交代的事交给更合适的人——写清做什么、做到什么程度、做完在群里说一声。之后用 room_read 看她回了什么。",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要在群里说的话；要交给谁就点她的名" } } } },
+  { name: "room_mode", description: "把群切回平时。主人开了目标模式、你判断目标已经达成并在群里报完总结果时用；主人私聊里叫停也用它。只能切回平时，开别的模式由主人来。",
+    inputSchema: { type: "object", properties: {} } },
   { name: "room_read", description: "看三个人的群里最近说了什么（主人和三个人的话都在）。交出去的事办到哪了、群里聊过什么，用它看。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最近几条，默认 20" } } } },
   { name: "context_next", description: "上下文过线时用：告诉网关这一轮之后是压缩这段对话（compact）还是换新对话（new）。只在你收到「过线了」那句提示时用；不选就按 new。",
@@ -76,6 +78,14 @@ function call(name, a) {
     fs.writeFileSync(f + ".tmp", JSON.stringify({ from: path.basename(dir), text, at: Date.now() }));
     fs.renameSync(f + ".tmp", f);
     return "贴进群里了，网关一两秒内送到；点了名的她会在群里接。";
+  }
+  if (name === "room_mode") {
+    const box = path.join(path.dirname(dir), ".room", "outbox");
+    fs.mkdirSync(box, { recursive: true });
+    const f = path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}-mode.json`);
+    fs.writeFileSync(f + ".tmp", JSON.stringify({ from: path.basename(dir), mode: "normal", at: Date.now() }));
+    fs.renameSync(f + ".tmp", f);
+    return "群一两秒内切回平时，群里会有一句提示。";
   }
   if (name === "room_read") {
     const f = path.join(os.homedir(), ".config", "xiaoke", "room.jsonl");
