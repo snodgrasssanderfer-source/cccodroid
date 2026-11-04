@@ -25,7 +25,9 @@ def load_conf():
          "gsv_base_gpt": "", "gsv_base_sovits": "", "gsv_extra": {}, "asr_device": "cpu", "code": "",
          # 每人一份的调音（主人电脑上的 Codex 和主人一起调的）：gsv_by_role 叠在 gsv_extra 上；gsv_phrasing 见 mandarin_phrasing.py；
          # gsv_rhythm 见 mandarin_rhythm.py，tempo / equalizer 要 ffmpeg
-         "gsv_by_role": {}, "gsv_phrasing": {}, "gsv_rhythm": {}, "ffmpeg": "tools/ffmpeg/bin/ffmpeg.exe"}
+         "gsv_by_role": {}, "gsv_phrasing": {}, "gsv_rhythm": {}, "ffmpeg": "tools/ffmpeg/bin/ffmpeg.exe",
+         # 谁的声音接入平板：null＝放好音色的都接；写成名单就只接名单里的（主人 11-04：先只接哈基米，另两位训练到满意再加）
+         "tts_roles": None}
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
     if not c["code"]:
@@ -37,6 +39,11 @@ def load_conf():
 
 
 C = load_conf()
+
+
+def ready():
+    """接入平板的人：放好了音色，而且在 tts_roles 名单里（没写名单就都算）"""
+    return [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav")) and (C["tts_roles"] is None or r in C["tts_roles"])]
 GPU = threading.Lock()   # 一次只念一句：显存就这么多
 
 
@@ -147,11 +154,13 @@ class H(BaseHTTPRequestHandler):
             return self.send(401, {"error": "配对码不对：看电脑上语音服务窗口里显示的那个"})
         if self.command == "GET" and self.path == "/health":
             return self.send(200, {"name": "xkvoice", "tts": TTS.name, "asr": True, "relay": C["relay_port"],
-                                   "voices": [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav"))]})
+                                   "voices": ready()})
         if self.command == "POST" and self.path == "/tts":
             q = json.loads(self.body() or b"{}")
             if q.get("role") not in ROLES or not str(q.get("text", "")).strip():
                 return self.send(400, {"error": "要 role（xiaoke/hachimi/deepseek）和 text"})
+            if q["role"] not in ready():
+                return self.send(409, {"error": f"{q['role']} 的声音还没接入（config.json 的 tts_roles）"})
             t = time.time()
             wav = TTS.say(q["role"], str(q["text"]))
             print(f"念 {q['role']}：{len(q['text'])} 字，{time.time() - t:.1f} 秒", flush=True)
@@ -203,13 +212,13 @@ if __name__ == "__main__":
     Relay(C["relay_port"])
     zc = advertise(C["port"], C["relay_port"], addrs)
     srv = ThreadingHTTPServer(("0.0.0.0", C["port"]), H)
-    have = [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav"))]
+    have = ready()
     print("\n语音服务开好了。", flush=True)
     print(f"  配对码：{C['code']}（在平板「小克 · 平板」里填一次）", flush=True)
     port = C["port"]
     print(f"  地址：{'、'.join(f'{a}:{port}' for a in addrs)}（手机和平板的中转在 {C['relay_port']}）", flush=True)
     none = "还没有（把录音和它说的原话放进 voices 文件夹，见 README）"
-    print(f"  放好音色的：{'、'.join(have) or none}", flush=True)
+    print(f"  接入平板的声音：{'、'.join(have) or none}" + (f"（名单 tts_roles：{'、'.join(C['tts_roles'])}）" if C["tts_roles"] is not None else ""), flush=True)
     print("  关掉这个窗口就停了。\n", flush=True)
     try:
         srv.serve_forever()
