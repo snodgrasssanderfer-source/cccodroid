@@ -39,6 +39,7 @@
 - **平板找不到电脑**：两台要连同一个 Wi‑Fi（或者都连在这台电脑开的热点上）。电脑上的代理软件开着 TUN / 虚拟网卡模式时，要让它放行局域网。
 - **语速、切句**：`config.json` 的 `gsv_extra` 里写的会原样加进每次请求，比如 `"gsv_extra": {"speed_factor": 1.1}`（参数见整合包 `api_v2.py` 开头的说明）。
 - **每人单独调**（11-04 主人和电脑上的 Codex 一起调的）：`gsv_by_role` 按人叠在 `gsv_extra` 上；`gsv_phrasing` 写 `"questions"` 的人，长问句在中间逗号处断开分两半念（`mandarin_phrasing.py`）；`gsv_rhythm` 里写了的人，念完再收长停顿、可选变速和均衡（`mandarin_rhythm.py`，变速和均衡要 `tools\ffmpeg\bin\ffmpeg.exe`，路径可在 `ffmpeg` 一项改）。
+- **只接入一部分人的声音**：`config.json` 写 `"tts_roles": ["hachimi"]`，平板就只念名单里的人，别人只出文字（主人 11-04：先只接哈基米）。不写这一项就是放好音色的都接。改完重开 `start.bat`。
 - **改端口、让「听」用显卡**：`config.json` 的 `port`、`asr_device`（`cpu` / `cuda`），重开 `start.bat`。
 - 其他报错：把窗口里的报错截图发给云端。
 
