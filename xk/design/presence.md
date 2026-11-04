@@ -135,4 +135,4 @@
 
 ## 还没定的
 - 聊天室插话的频率上限。
-- 哈基米陪玩：agy 要接上设备工具（`device-mcp`）才能操作屏幕。11-04：agy 1.4.12 在手机上一个 MCP 都起不来（启动时认不出登录用户，MCP 要过的管控多半没过；它内置文档说全局配置就是 `~/.gemini/config/mcp_config.json`），先让她在终端里调 `gateway/gw/xk-tool.mjs`（同一个 MCP 服务，起一次调一次），主人想先让她自己试着玩。根因还要看 agy 的日志。
+- 哈基米陪玩：agy 要接上设备工具（`device-mcp`）才能操作屏幕。11-04：agy 1.4.12 在手机上一个 MCP 都起不来（启动时认不出登录用户，MCP 要过的管控多半没过；它内置文档说全局配置就是 `~/.gemini/config/mcp_config.json`），先让她在终端里调 `gateway/gw/xk-tool.mjs`（同一个 MCP 服务，起一次调一次），主人想先让她自己试着玩。根因（小克、小鱼 11-04 查实）：安卓不让直接 exec 应用目录里的程序，别的进程靠 LD_PRELOAD 垫片转 linker64，Go 写的 agy 起子进程绕过了垫片，bash、MCP 的 node、凭证用的 dbus-launch 全被拒；「认不出登录用户」也是 dbus-launch 被拒的空档里 MCP 查用户落空。0.3.20：MCP 写成 `linker64 node 脚本`，agy 的 shell 换成 `/system/bin/sh`。

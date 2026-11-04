@@ -78,7 +78,29 @@ const version = () => {
   try { VER = { mt, v: execFileSync(AGY, ["--version"], { encoding: "utf8", timeout: 20000, env: agyEnv() }).trim() }; return VER.v; }
   catch (e) { return "运行失败：" + (e.stderr || e.message).toString().slice(0, 300); }
 };
-const agyEnv = () => ({ ...process.env, HOME: CFG.home });
+// 安卓上不能直接 exec 应用目录里的程序，别的进程靠 LD_PRELOAD 的垫片转给 linker64 去加载。agy 是 Go 写的，起子进程直接走系统调用、
+// 垫片管不到，起 bash、node（MCP）、dbus-launch 全被内核拒（小克、小鱼 11-04 在 #101 查出来的）。所以 agy 要起的都换成系统分区的程序：
+// MCP 写成「linker64 node 脚本…」；shell 用 /system/bin/sh（SHELL 指过去，PATH 最前面再放指向它的 bash / sh 软链接，
+// 执行软链接时内核看的是它指向的系统程序）。sh 再起应用目录里的东西就经过 libc，垫片接得上。
+export const GO_EXEC = { android: process.platform === "android" && fs.existsSync("/system/bin/linker64") };
+const LINKER = "/system/bin/linker64", SYS_SH = "/system/bin/sh";
+/** MCP 服务的 command / args：安卓上让 linker64 去加载 */
+export function goCommand(command, args) { return GO_EXEC.android ? { command: LINKER, args: [command, ...args] } : { command, args }; }
+function shellDir() {
+  const d = path.join(XK_HOME, "agy-bin");
+  fs.mkdirSync(d, { recursive: true });
+  for (const n of ["bash", "sh"]) {
+    const f = path.join(d, n);
+    let cur = null; try { cur = fs.readlinkSync(f); } catch {}
+    if (cur !== SYS_SH) { fs.rmSync(f, { force: true }); fs.symlinkSync(SYS_SH, f); }
+  }
+  return d;
+}
+export const agyEnv = () => {
+  const env = { ...process.env, HOME: CFG.home };
+  if (GO_EXEC.android) Object.assign(env, { SHELL: SYS_SH, PATH: shellDir() + ":" + (process.env.PATH || "") });
+  return env;
+};
 
 /** 人设 + 世界书 → hachimi/AGENTS.md（每轮前重写，导入后立刻生效） */
 function writeAgents() {
@@ -107,10 +129,10 @@ function toolsHowTo() {
  *  （google-antigravity/antigravity-cli#60；11-03 起她的工具全没了，agy 会自己更新，#101）。别的条目原样留着 */
 export const AGY_MCP_FILES = () => ["config", "antigravity-cli"].map((d) => path.join(CFG.home, ".gemini", d, "mcp_config.json"));
 export function ensureMcp() {
-  const want = { "xk-memory": { command: process.execPath, args: [MEM_MCP, DIR] } };
+  const want = { "xk-memory": goCommand(process.execPath, [MEM_MCP, DIR]) };
   // 设备工具（通知、剪贴板、读屏点按…）：和 Claude 那两位挂的是同一个（usage.mjs），用哪些由应用里的开关定
   const dev = deviceMcpConfig();
-  if (dev) { const { type, ...d } = JSON.parse(dev).mcpServers.device; want.device = d; }
+  if (dev) { const { type, command, args, ...d } = JSON.parse(dev).mcpServers.device; want.device = { ...d, ...goCommand(command, args || []) }; }
   for (const f of AGY_MCP_FILES()) {
     let cfg = {};
     // agy 第一次跑会建一个 0 字节的空文件（11-02 真机）：当空配置；里面有东西却不是 JSON 才报错，不覆盖主人的文件
