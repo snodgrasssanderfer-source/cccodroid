@@ -8,7 +8,7 @@ import { CFG, PATHS } from "../gw/config.mjs";
 import { onPublish } from "../gw/bus.mjs";
 import { ensureRoles } from "../gw/xk-roles.mjs";
 import { STATE } from "../gw/xk-core.mjs";
-import { AGY, checkModels, parseModels, runAgy, stopAgy } from "../gw/xk-agy.mjs";
+import { AGY, GO_EXEC, agyEnv, checkModels, ensureMcp, parseModels, runAgy, stopAgy } from "../gw/xk-agy.mjs";
 import { fakeAgy } from "./fixtures/xk-fake-agy.mjs";
 
 const MCP = path.join(CFG.home, ".gemini", "config", "mcp_config.json");
@@ -70,6 +70,25 @@ test("没 SUCCESS 但话已经出来了（收尾报「流中断」，#101）：�
   const sid = evs.find((e) => e.type === "init").sessionId;
   const f = fs.readdirSync(PATHS.projects, { recursive: true }).find((x) => String(x).endsWith(sid + ".jsonl"));
   assert.match(fs.readFileSync(path.join(PATHS.projects, String(f)), "utf8"), /我觉得先试第二种。/);
+});
+
+test("安卓上 agy（Go）起不了应用目录里的程序（#101）：MCP 让 linker64 去加载 node，shell 换成 /system/bin/sh", () => {
+  GO_EXEC.android = true;
+  try {
+    fs.writeFileSync(MCP, "");
+    ensureMcp();
+    const m = JSON.parse(fs.readFileSync(MCP, "utf8")).mcpServers["xk-memory"];
+    assert.equal(m.command, "/system/bin/linker64");
+    assert.equal(m.args[0], process.execPath, "linker64 后面跟真的 node，再跟脚本和参数");
+    assert.match(m.args[1], /xk-memory-mcp\.mjs$/);
+    const env = agyEnv();
+    assert.equal(env.SHELL, "/system/bin/sh");
+    const dir = env.PATH.split(":")[0];
+    for (const n of ["bash", "sh"]) assert.equal(fs.readlinkSync(path.join(dir, n)), "/system/bin/sh", "PATH 最前面的 bash / sh 指向系统的 sh");
+  } finally { GO_EXEC.android = false; fs.writeFileSync(MCP, ""); }
+  ensureMcp();
+  assert.equal(JSON.parse(fs.readFileSync(MCP, "utf8")).mcpServers["xk-memory"].command, process.execPath, "不是安卓照旧直接起 node");
+  assert.equal(agyEnv().SHELL, process.env.SHELL);
 });
 
 test("模型清单：按 Tab 分代号和名字；日志行不算模型", () => {
