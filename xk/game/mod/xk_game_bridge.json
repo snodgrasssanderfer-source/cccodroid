@@ -1,0 +1,11 @@
+{
+  "id": "xk_game_bridge",
+  "name": "XK Game Bridge",
+  "author": ["Codex"],
+  "description": "Read decision metadata for the Python game bridge.",
+  "prefix": "xkgb",
+  "main_file": "xk_game_bridge.lua",
+  "priority": 100,
+  "version": "0.1.0",
+  "dependencies": ["Steamodded (>=1.~)", "balatrobot (>=1.5.1)"]
+}

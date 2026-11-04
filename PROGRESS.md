@@ -168,3 +168,9 @@
 - 二次开发审计（上游 v0.5.16）：godot-test 仓库 `claude/ccc-audit-20261101` 分支，`projects/xiaoke-ccc/docs/CCC_AUDIT.md`。
 - 旧版小克（原生安卓，DSH 底座，0.15.0，主人已放弃）：godot-test 仓库 `claude/gpt-review-20261101` 分支，`projects/xiaoke-android/`。
 - 2026-11-01 上一个账号被封禁，没留交接；这份从那天起由新会话维护。
+
+## 电脑牌局桥（11-04，#111）
+- 主人 11-04 定的：“是的，交给你了，开工吧”；电脑端由 Codex 实现，小克接手机工具与真机验收。
+- `xk/game/` 提供 Python `/state`、`/act`、长轮询 `/events`，配套模组采动态合法动作与动画就绪状态；沿用游戏规则，桥不选择出牌策略。
+- 35 项离线测试通过。最终 RED/WHITE、CODEX112、正常速度和声音开启，23 个动作从主菜单打到第二底注，Boss 630/600 分。状态样例、每步耗时和原始事件见 `handoffs/2026-11-04-balatro-bridge/`。
+- 电脑部署 `D:\balatrobot\bridge\`，一键入口 `D:\balatrobot\start-live.bat`；监听 0.0.0.0:12347，专用网络防火墙已放行，电脑访问热点地址成功。手机端连接与工具对接交小克，不把电脑自测当手机实测。

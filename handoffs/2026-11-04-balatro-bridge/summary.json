@@ -1,0 +1,77 @@
+{
+  "seed": "CODEX112",
+  "deck": "RED",
+  "stake": "WHITE",
+  "gamespeed": 1,
+  "audio": true,
+  "actions": 23,
+  "wall_ms_min": 775,
+  "wall_ms_max": 20123,
+  "wall_ms_median": 2633,
+  "final_state": {
+    "state": "ROUND_EVAL",
+    "ante": 2,
+    "round": 3,
+    "money": 8,
+    "deck": "RED",
+    "stake": "WHITE",
+    "ready": true,
+    "language": "zh_CN",
+    "jokers": [
+      {
+        "i": 0,
+        "name": "占卜师",
+        "key": "j_fortune_teller",
+        "set": "JOKER",
+        "effect": "本赛局内每使用过一张塔罗牌 这张小丑获得+1倍率 （当前为+0）",
+        "enhancement": "",
+        "sell": 3
+      }
+    ],
+    "consumables": [],
+    "capacity": {
+      "jokers": 5,
+      "consumables": 2
+    },
+    "blinds": {
+      "boss": {
+        "tag_effect": "",
+        "status": "DEFEATED",
+        "name": "The Club",
+        "type": "BOSS",
+        "tag_name": "",
+        "effect": "所有梅花牌 都被削弱",
+        "score": 1600
+      },
+      "small": {
+        "tag_effect": "获得一个免费的 超级秘术包",
+        "status": "DEFEATED",
+        "name": "Small Blind",
+        "type": "SMALL",
+        "tag_name": "Charm Tag",
+        "effect": "",
+        "score": 800
+      },
+      "big": {
+        "tag_effect": "下一家店内的 初始卡牌和补充包 均为免费",
+        "status": "DEFEATED",
+        "name": "Big Blind",
+        "type": "BIG",
+        "tag_name": "Coupon Tag",
+        "effect": "",
+        "score": 1200
+      }
+    },
+    "score": 630,
+    "spectator_text": "本轮进入结算，累计 630 分。",
+    "actions": {
+      "cash_out": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "seq": 37
+  }
+}

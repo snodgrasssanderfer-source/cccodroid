@@ -1,0 +1,1450 @@
+{
+  "seed": "CODEX111",
+  "ante_num": 1,
+  "won": false,
+  "deck": "RED",
+  "round": {
+    "hands_left": 4,
+    "reroll_cost": 5,
+    "chips": 0,
+    "discards_left": 4,
+    "hands_played": 0,
+    "discards_used": 0
+  },
+  "consumables": {
+    "count": 0,
+    "limit": 2,
+    "cards": [],
+    "highlighted_limit": 1
+  },
+  "stake": "WHITE",
+  "hand": {
+    "count": 8,
+    "limit": 8,
+    "cards": [
+      {
+        "id": 47,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "A",
+          "effect": "+11筹码",
+          "suit": "H"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "H_A",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 50,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "Q",
+          "effect": "+10筹码",
+          "suit": "H"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "H_Q",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 51,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "T",
+          "effect": "+10筹码",
+          "suit": "H"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "H_T",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 38,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "T",
+          "effect": "+10筹码",
+          "suit": "D"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "D_T",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 44,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "7",
+          "effect": "+7筹码",
+          "suit": "H"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "H_7",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 53,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "3",
+          "effect": "+3筹码",
+          "suit": "S"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "S_3",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 14,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "3",
+          "effect": "+3筹码",
+          "suit": "C"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "C_3",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 39,
+        "name": "",
+        "set": "DEFAULT",
+        "label": "Base Card",
+        "value": {
+          "rank": "2",
+          "effect": "+2筹码",
+          "suit": "H"
+        },
+        "state": [],
+        "modifier": [],
+        "key": "H_2",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      }
+    ],
+    "highlighted_limit": 5
+  },
+  "bridge": {
+    "play_blocked": false,
+    "play_limit": 5,
+    "starts": [
+      {
+        "deck": "RED",
+        "stakes": [
+          "WHITE"
+        ]
+      }
+    ],
+    "pending_events": 0,
+    "pack_choices": 0,
+    "language": "zh_CN",
+    "forced_cards": [],
+    "blind": {
+      "key": "bl_small",
+      "disabled": false,
+      "effect": "",
+      "boss": false,
+      "triggered": false,
+      "name": "小盲注",
+      "score": 300
+    },
+    "consumables": [],
+    "sell": {
+      "consumables": [],
+      "jokers": []
+    },
+    "ready": true,
+    "discard_limit": 5,
+    "available_money": 4,
+    "pack": []
+  },
+  "jokers": {
+    "count": 0,
+    "limit": 5,
+    "cards": [],
+    "highlighted_limit": 1
+  },
+  "used_vouchers": [],
+  "hands": {
+    "Flush House": {
+      "order": 2,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_4",
+          true
+        ],
+        [
+          "D_4",
+          true
+        ]
+      ],
+      "chips": 140,
+      "level": 1,
+      "mult": 14
+    },
+    "Full House": {
+      "order": 6,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "H_K",
+          true
+        ],
+        [
+          "C_K",
+          true
+        ],
+        [
+          "D_K",
+          true
+        ],
+        [
+          "S_2",
+          true
+        ],
+        [
+          "D_2",
+          true
+        ]
+      ],
+      "chips": 40,
+      "level": 1,
+      "mult": 4
+    },
+    "Flush": {
+      "order": 7,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "H_A",
+          true
+        ],
+        [
+          "H_K",
+          true
+        ],
+        [
+          "H_T",
+          true
+        ],
+        [
+          "H_5",
+          true
+        ],
+        [
+          "H_4",
+          true
+        ]
+      ],
+      "chips": 35,
+      "level": 1,
+      "mult": 4
+    },
+    "Pair": {
+      "order": 11,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_K",
+          false
+        ],
+        [
+          "S_9",
+          true
+        ],
+        [
+          "D_9",
+          true
+        ],
+        [
+          "H_6",
+          false
+        ],
+        [
+          "D_3",
+          false
+        ]
+      ],
+      "chips": 10,
+      "level": 1,
+      "mult": 2
+    },
+    "Four of a Kind": {
+      "order": 5,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_J",
+          true
+        ],
+        [
+          "H_J",
+          true
+        ],
+        [
+          "C_J",
+          true
+        ],
+        [
+          "D_J",
+          true
+        ],
+        [
+          "C_3",
+          false
+        ]
+      ],
+      "chips": 60,
+      "level": 1,
+      "mult": 7
+    },
+    "Straight Flush": {
+      "order": 4,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_Q",
+          true
+        ],
+        [
+          "S_J",
+          true
+        ],
+        [
+          "S_T",
+          true
+        ],
+        [
+          "S_9",
+          true
+        ],
+        [
+          "S_8",
+          true
+        ]
+      ],
+      "chips": 100,
+      "level": 1,
+      "mult": 8
+    },
+    "Straight": {
+      "order": 8,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "D_J",
+          true
+        ],
+        [
+          "C_T",
+          true
+        ],
+        [
+          "C_9",
+          true
+        ],
+        [
+          "S_8",
+          true
+        ],
+        [
+          "H_7",
+          true
+        ]
+      ],
+      "chips": 30,
+      "level": 1,
+      "mult": 4
+    },
+    "Three of a Kind": {
+      "order": 9,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_T",
+          true
+        ],
+        [
+          "C_T",
+          true
+        ],
+        [
+          "D_T",
+          true
+        ],
+        [
+          "H_6",
+          false
+        ],
+        [
+          "D_5",
+          false
+        ]
+      ],
+      "chips": 30,
+      "level": 1,
+      "mult": 3
+    },
+    "Flush Five": {
+      "order": 1,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ]
+      ],
+      "chips": 160,
+      "level": 1,
+      "mult": 16
+    },
+    "Two Pair": {
+      "order": 10,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "H_A",
+          true
+        ],
+        [
+          "D_A",
+          true
+        ],
+        [
+          "C_Q",
+          false
+        ],
+        [
+          "H_4",
+          true
+        ],
+        [
+          "C_4",
+          true
+        ]
+      ],
+      "chips": 20,
+      "level": 1,
+      "mult": 2
+    },
+    "Five of a Kind": {
+      "order": 3,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "H_A",
+          true
+        ],
+        [
+          "H_A",
+          true
+        ],
+        [
+          "C_A",
+          true
+        ],
+        [
+          "D_A",
+          true
+        ]
+      ],
+      "chips": 120,
+      "level": 1,
+      "mult": 12
+    },
+    "High Card": {
+      "order": 12,
+      "played": 0,
+      "played_this_round": 0,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "D_Q",
+          false
+        ],
+        [
+          "D_9",
+          false
+        ],
+        [
+          "C_4",
+          false
+        ],
+        [
+          "D_3",
+          false
+        ]
+      ],
+      "chips": 5,
+      "level": 1,
+      "mult": 1
+    }
+  },
+  "money": 4,
+  "state": "SELECTING_HAND",
+  "round_num": 1,
+  "cards": {
+    "count": 44,
+    "limit": 52,
+    "cards": [
+      {
+        "id": 21,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "A",
+          "effect": "+11筹码",
+          "suit": "C"
+        },
+        "key": "C_A",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 42,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "5",
+          "effect": "+5筹码",
+          "suit": "H"
+        },
+        "key": "H_5",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 41,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "4",
+          "effect": "+4筹码",
+          "suit": "H"
+        },
+        "key": "H_4",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 30,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "6",
+          "effect": "+6筹码",
+          "suit": "D"
+        },
+        "key": "D_6",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 15,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "4",
+          "effect": "+4筹码",
+          "suit": "C"
+        },
+        "key": "C_4",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 64,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "T",
+          "effect": "+10筹码",
+          "suit": "S"
+        },
+        "key": "S_T",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 62,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "K",
+          "effect": "+10筹码",
+          "suit": "S"
+        },
+        "key": "S_K",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 32,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "8",
+          "effect": "+8筹码",
+          "suit": "D"
+        },
+        "key": "D_8",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 26,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "2",
+          "effect": "+2筹码",
+          "suit": "D"
+        },
+        "key": "D_2",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 34,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "A",
+          "effect": "+11筹码",
+          "suit": "D"
+        },
+        "key": "D_A",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 52,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "2",
+          "effect": "+2筹码",
+          "suit": "S"
+        },
+        "key": "S_2",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 23,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "K",
+          "effect": "+10筹码",
+          "suit": "C"
+        },
+        "key": "C_K",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 58,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "8",
+          "effect": "+8筹码",
+          "suit": "S"
+        },
+        "key": "S_8",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 54,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "4",
+          "effect": "+4筹码",
+          "suit": "S"
+        },
+        "key": "S_4",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 45,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "8",
+          "effect": "+8筹码",
+          "suit": "H"
+        },
+        "key": "H_8",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 60,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "A",
+          "effect": "+11筹码",
+          "suit": "S"
+        },
+        "key": "S_A",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 19,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "8",
+          "effect": "+8筹码",
+          "suit": "C"
+        },
+        "key": "C_8",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 20,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "9",
+          "effect": "+9筹码",
+          "suit": "C"
+        },
+        "key": "C_9",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 55,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "5",
+          "effect": "+5筹码",
+          "suit": "S"
+        },
+        "key": "S_5",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 24,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "Q",
+          "effect": "+10筹码",
+          "suit": "C"
+        },
+        "key": "C_Q",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 49,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "K",
+          "effect": "+10筹码",
+          "suit": "H"
+        },
+        "key": "H_K",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 63,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "Q",
+          "effect": "+10筹码",
+          "suit": "S"
+        },
+        "key": "S_Q",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 48,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "J",
+          "effect": "+10筹码",
+          "suit": "H"
+        },
+        "key": "H_J",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 25,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "T",
+          "effect": "+10筹码",
+          "suit": "C"
+        },
+        "key": "C_T",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 40,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "3",
+          "effect": "+3筹码",
+          "suit": "H"
+        },
+        "key": "H_3",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 59,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "9",
+          "effect": "+9筹码",
+          "suit": "S"
+        },
+        "key": "S_9",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 22,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "J",
+          "effect": "+10筹码",
+          "suit": "C"
+        },
+        "key": "C_J",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 16,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "5",
+          "effect": "+5筹码",
+          "suit": "C"
+        },
+        "key": "C_5",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 29,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "5",
+          "effect": "+5筹码",
+          "suit": "D"
+        },
+        "key": "D_5",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 37,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "Q",
+          "effect": "+10筹码",
+          "suit": "D"
+        },
+        "key": "D_Q",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 57,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "7",
+          "effect": "+7筹码",
+          "suit": "S"
+        },
+        "key": "S_7",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 17,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "6",
+          "effect": "+6筹码",
+          "suit": "C"
+        },
+        "key": "C_6",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 43,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "6",
+          "effect": "+6筹码",
+          "suit": "H"
+        },
+        "key": "H_6",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 13,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "2",
+          "effect": "+2筹码",
+          "suit": "C"
+        },
+        "key": "C_2",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 36,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "K",
+          "effect": "+10筹码",
+          "suit": "D"
+        },
+        "key": "D_K",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 35,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "J",
+          "effect": "+10筹码",
+          "suit": "D"
+        },
+        "key": "D_J",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 28,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "4",
+          "effect": "+4筹码",
+          "suit": "D"
+        },
+        "key": "D_4",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 56,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "6",
+          "effect": "+6筹码",
+          "suit": "S"
+        },
+        "key": "S_6",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 18,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "7",
+          "effect": "+7筹码",
+          "suit": "C"
+        },
+        "key": "C_7",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 61,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "J",
+          "effect": "+10筹码",
+          "suit": "S"
+        },
+        "key": "S_J",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 31,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "7",
+          "effect": "+7筹码",
+          "suit": "D"
+        },
+        "key": "D_7",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 27,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "3",
+          "effect": "+3筹码",
+          "suit": "D"
+        },
+        "key": "D_3",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 46,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "9",
+          "effect": "+9筹码",
+          "suit": "H"
+        },
+        "key": "H_9",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      },
+      {
+        "id": 33,
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "set": "DEFAULT",
+        "modifier": [],
+        "value": {
+          "rank": "9",
+          "effect": "+9筹码",
+          "suit": "D"
+        },
+        "key": "D_9",
+        "cost": {
+          "buy": 1,
+          "sell": 1
+        }
+      }
+    ],
+    "highlighted_limit": 5
+  },
+  "blinds": {
+    "boss": {
+      "tag_effect": "",
+      "status": "UPCOMING",
+      "name": "The Head",
+      "type": "BOSS",
+      "tag_name": "",
+      "effect": "所有红桃牌 都被削弱",
+      "score": 600
+    },
+    "small": {
+      "tag_effect": "下一回合 +3手牌上限",
+      "status": "CURRENT",
+      "name": "Small Blind",
+      "type": "SMALL",
+      "tag_name": "Juggle Tag",
+      "effect": "",
+      "score": 300
+    },
+    "big": {
+      "tag_effect": "下一家店内的 初始卡牌和补充包 均为免费",
+      "status": "UPCOMING",
+      "name": "Big Blind",
+      "type": "BIG",
+      "tag_name": "Coupon Tag",
+      "effect": "",
+      "score": 450
+    }
+  }
+}

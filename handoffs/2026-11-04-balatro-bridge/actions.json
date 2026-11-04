@@ -1,0 +1,842 @@
+[
+  {
+    "request": {
+      "action": "start",
+      "deck": "RED",
+      "stake": "WHITE",
+      "seed": "CODEX112"
+    },
+    "http_status": 200,
+    "wall_ms": 4976,
+    "act_ms": 4960,
+    "seq": 15,
+    "state": "BLIND_SELECT",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 15,
+        "type": "money_changed",
+        "before": 0,
+        "after": 4,
+        "delta": 4
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "select"
+    },
+    "http_status": 200,
+    "wall_ms": 3606,
+    "act_ms": 3601,
+    "seq": 16,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": []
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        2,
+        3,
+        5,
+        6
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 10832,
+    "act_ms": 10819,
+    "seq": 17,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 17,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "J",
+            "suit": "H"
+          },
+          {
+            "rank": "J",
+            "suit": "D"
+          },
+          {
+            "rank": "4",
+            "suit": "S"
+          },
+          {
+            "rank": "4",
+            "suit": "C"
+          }
+        ],
+        "hands": {
+          "Two Pair": 1
+        },
+        "hand": "Two Pair",
+        "score": 96
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        0,
+        1,
+        4,
+        5
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 10939,
+    "act_ms": 10922,
+    "seq": 18,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 18,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "A",
+            "suit": "C"
+          },
+          {
+            "rank": "A",
+            "suit": "D"
+          },
+          {
+            "rank": "9",
+            "suit": "S"
+          },
+          {
+            "rank": "9",
+            "suit": "C"
+          }
+        ],
+        "hands": {
+          "Two Pair": 1
+        },
+        "hand": "Two Pair",
+        "score": 120
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        4,
+        3,
+        1,
+        2
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2627,
+    "act_ms": 2625,
+    "seq": 19,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 19,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "2",
+            "suit": "S"
+          },
+          {
+            "rank": "6",
+            "suit": "D"
+          },
+          {
+            "rank": "9",
+            "suit": "H"
+          },
+          {
+            "rank": "Q",
+            "suit": "C"
+          },
+          {
+            "rank": "T",
+            "suit": "D"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        4,
+        3,
+        1,
+        2
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2615,
+    "act_ms": 2614,
+    "seq": 20,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 20,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "3",
+            "suit": "H"
+          },
+          {
+            "rank": "8",
+            "suit": "H"
+          },
+          {
+            "rank": "9",
+            "suit": "D"
+          },
+          {
+            "rank": "K",
+            "suit": "D"
+          },
+          {
+            "rank": "T",
+            "suit": "C"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        0,
+        1,
+        4,
+        5,
+        6
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 19172,
+    "act_ms": 19148,
+    "seq": 21,
+    "state": "ROUND_EVAL",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 21,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "A",
+            "suit": "S"
+          },
+          {
+            "rank": "A",
+            "suit": "H"
+          },
+          {
+            "rank": "5",
+            "suit": "S"
+          },
+          {
+            "rank": "5",
+            "suit": "H"
+          },
+          {
+            "rank": "5",
+            "suit": "D"
+          }
+        ],
+        "hands": {
+          "Full House": 1
+        },
+        "hand": "Full House",
+        "score": 308
+      },
+      {
+        "seq": 21,
+        "type": "blind_cleared",
+        "name": "小盲注",
+        "blind": "bl_small",
+        "score": 524,
+        "target": 300
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "cash_out"
+    },
+    "http_status": 200,
+    "wall_ms": 2633,
+    "act_ms": 2614,
+    "seq": 22,
+    "state": "SHOP",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 22,
+        "type": "money_changed",
+        "before": 4,
+        "after": 8,
+        "delta": 4
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "buy",
+      "card": 0
+    },
+    "http_status": 200,
+    "wall_ms": 775,
+    "act_ms": 759,
+    "seq": 23,
+    "state": "SHOP",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 23,
+        "type": "bought",
+        "kind": "card",
+        "item": {
+          "name": "占卜师",
+          "key": "j_fortune_teller",
+          "set": "JOKER",
+          "effect": "本赛局内每使用过一张塔罗牌 这张小丑获得+1倍率 （当前为+0）",
+          "enhancement": "",
+          "sell": 3
+        },
+        "price": 6
+      },
+      {
+        "seq": 23,
+        "type": "money_changed",
+        "before": 8,
+        "after": 2,
+        "delta": -6
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "next_round"
+    },
+    "http_status": 200,
+    "wall_ms": 1410,
+    "act_ms": 1391,
+    "seq": 24,
+    "state": "BLIND_SELECT",
+    "ante": 1,
+    "events": []
+  },
+  {
+    "request": {
+      "action": "select"
+    },
+    "http_status": 200,
+    "wall_ms": 3524,
+    "act_ms": 3519,
+    "seq": 25,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": []
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        6,
+        5,
+        4
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2273,
+    "act_ms": 2261,
+    "seq": 26,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 26,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "2",
+            "suit": "C"
+          },
+          {
+            "rank": "3",
+            "suit": "S"
+          },
+          {
+            "rank": "4",
+            "suit": "S"
+          },
+          {
+            "rank": "6",
+            "suit": "S"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        2,
+        3,
+        4
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 9331,
+    "act_ms": 9326,
+    "seq": 27,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 27,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "J",
+            "suit": "S"
+          },
+          {
+            "rank": "J",
+            "suit": "H"
+          },
+          {
+            "rank": "J",
+            "suit": "C"
+          }
+        ],
+        "hands": {
+          "Three of a Kind": 1
+        },
+        "hand": "Three of a Kind",
+        "score": 180
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        6,
+        2,
+        0,
+        1
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2236,
+    "act_ms": 2219,
+    "seq": 28,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 28,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "6",
+            "suit": "D"
+          },
+          {
+            "rank": "Q",
+            "suit": "D"
+          },
+          {
+            "rank": "A",
+            "suit": "S"
+          },
+          {
+            "rank": "A",
+            "suit": "D"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        0,
+        1,
+        3,
+        5,
+        6
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 19221,
+    "act_ms": 19219,
+    "seq": 29,
+    "state": "ROUND_EVAL",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 29,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "T",
+            "suit": "H"
+          },
+          {
+            "rank": "9",
+            "suit": "H"
+          },
+          {
+            "rank": "7",
+            "suit": "H"
+          },
+          {
+            "rank": "5",
+            "suit": "H"
+          },
+          {
+            "rank": "3",
+            "suit": "H"
+          }
+        ],
+        "hands": {
+          "Flush": 1
+        },
+        "hand": "Flush",
+        "score": 276
+      },
+      {
+        "seq": 29,
+        "type": "blind_cleared",
+        "name": "大盲注",
+        "blind": "bl_big",
+        "score": 456,
+        "target": 450
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "cash_out"
+    },
+    "http_status": 200,
+    "wall_ms": 2669,
+    "act_ms": 2667,
+    "seq": 30,
+    "state": "SHOP",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 30,
+        "type": "money_changed",
+        "before": 2,
+        "after": 8,
+        "delta": 6
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "next_round"
+    },
+    "http_status": 200,
+    "wall_ms": 1358,
+    "act_ms": 1357,
+    "seq": 31,
+    "state": "BLIND_SELECT",
+    "ante": 1,
+    "events": []
+  },
+  {
+    "request": {
+      "action": "select"
+    },
+    "http_status": 200,
+    "wall_ms": 4585,
+    "act_ms": 4566,
+    "seq": 32,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 32,
+        "type": "boss_effect",
+        "phase": "active",
+        "name": "梅花",
+        "effect": "所有梅花牌 都被削弱 "
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        6,
+        5,
+        4
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2089,
+    "act_ms": 2087,
+    "seq": 33,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 33,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "2",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "3",
+            "suit": "S"
+          },
+          {
+            "rank": "4",
+            "suit": "H"
+          },
+          {
+            "rank": "5",
+            "suit": "H"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        6,
+        1,
+        5,
+        0
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2329,
+    "act_ms": 2316,
+    "seq": 34,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 34,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "5",
+            "suit": "S"
+          },
+          {
+            "rank": "9",
+            "suit": "S"
+          },
+          {
+            "rank": "K",
+            "suit": "D"
+          },
+          {
+            "rank": "T",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "A",
+            "suit": "C",
+            "debuff": true
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        6,
+        5,
+        4,
+        0
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2365,
+    "act_ms": 2347,
+    "seq": 35,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 35,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "2",
+            "suit": "D"
+          },
+          {
+            "rank": "3",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "4",
+            "suit": "D"
+          },
+          {
+            "rank": "9",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "K",
+            "suit": "S"
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "discard",
+      "cards": [
+        7,
+        6,
+        5,
+        4,
+        0
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 2292,
+    "act_ms": 2175,
+    "seq": 36,
+    "state": "SELECTING_HAND",
+    "ante": 1,
+    "events": [
+      {
+        "seq": 36,
+        "type": "discarded",
+        "cards": [
+          {
+            "rank": "3",
+            "suit": "D"
+          },
+          {
+            "rank": "5",
+            "suit": "D"
+          },
+          {
+            "rank": "6",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "7",
+            "suit": "S"
+          },
+          {
+            "rank": "K",
+            "suit": "C",
+            "debuff": true
+          }
+        ],
+        "count": 1
+      }
+    ]
+  },
+  {
+    "request": {
+      "action": "play",
+      "cards": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "http_status": 200,
+    "wall_ms": 20123,
+    "act_ms": 20103,
+    "seq": 37,
+    "state": "ROUND_EVAL",
+    "ante": 2,
+    "events": [
+      {
+        "seq": 37,
+        "type": "hand_played",
+        "cards": [
+          {
+            "rank": "Q",
+            "suit": "S"
+          },
+          {
+            "rank": "Q",
+            "suit": "H"
+          },
+          {
+            "rank": "Q",
+            "suit": "C",
+            "debuff": true
+          },
+          {
+            "rank": "Q",
+            "suit": "D"
+          }
+        ],
+        "hands": {
+          "Four of a Kind": 1
+        },
+        "hand": "Four of a Kind",
+        "score": 630
+      },
+      {
+        "seq": 37,
+        "type": "blind_cleared",
+        "name": "梅花",
+        "blind": "bl_club",
+        "score": 630,
+        "target": 600
+      }
+    ]
+  }
+]
