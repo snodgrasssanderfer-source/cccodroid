@@ -30,7 +30,7 @@ def indices(values, minimum=1, maximum=None, forced=()):
 def legal_actions(raw):
     """Return model-facing JSON schemas, derived from the same data we validate."""
     bridge = raw.get("bridge") or {}
-    if not bridge.get("ready"):
+    if not bridge.get("ready") or bridge.get("play_blocked"):
         return {}
     state = raw.get("state")
     actions = {}
@@ -183,4 +183,3 @@ def validate_action(raw, request):
     if action == "use" and cards(raw, "consumables")[params["consumable"]].get("key") == "c_aura":
         return "bridge_use", params
     return action, params
-

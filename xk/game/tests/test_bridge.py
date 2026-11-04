@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import json
 import sys
 import threading
 import types
@@ -271,6 +272,68 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(sum(method == "play" for method, _ in rpc.calls), 2)
 
 
+class BossAlertTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        directory = Path(__file__).resolve().parents[1]
+        cls.real_modules = {}
+        for name in ("state", "rules"):
+            spec = importlib.util.spec_from_file_location("boss_test_" + name, directory / (name + ".py"))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cls.real_modules[name] = module
+        cls.alert = json.loads((directory / "tests/fixtures/boss_alert.json").read_text(encoding="utf-8"))
+        cls.ready = json.loads((directory / "tests/fixtures/boss_ready.json").read_text(encoding="utf-8"))
+        cls.blind_select = json.loads((directory / "tests/fixtures/blind_select.json").read_text(encoding="utf-8"))
+
+    def setUp(self):
+        for name, replacement in {
+            "compact_state": self.real_modules["state"].compact_state,
+            "legal_actions": self.real_modules["rules"].legal_actions,
+            "validate_action": self.real_modules["rules"].validate_action,
+            "diff_events": lambda before, after, action=None: [],
+        }.items():
+            patcher = patch.object(service, name, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_recorded_boss_prompt_disables_actions_until_play_lock_clears(self):
+        # raw-final/00017: Boss“头部”提示仍在显示，ready=true 不代表可出牌。
+        self.assertTrue(self.alert["bridge"]["ready"])
+        self.assertTrue(self.alert["bridge"]["play_blocked"])
+        self.assertFalse(service.ready(self.alert))
+        self.assertEqual(service.legal_actions(self.alert), {})
+        with self.assertRaises(ValueError):
+            service.validate_action(self.alert, {"action": "play", "cards": [0]})
+
+        rpc = ScriptedRpc([self.alert])
+        bridge = service.Bridge(rpc)
+        status, result = bridge.act({"action": "play", "cards": [0]})
+        self.assertEqual(status, 400)
+        self.assertFalse(result["state"]["ready"])
+        self.assertEqual(result["state"]["actions"], {})
+        self.assertEqual(rpc.calls, [("bridge_state", None)])
+
+        state, _ = bridge.publish(self.ready)
+        self.assertTrue(state["ready"])
+        self.assertIn("play", state["actions"])
+        self.assertEqual(service.validate_action(self.ready, {"action": "play", "cards": [0]}),
+                         ("play", {"cards": [0]}))
+
+    def test_select_waits_through_repeated_ready_but_play_blocked_snapshots(self):
+        rpc = ScriptedRpc([self.blind_select, *([self.alert] * 8), self.ready])
+        bridge = service.Bridge(rpc, poll=0.1, settle=0.35, action_timeout=5)
+        clock = FakeClock()
+        with patch.object(service, "time", clock):
+            status, result = bridge.act({"action": "select"})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["state"]["ready"])
+        self.assertIn("play", result["state"]["actions"])
+        self.assertGreaterEqual(result["elapsed_ms"], 1150)
+        self.assertGreaterEqual(rpc.reads, 14)
+        self.assertEqual([call for call in rpc.calls if call[0] != "bridge_state"], [("select", {})])
+
+
 if __name__ == "__main__":
     unittest.main()
-

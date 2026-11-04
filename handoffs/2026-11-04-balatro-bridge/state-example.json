@@ -1,0 +1,324 @@
+{
+  "state": "SELECTING_HAND",
+  "ante": 1,
+  "round": 1,
+  "money": 4,
+  "deck": "RED",
+  "stake": "WHITE",
+  "ready": true,
+  "language": "zh_CN",
+  "jokers": [],
+  "consumables": [],
+  "capacity": {
+    "jokers": 5,
+    "consumables": 2
+  },
+  "blind": {
+    "key": "bl_small",
+    "disabled": false,
+    "effect": "",
+    "boss": false,
+    "triggered": false,
+    "name": "小盲注",
+    "score": 300
+  },
+  "blinds": {
+    "boss": {
+      "tag_effect": "",
+      "status": "UPCOMING",
+      "name": "The Club",
+      "type": "BOSS",
+      "tag_name": "",
+      "effect": "所有梅花牌 都被削弱",
+      "score": 600
+    },
+    "small": {
+      "tag_effect": "获得一个免费的 超级秘术包",
+      "status": "CURRENT",
+      "name": "Small Blind",
+      "type": "SMALL",
+      "tag_name": "Charm Tag",
+      "effect": "",
+      "score": 300
+    },
+    "big": {
+      "tag_effect": "下一家店内的 初始卡牌和补充包 均为免费",
+      "status": "UPCOMING",
+      "name": "Big Blind",
+      "type": "BIG",
+      "tag_name": "Coupon Tag",
+      "effect": "",
+      "score": 450
+    }
+  },
+  "hand": [
+    {
+      "i": 0,
+      "rank": "A",
+      "suit": "D"
+    },
+    {
+      "i": 1,
+      "rank": "Q",
+      "suit": "C"
+    },
+    {
+      "i": 2,
+      "rank": "J",
+      "suit": "H"
+    },
+    {
+      "i": 3,
+      "rank": "J",
+      "suit": "D"
+    },
+    {
+      "i": 4,
+      "rank": "T",
+      "suit": "D"
+    },
+    {
+      "i": 5,
+      "rank": "4",
+      "suit": "S"
+    },
+    {
+      "i": 6,
+      "rank": "4",
+      "suit": "C"
+    },
+    {
+      "i": 7,
+      "rank": "2",
+      "suit": "S"
+    }
+  ],
+  "hand_limit": 8,
+  "deck_remaining": 44,
+  "deck_counts": {
+    "C2": 1,
+    "C3": 1,
+    "C5": 1,
+    "C6": 1,
+    "C7": 1,
+    "C8": 1,
+    "C9": 1,
+    "CA": 1,
+    "CJ": 1,
+    "CK": 1,
+    "CT": 1,
+    "D2": 1,
+    "D3": 1,
+    "D4": 1,
+    "D5": 1,
+    "D6": 1,
+    "D7": 1,
+    "D8": 1,
+    "D9": 1,
+    "DK": 1,
+    "DQ": 1,
+    "H2": 1,
+    "H3": 1,
+    "H4": 1,
+    "H5": 1,
+    "H6": 1,
+    "H7": 1,
+    "H8": 1,
+    "H9": 1,
+    "HA": 1,
+    "HK": 1,
+    "HQ": 1,
+    "HT": 1,
+    "S3": 1,
+    "S5": 1,
+    "S6": 1,
+    "S7": 1,
+    "S8": 1,
+    "S9": 1,
+    "SA": 1,
+    "SJ": 1,
+    "SK": 1,
+    "SQ": 1,
+    "ST": 1
+  },
+  "hands_left": 4,
+  "discards_left": 4,
+  "hands_played": 0,
+  "discards_used": 0,
+  "score": 0,
+  "target": 300,
+  "hand_values": {
+    "Flush Five": {
+      "level": 1,
+      "chips": 160,
+      "mult": 16,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Flush House": {
+      "level": 1,
+      "chips": 140,
+      "mult": 14,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Five of a Kind": {
+      "level": 1,
+      "chips": 120,
+      "mult": 12,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Straight Flush": {
+      "level": 1,
+      "chips": 100,
+      "mult": 8,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Four of a Kind": {
+      "level": 1,
+      "chips": 60,
+      "mult": 7,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Full House": {
+      "level": 1,
+      "chips": 40,
+      "mult": 4,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Flush": {
+      "level": 1,
+      "chips": 35,
+      "mult": 4,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Straight": {
+      "level": 1,
+      "chips": 30,
+      "mult": 4,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Three of a Kind": {
+      "level": 1,
+      "chips": 30,
+      "mult": 3,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Two Pair": {
+      "level": 1,
+      "chips": 20,
+      "mult": 2,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "Pair": {
+      "level": 1,
+      "chips": 10,
+      "mult": 2,
+      "played": 0,
+      "played_this_round": 0
+    },
+    "High Card": {
+      "level": 1,
+      "chips": 5,
+      "mult": 1,
+      "played": 0,
+      "played_this_round": 0
+    }
+  },
+  "spectator_text": "当前 0/300 分，手里有 8 张牌。剩余 4 次出牌、4 次弃牌。",
+  "actions": {
+    "play": {
+      "type": "object",
+      "properties": {
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "cards"
+      ],
+      "additionalProperties": false
+    },
+    "discard": {
+      "type": "object",
+      "properties": {
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "cards"
+      ],
+      "additionalProperties": false
+    },
+    "rearrange": {
+      "type": "object",
+      "properties": {
+        "hand": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 8,
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "hand"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "seq": 16
+}

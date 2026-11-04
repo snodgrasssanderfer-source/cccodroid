@@ -139,4 +139,3 @@ def spectator_text(state):
     if stage == "GAME_OVER":
         return f"牌局结束，停在第 {state.get('ante', 0)} 底注。"
     return "游戏正在过渡画面，等待状态稳定。"
-

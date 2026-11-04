@@ -96,7 +96,17 @@ class CompactStateTests(unittest.TestCase):
         self.assertEqual(state["target"], raw["bridge"]["blind"]["score"])
         self.assertLess(len(json.dumps(state)), len(json.dumps(raw)) / 2)
 
+    def test_recorded_shop_keeps_chinese_effects_and_live_prices(self):
+        raw = json.loads((Path(__file__).parent / "fixtures/shop.json").read_text(encoding="utf-8"))
+        state = compact_state(raw)
+        self.assertEqual(state["money"], 10)
+        item = state["shop"]["cards"][0]
+        self.assertEqual(item["name"], "棒球卡")
+        self.assertEqual(item["price"], 8)
+        self.assertEqual(item["effect"], raw["shop"]["cards"][0]["value"]["effect"])
+        self.assertEqual(state["reroll_cost"], raw["round"]["reroll_cost"])
+        self.assertLess(len(json.dumps(state)), len(json.dumps(raw)) / 2)
+
 
 if __name__ == "__main__":
     unittest.main()
-

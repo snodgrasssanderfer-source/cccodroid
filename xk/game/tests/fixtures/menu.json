@@ -5,7 +5,7 @@
   "stake": "WHITE",
   "bridge": {
     "play_limit": 0,
-    "pending_events": 3,
+    "pending_events": 4,
     "pack_choices": 0,
     "language": "zh_CN",
     "forced_cards": [],

@@ -21,6 +21,12 @@ class GameError(RuntimeError):
     pass
 
 
+def ready(raw):
+    meta = raw.get("bridge") or {}
+    # Boss 提示动画使用非阻塞事件，但 block_play 会一直保留到提示结束。
+    return bool(meta.get("ready") and not meta.get("play_blocked"))
+
+
 class RpcClient:
     def __init__(self, url, timeout=180):
         self.url = url
@@ -69,14 +75,15 @@ class Bridge:
             self.error = None
             if raw == self.raw:
                 return copy.deepcopy(self.current), []
-            ready = raw.get("bridge", {}).get("ready", False)
+            is_ready = ready(raw)
             # 计分时 played 先变、chips 后变；业务事件只比较可操作的完整状态。
-            changes = diff_events(self.event_raw, raw, action) if ready and self.event_raw is not None else []
+            changes = diff_events(self.event_raw, raw, action) if is_ready and self.event_raw is not None else []
             state = compact_state(raw)
-            state["actions"] = legal_actions(raw) if raw.get("bridge", {}).get("ready", False) else {}
+            state["ready"] = is_ready
+            state["actions"] = legal_actions(raw) if is_ready else {}
             self.seq += 1
             state["seq"] = self.seq
-            if ready:
+            if is_ready:
                 self.event_raw = copy.deepcopy(raw)
             events = [{"seq": self.seq, **event} for event in changes]
             self.raw = copy.deepcopy(raw)
@@ -118,7 +125,7 @@ class Bridge:
         while time.monotonic() < end:
             raw = self.rpc.call("bridge_state")
             now = time.monotonic()
-            if raw.get("bridge", {}).get("ready", False):
+            if ready(raw):
                 if raw != previous:
                     stable_since = now
                 elif stable_since is not None and now - stable_since >= self.settle:
@@ -135,7 +142,7 @@ class Bridge:
             raw = self.rpc.call("bridge_state")
             state, _ = self.publish(raw)
             try:
-                if not raw.get("bridge", {}).get("ready", False):
+                if not ready(raw):
                     raise ValueError("游戏正在播放动画，当前没有可执行动作")
                 method, params = validate_action(raw, request)
             except ValueError as exc:
@@ -243,4 +250,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -123,4 +123,3 @@ def diff_events(before, after, action=None):
         events.append({"type": "game_over", "won": bool(after.get("won")),
                        "ante": after.get("ante_num"), "round": after.get("round_num")})
     return events
-
