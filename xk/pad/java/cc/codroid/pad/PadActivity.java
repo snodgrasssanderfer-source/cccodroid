@@ -83,6 +83,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         link = new PadLink(this, this);
         upd = new PadUpdate(this, link, this);
         voice = new PadVoice(this, this);
+        link.relay(voice::relay);
         voice.check();
         link.start();
     }

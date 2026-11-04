@@ -41,6 +41,11 @@ final class PadLink {
     private Thread loop;
     private NsdManager.DiscoveryListener discovery;
     private final PadHub hub;
+    /** 电脑上的中转（xk/voice/relay.py）：{地址, 端口, 配对码}，没有就 null。手机平板互相连不上时走它 */
+    interface Relay { String[] get(); }
+    private volatile Relay relay = () -> null;
+    private volatile boolean viaRelay;
+    void relay(Relay r) { relay = r; }
 
     PadLink(Context c, Listener l) {
         ctx = c.getApplicationContext();
@@ -57,7 +62,7 @@ final class PadLink {
     boolean paired() { return !sp.getString("id", "").isEmpty(); }
 
     JSONObject state() {
-        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("diag", "平板 " + myIps() + "；反连：" + hub.note()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : host.isEmpty() ? "" : host + ":" + port); }
+        try { return new JSONObject().put("phase", phase).put("sas", sas).put("error", error).put("paired", paired()).put("diag", "平板 " + myIps() + "；反连：" + hub.note()).put("phone", hub.ready() ? hub.peer() + "（手机连过来的）" : viaRelay ? "（经电脑 " + host + " 中转）" : host.isEmpty() ? "" : host + ":" + port); }
         catch (Exception e) { throw new IllegalStateException(e); }
     }
     private void set(String p, String err) { phase = p; error = err == null ? "" : err; out.onState(state()); }
@@ -107,7 +112,7 @@ final class PadLink {
                     return;
                 }
                 set("searching", e.getMessage());
-                host = ""; port = 0;   // 手机可能换了地址：下一圈重新找
+                host = ""; port = 0; viaRelay = false;   // 手机可能换了地址：下一圈重新找
                 try { Thread.sleep(backoff); } catch (InterruptedException ie) { return; }
                 backoff = Math.min(backoff * 2, 30000);
             }
@@ -116,7 +121,9 @@ final class PadLink {
 
     // ── 找手机：NSD 找到第一台就用（一个家里一般只有一台装了小克的手机） ──
     private void find() throws Exception {
+        viaRelay = false;
         if (hub.await(3000)) return;   // 手机已经连过来了（反着连），不用找
+        if (useRelay()) return;        // 手机挂在电脑的中转上（电脑开热点、两台互相连不上时）
         // 主人手动填过地址：先试它（手机开着 VPN 时，局域网里的广播有时根本找不到手机）
         String m = sp.getString("manual", "");
         if (!m.isEmpty()) {
@@ -150,16 +157,19 @@ final class PadLink {
         nsd.discoverServices(TYPE, NsdManager.PROTOCOL_DNS_SD, discovery);
         try {
             synchronized (lk) {
-                while (got[0] == null && got[1] == null && !hub.ready()) lk.wait(1000);
+                for (int n = 1; got[0] == null && got[1] == null && !hub.ready(); n++) {
+                    lk.wait(1000);
+                    if (n % 5 == 0 && useRelay()) break;   // 等手机的广播时，每 5 秒看一眼电脑的中转
+                }
             }
         } finally { stopDiscovery(); }
-        if (hub.ready()) return;
+        if (hub.ready() || viaRelay) return;
         if (got[1] != null) throw new java.io.IOException(got[1]);
         int p = Integer.parseInt(got[0].substring(got[0].indexOf('|') + 1));
         String[] hosts = got[0].substring(0, got[0].indexOf('|')).split(",");
         String ok = reachable(hosts, p);
         // 手机开着 VPN 时这边连不过去，但手机会反过来连平板：再等它一会儿
-        if (ok == null && hub.await(15_000)) return;
+        if (ok == null && (hub.await(15_000) || useRelay())) return;
         if (ok == null) throw new java.io.IOException("找到手机了，但连不上（试过 " + String.join("、", hosts) + "），手机也没连过来。看看手机上的小克开着没有、是不是 0.3.8 以上；手机开着 Hiddify 之类的 VPN 的话，要在 VPN 里打开「绕过局域网」");
         host = ok; port = p;
         sp.edit().putString("host", host).putInt("port", port).apply();
@@ -242,9 +252,38 @@ final class PadLink {
         String j = new JSONObject().put("id", id).put("n", env[0]).put("c", env[1]).toString();
         return java.util.Base64.getEncoder().encodeToString(j.getBytes(StandardCharsets.UTF_8));
     }
-    /** 到手机网关平板口子的一条新连接：手机连过来了就走它给的（开着 VPN 也通），不然直接连 */
+    /** 问电脑上的中转：手机挂在上面没有。挂着就改走中转 */
+    private boolean useRelay() {
+        String[] r = relay.get();
+        if (r == null) return false;
+        try (java.net.Socket s = new java.net.Socket()) {
+            s.connect(new java.net.InetSocketAddress(r[0], Integer.parseInt(r[1])), 1500);
+            s.setSoTimeout(3000);
+            s.getOutputStream().write(("XKSTAT " + r[2] + "\n").getBytes(StandardCharsets.UTF_8));
+            if (!"1".equals(headLine(s.getInputStream()))) return false;
+        } catch (Exception e) { Log.i(TAG, "电脑中转问不了：" + e.getMessage()); return false; }
+        host = r[0]; port = Integer.parseInt(r[1]); viaRelay = true;
+        return true;
+    }
+
+    /** 到手机网关平板口子的一条新连接：手机连过来了就走它给的（开着 VPN 也通），经电脑中转就请电脑接一条，不然直接连 */
     java.net.Socket dial() throws Exception {
         if (hub.ready()) return hub.dial();
+        if (viaRelay) {
+            String[] r = relay.get();
+            if (r == null) throw new java.io.IOException("电脑的语音服务断了，中转也跟着断了");
+            java.net.Socket s = new java.net.Socket();
+            try {
+                s.connect(new java.net.InetSocketAddress(host, port), 5000);
+                s.setTcpNoDelay(true);
+                s.getOutputStream().write(("XKWANT " + r[2] + "\n").getBytes(StandardCharsets.UTF_8));
+                s.setSoTimeout(8000);
+                String ok = headLine(s.getInputStream());
+                if (!"OK".equals(ok)) throw new java.io.IOException("电脑中转：" + ok);
+                s.setSoTimeout(0);
+                return s;
+            } catch (Exception e) { s.close(); throw e; }
+        }
         java.net.Socket s = new java.net.Socket();
         try { s.connect(new java.net.InetSocketAddress(host, port), 5000); }
         catch (Exception e) { s.close(); throw e; }

@@ -18,7 +18,8 @@ CONF = os.path.join(HERE, "config.json")
 def load_conf():
     # 念：GPT-SoVITS 的接口地址；gsv_dir 填整合包的位置就由这里顺手起它；gsv_config 是它自己的配置（版本、显卡、半精度在那里改）；
     # gsv_base_* 是底模权重（有人训练过、要来回换时才用得上）；gsv_extra 原样加进每次请求（语速 speed_factor 之类）
-    c = {"port": 8790, "gsv_url": "http://127.0.0.1:9880", "gsv_dir": "", "gsv_config": "GPT_SoVITS/configs/tts_infer.yaml",
+    # relay_port：手机和平板之间的中转（relay.py），手机平板互相连不上时走这里
+    c = {"port": 8790, "relay_port": 8791, "gsv_url": "http://127.0.0.1:9880", "gsv_dir": "", "gsv_config": "GPT_SoVITS/configs/tts_infer.yaml",
          "gsv_base_gpt": "", "gsv_base_sovits": "", "gsv_extra": {}, "asr_device": "cpu", "code": ""}
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
@@ -135,7 +136,7 @@ class H(BaseHTTPRequestHandler):
         if self.headers.get("x-xk-code", "").strip().upper() != C["code"]:
             return self.send(401, {"error": "配对码不对：看电脑上语音服务窗口里显示的那个"})
         if self.command == "GET" and self.path == "/health":
-            return self.send(200, {"name": "xkvoice", "tts": TTS.name, "asr": True,
+            return self.send(200, {"name": "xkvoice", "tts": TTS.name, "asr": True, "relay": C["relay_port"],
                                    "voices": [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav"))]})
         if self.command == "POST" and self.path == "/tts":
             q = json.loads(self.body() or b"{}")
@@ -172,13 +173,13 @@ def lan_addrs():
             if isinstance(ip.ip, str) and not ip.ip.startswith(("127.", "169.254."))]
 
 
-def advertise(port, addrs):
-    """家里 Wi‑Fi 里报一声「这里有语音服务」，平板不用填地址"""
+def advertise(port, relay_port, addrs):
+    """局域网里报一声：这里有语音服务（平板找）、这里有中转（手机找，和平板 App 报的是同一种，手机分不出也不用分）"""
     from zeroconf import ServiceInfo, Zeroconf
     zc = Zeroconf()
-    info = ServiceInfo("_xkvoice._tcp.local.", "xkvoice._xkvoice._tcp.local.", port=port,
-                       addresses=[socket.inet_aton(a) for a in addrs], properties={"v": "1"})
-    zc.register_service(info, allow_name_change=True)
+    for kind, name, p in (("_xkvoice._tcp.local.", "xkvoice", port), ("_xkpadc._tcp.local.", "xkrelay", relay_port)):
+        zc.register_service(ServiceInfo(kind, f"{name}.{kind}", port=p, addresses=[socket.inet_aton(a) for a in addrs],
+                                        properties={"v": "1"}), allow_name_change=True)
     return zc
 
 
@@ -188,13 +189,15 @@ if __name__ == "__main__":
     print(f"加载听的模型 SenseVoice（{C['asr_device']}）…", flush=True)
     ASR = Asr(C["asr_device"])
     addrs = lan_addrs()
-    zc = advertise(C["port"], addrs)
+    from relay import Relay
+    Relay(C["relay_port"], C["code"])
+    zc = advertise(C["port"], C["relay_port"], addrs)
     srv = ThreadingHTTPServer(("0.0.0.0", C["port"]), H)
     have = [r for r in ROLES if os.path.exists(os.path.join(VOICES, r + ".wav"))]
     print("\n语音服务开好了。", flush=True)
     print(f"  配对码：{C['code']}（在平板「小克 · 平板」里填一次）", flush=True)
     port = C["port"]
-    print(f"  地址：{'、'.join(f'{a}:{port}' for a in addrs)}", flush=True)
+    print(f"  地址：{'、'.join(f'{a}:{port}' for a in addrs)}（手机和平板的中转在 {C['relay_port']}）", flush=True)
     none = "还没有（把录音和它说的原话放进 voices 文件夹，见 README）"
     print(f"  放好音色的：{'、'.join(have) or none}", flush=True)
     print("  关掉这个窗口就停了。\n", flush=True)
