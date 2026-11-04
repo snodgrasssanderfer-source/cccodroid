@@ -38,6 +38,7 @@ curl -H "x-xk-code: %CODE%" --data-binary @test.wav http://127.0.0.1:8790/asr
 - 只动这个文件夹里的东西。模型（`models/`）、候选、挑定的音色（`voices/`）、`config.json`（里面有配对码）都留在这台电脑上，**不要提交、不要上传**。
 - 显存只有 8GB：跑之前提醒主人关掉占显存的程序。别同时开两个念的模型。
 - 别改 `server.py` 的接口（路径、参数、配对码请求头 `x-xk-code`、mDNS 名字 `_xkvoice._tcp`）：平板 App 认的就是这些。GPT-SoVITS 的接口只听 `127.0.0.1`，别改成对外开。`relay.py`（手机和平板的中转，端口 8791，手机端写死了这个端口）也别改。
+- 调音（`gsv_by_role`、`gsv_phrasing`、`gsv_rhythm`）都在 `config.json` 里改，代码已经支持（11-04 你交接的改动已合进仓库，`mandarin_phrasing.py`、`mandarin_rhythm.py` 在仓库里了）。要加新的调音办法再改代码，照下一条交 diff。
 - 只有装不上、跑不起来时才改代码，而且只改让它跑起来所需的那几行。改完把 diff 和原因写下来，让主人转给云端的 Claude，由它审过再提交进仓库。你不要提交、不要推送。
 - 报错照实说，别吞掉；装不上就停下来，把报错原文给主人。
 

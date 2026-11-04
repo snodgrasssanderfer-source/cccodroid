@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import soundfile as sf
 
+from mandarin_phrasing import spoken_text
+from mandarin_rhythm import adjust_audio
 from common import HERE, ROLES, VOICES, safe_text, voice
 
 CONF = os.path.join(HERE, "config.json")
@@ -20,7 +22,10 @@ def load_conf():
     # gsv_base_* 是底模权重（有人训练过、要来回换时才用得上）；gsv_extra 原样加进每次请求（语速 speed_factor 之类）
     # relay_port：手机和平板之间的中转（relay.py），手机平板互相连不上时走这里
     c = {"port": 8790, "relay_port": 8791, "gsv_url": "http://127.0.0.1:9880", "gsv_dir": "", "gsv_config": "GPT_SoVITS/configs/tts_infer.yaml",
-         "gsv_base_gpt": "", "gsv_base_sovits": "", "gsv_extra": {}, "asr_device": "cpu", "code": ""}
+         "gsv_base_gpt": "", "gsv_base_sovits": "", "gsv_extra": {}, "asr_device": "cpu", "code": "",
+         # 每人一份的调音（主人电脑上的 Codex 和主人一起调的）：gsv_by_role 叠在 gsv_extra 上；gsv_phrasing 见 mandarin_phrasing.py；
+         # gsv_rhythm 见 mandarin_rhythm.py，tempo / equalizer 要 ffmpeg
+         "gsv_by_role": {}, "gsv_phrasing": {}, "gsv_rhythm": {}, "ffmpeg": "tools/ffmpeg/bin/ffmpeg.exe"}
     if os.path.exists(CONF):
         c.update(json.load(open(CONF, encoding="utf-8")))
     if not c["code"]:
@@ -95,11 +100,14 @@ class GsvTts:
 
     def say(self, role, text):
         wav, said = voice(role)
-        body = {"text": safe_text(text), "text_lang": "zh", "ref_audio_path": wav, "prompt_text": said, "prompt_lang": "zh",
-                "text_split_method": "cut5", "batch_size": 1, "media_type": "wav", "streaming_mode": False, **C["gsv_extra"]}
+        body = {"text": spoken_text(safe_text(text), C["gsv_phrasing"].get(role)), "text_lang": "zh", "ref_audio_path": wav,
+                "prompt_text": said, "prompt_lang": "zh", "text_split_method": "cut5", "batch_size": 1, "media_type": "wav",
+                "streaming_mode": False, **C["gsv_extra"], **C["gsv_by_role"].get(role, {})}
         with GPU:
             self.weights(role)
-            return self.get("/tts", body=body)
+            raw = self.get("/tts", body=body)
+        rhythm = C["gsv_rhythm"].get(role)
+        return adjust_audio(raw, rhythm, os.path.join(HERE, C["ffmpeg"])) if rhythm else raw
 
 
 class Asr:
