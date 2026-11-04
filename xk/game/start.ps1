@@ -11,4 +11,4 @@ if (-not (Get-NetTCPConnection -LocalPort 12347 -State Listen -ErrorAction Silen
     $arguments = 'run --no-project --python ">=3.11" "' + (Join-Path $PSScriptRoot 'bridge.py') + '" --host 0.0.0.0 --port 12347'
     Start-Process -FilePath $uvPath -ArgumentList $arguments -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir 'bridge.stdout.log') -RedirectStandardError (Join-Path $logDir 'bridge.stderr.log')
 }
-Write-Host '牌局桥：电脑 http://127.0.0.1:12347/state；手机用电脑热点 IP 的 12347 端口。'
+Write-Host 'Game bridge: http://127.0.0.1:12347/state (phone: hotspot IP, port 12347).'
