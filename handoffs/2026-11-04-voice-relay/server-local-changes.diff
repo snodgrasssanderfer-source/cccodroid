@@ -1,0 +1,28 @@
+--- a/server.py
++++ b/server.py
+@@ -8,6 +8,8 @@
+ import io, json, os, secrets, socket, tempfile, threading, time, traceback, urllib.error, urllib.parse, urllib.request
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ 
++from mandarin_phrasing import spoken_text
++from mandarin_rhythm import adjust_audio
+ import soundfile as sf
+ 
+ from common import HERE, ROLES, VOICES, safe_text, voice
+@@ -94,11 +96,13 @@
+ 
+     def say(self, role, text):
+         wav, said = voice(role)
+-        body = {"text": safe_text(text), "text_lang": "zh", "ref_audio_path": wav, "prompt_text": said, "prompt_lang": "zh",
+-                "text_split_method": "cut5", "batch_size": 1, "media_type": "wav", "streaming_mode": False, **C["gsv_extra"]}
++        body = {"text": spoken_text(safe_text(text), C["gsv_phrasing"].get(role)), "text_lang": "zh", "ref_audio_path": wav, "prompt_text": said, "prompt_lang": "zh",
++                "text_split_method": "cut5", "batch_size": 1, "media_type": "wav", "streaming_mode": False, **C["gsv_extra"], **C.get("gsv_by_role", {}).get(role, {})}
+         with GPU:
+             self.weights(role)
+-            return self.get("/tts", body=body)
++            raw = self.get("/tts", body=body)
++            rhythm = C.get("gsv_rhythm", {}).get(role)
++            return adjust_audio(raw, rhythm, os.path.join(HERE, "tools/ffmpeg/bin/ffmpeg.exe")) if rhythm else raw
+ 
+ 
+ class Asr:

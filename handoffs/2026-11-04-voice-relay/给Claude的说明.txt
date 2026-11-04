@@ -1,0 +1,95 @@
+给 Claude 的语音服务合并说明（2026-11-04）
+
+结论
+当前 D:\xkvoice\server.py 确实有 Codex 在用户调音过程中加入的本地改动。按用户本次要求，没有覆盖任何服务文件，没有修改 voices、config.json 或模型，没有重启服务或操作防火墙。
+新包中的 relay.py 尚未部署，因此本次未进行“手机和平板的中转在 8791”的启动确认。
+
+对比依据
+1. 当前文件：D:\xkvoice\server.py。
+2. 用户新包：xk-voice.zip 内 voice/server.py。
+3. 上次原始 GPT-SoVITS 服务包：outputs/xk-voice-新版/voice/server.py。
+用第3项区分“我们的本地改动”和“新包新增的relay”。附带 diff 只包含本地调音改动，不包含回退 relay 的差异。
+
+需要合入新版的现有改动
+1. 当前 server.py 第11–12行：新增两个导入。
+   from mandarin_phrasing import spoken_text
+   from mandarin_rhythm import adjust_audio
+   依赖两个已经存在于服务目录的辅助文件，本转交包附原样副本。
+
+2. GsvTts.say 第99行：safe_text(text)之后调用 spoken_text(..., C["gsv_phrasing"].get(role))。
+   现在只对 xiaoke 启用 questions。长度至少17字符、逗号两边各至少7字符的长问句，在接近中点的逗号后插入换行；保留字词和问号。
+   原因：用户认为牧原来的情绪正确，但中文节奏奇怪；这项让长问句的两个分句分别解码，改善衔接与完整性。
+
+3. GsvTts.say 第100行：在 **C["gsv_extra"] 后叠加 **C.get("gsv_by_role", {}).get(role, {})。
+   原因：保持每位独立的推理参数。当前小克的 fragment_interval=0.085，另外两位为0.2。
+
+4. GsvTts.say 第103–105行：先取得原始WAV，再按 C.get("gsv_rhythm", {}).get(role) 调用 adjust_audio。
+   现在只有 xiaoke 启用：tempo=1.0；将检测到的长于0.55秒的内部静音收紧至约0.36秒；1kHz、Q=1.2、−2dB的均衡，并按原RMS匹配音量、限制最终峰值。
+   原因：这是用户选中的A停顿方案＋C轻微均衡方案；用户反馈鼻音减轻、音色仍正确。当前不改变整体语速或音高。
+   辅助模块调用现有 D:\xkvoice\tools\ffmpeg\bin\ffmpeg.exe，并使用已安装的 numpy、soundfile。
+
+合并时保留新包已有的relay功能：relay_port默认8791、/health里的relay字段、_xkpadc._tcp广播、Relay启动和启动提示。这些是Claude这次新加的内容，不是Codex曾经删除的改动。
+
+模型加载方式
+GsvTts.weights 在旧原包、当前文件和这次新包之间没有改动；无需为了加载三个训练模型另换命名或路径。
+当前服务实际读取：
+  D:\xkvoice\voices\xiaoke.ckpt  + D:\xkvoice\voices\xiaoke.pth
+  D:\xkvoice\voices\hachimi.ckpt + D:\xkvoice\voices\hachimi.pth
+  D:\xkvoice\voices\deepseek.ckpt + D:\xkvoice\voices\deepseek.pth
+每位同目录还有同名.wav和.txt，12个文件都已确认存在。小鱼的服务角色ID仍是deepseek。
+接口路径、参数、x-xk-code请求头和原有_xkvoice._tcp广播没有被本地调音改动修改。
+
+当前已采用的三个模型包
+  <工作区>\outputs\V5三人中文音色\xiaoke\xiaoke-V5Turbo-采用版.zip
+  <工作区>\outputs\V5三人中文音色\hachimi\hachimi-V5Turbo.zip
+  <工作区>\outputs\V5三人中文音色\deepseek\deepseek-V5Turbo-中文参考修订.zip
+
+训练原始记录／检查点目录：
+  D:\xkvoice-v5-runs\xiaoke
+  D:\xkvoice-v5-runs\hachimi
+  D:\xkvoice-v5-runs\deepseek
+运行服务使用的是前述 D:\xkvoice\voices 文件，而不是直接读取这些训练目录里的文件名。
+
+相关现用参数摘录（不是完整config.json；仅供理解现有调音逻辑）
+{
+  "gsv_extra": {
+    "sample_steps": 4,
+    "speed_factor": 1.0,
+    "text_split_method": "cut3",
+    "fragment_interval": 0.2,
+    "parallel_infer": false
+  },
+  "gsv_by_role": {
+    "deepseek": {
+      "prompt_lang": "zh",
+      "text_split_method": "cut3",
+      "fragment_interval": 0.2
+    },
+    "hachimi": {
+      "prompt_lang": "zh",
+      "text_split_method": "cut3",
+      "fragment_interval": 0.2
+    },
+    "xiaoke": {
+      "prompt_lang": "zh",
+      "text_split_method": "cut3",
+      "fragment_interval": 0.085
+    }
+  },
+  "gsv_phrasing": {
+    "deepseek": null,
+    "hachimi": null,
+    "xiaoke": "questions"
+  },
+  "gsv_rhythm": {
+    "xiaoke": {
+      "tempo": 1.0,
+      "pause_cap": 0.36,
+      "equalizer": {
+        "frequency_hz": 1000,
+        "q": 1.2,
+        "gain_db": -2
+      }
+    }
+  }
+}
