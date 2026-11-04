@@ -84,6 +84,7 @@
 
 ## 第四步：语音（11-03 主人定的，开工）
 - 主人 11-03 定的：**念用 GPT-SoVITS**（VoxCPM2 造的音色不满意；中间定过 CosyVoice3，又改了）。GPT-SoVITS 用它自己的整合包单独跑 `api_v2.py`（主人想用 V5，吃显存，兼容由他电脑上的 GPT 在整合包那边调）；`server.py` 把每句话转给它的 `/tts`，`config.json` 填了 `gsv_dir` 就由 `start.bat` 顺手起它；谁有 `voices/<角色>.ckpt`+`.pth` 就在轮到她时换权重（没训练的换回底模，底模路径没配就报错）。服务自己的 `.venv` 只装「听」（CPU 版 torch）。主人电脑上的 Codex 照 `xk/voice/AGENTS.md` 装（写明不许加防御）。用假的 api_v2 走过：顺手起、换权重只换一次、额外参数照传、没配底模的报错。
+- 11-04：主人电脑上的 GPT 用 V5Turbo 给三人各训练了模型（`voices/<角色>.ckpt`+`.pth`，主人听过可用），服务已在跑。它调音时改了 `server.py`，交接放在分支 `codex/voice-relay-handoff-20261104`（`handoffs/2026-11-04-voice-relay/`），已合进 `xk/voice/`：长问句断开（`mandarin_phrasing.py`，只给小克）、每人参数（`gsv_by_role`）、念完收长停顿加均衡（`mandarin_rhythm.py`，只给小克，主人选的 A+C 方案）。
 - 电脑上的语音服务 `xk/voice/`（主人笔记本 RTX 5060 8GB、Windows）：最初是 VoxCPM 念（平时 1.5，造音色 2）、SenseVoice 听（CPU），mDNS `_xkvoice._tcp`，配对码。`setup.bat` 装、`design.bat` 照 `voices.json` 的人设描述造候选、`pick.bat` 挑、`start.bat` 开。模型、候选、音色、配对码都不进仓库（`.gitignore`）。本机用假模型走过：配对码、念、听、没挑音色的报错、mDNS。
 - 平板 `PadVoice`（0.3.14）：NSD 找 `_xkvoice._tcp`，配对码存在平板；群里她们的新话去掉代码块、链接、Markdown，按句切开送去念，取和放两条线排队；按住「按住说话」录 16k 单声道（先停掉正在念的），松手送 `/asr`、转出的字照常发进群（点了头像就只叫她）；录音时显示「在听」图。聊天页顶上「声音」按钮：电脑状态、填配对码、念不念开关。真机还没验。真机都还没验：NSD 在 Y700 五代 / Neo11 上、串流画面和声音。
 

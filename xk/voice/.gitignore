@@ -5,3 +5,4 @@ candidates/
 voices/
 config.json
 __pycache__/
+tools/
