@@ -116,10 +116,33 @@ final class XkPad {
                 if (LINKED.isEmpty()) {
                     if (d != null) try { nsd.stopServiceDiscovery(d); } catch (RuntimeException ignored) {}
                     d = discover(ctx, nsd, padPort);
+                    viaGateway(ctx, padPort);
                 }
                 try { Thread.sleep(30_000); } catch (InterruptedException e) { return; }
             }
         }, "xk-pad-back").start();
+    }
+
+    /** 手机连着电脑开的热点时，电脑就是网关：电脑上的语音服务开着中转（xk/voice/relay.py，端口 8791），
+     *  局域网广播过不来也能敲门找到它。门不开（家里路由器、电脑没开）就悄悄算了，30 秒后再来 */
+    private static void viaGateway(Context ctx, int padPort) {
+        android.net.Network w = lan(ctx);
+        if (w == null) return;
+        android.net.LinkProperties lp = ctx.getSystemService(android.net.ConnectivityManager.class).getLinkProperties(w);
+        if (lp == null) return;
+        java.net.InetAddress gw = null;
+        for (android.net.RouteInfo r : lp.getRoutes())
+            if (r.getDestination().getPrefixLength() == 0 && r.getGateway() instanceof java.net.Inet4Address) gw = r.getGateway();
+        final java.net.InetAddress g = gw;
+        if (g == null || !LINKED.add("gw")) return;
+        new Thread(() -> {
+            try {
+                try (java.net.Socket t = new java.net.Socket()) { t.connect(new java.net.InetSocketAddress(g, 8791), 1500); }
+                catch (java.io.IOException e) { return; }
+                note("在网关 " + g.getHostAddress() + " 上找到电脑的中转，连过去");
+                control(ctx, java.util.Collections.singletonList(g), 8791, padPort);
+            } finally { LINKED.remove("gw"); }
+        }, "xk-pad-gw").start();
     }
 
     private static NsdManager.DiscoveryListener discover(Context ctx, NsdManager nsd, int padPort) {
@@ -176,7 +199,7 @@ final class XkPad {
                     close(c);
                     continue;
                 }
-                note("已连上平板 " + a.getHostAddress());
+                note("已连上 " + a.getHostAddress() + "（平板，或电脑上的中转）");
                 c.setSoTimeout(45_000);
                 Thread ping = new Thread(() -> {
                     try { while (true) { Thread.sleep(15_000); synchronized (c) { o.write('p'); o.flush(); } } }

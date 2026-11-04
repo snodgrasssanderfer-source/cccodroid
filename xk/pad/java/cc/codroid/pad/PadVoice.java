@@ -87,7 +87,36 @@ final class PadVoice {
             }
         };
         nsd.discoverServices(TYPE, NsdManager.PROTOCOL_DNS_SD, discovery);
+        // 平板连着电脑开的热点时，电脑就是网关；局域网广播不一定过得来，直接敲网关的门试试
+        new Thread(() -> {
+            java.net.InetAddress gw = gateway(ctx);
+            if (gw == null) return;
+            try (java.net.Socket t = new java.net.Socket()) {
+                t.connect(new java.net.InetSocketAddress(gw, 8790), 1500);
+            } catch (IOException e) { return; }
+            if (!host.isEmpty()) return;
+            host = gw.getHostAddress(); port = 8790;
+            stopFind();
+            check();
+        }, "xkvoice-gw").start();
     }
+
+    /** 这台设备现在那张网的网关（IPv4）。连着电脑开的热点时就是电脑 */
+    static java.net.InetAddress gateway(Context ctx) {
+        android.net.ConnectivityManager cm = ctx.getSystemService(android.net.ConnectivityManager.class);
+        android.net.LinkProperties lp = cm.getLinkProperties(cm.getActiveNetwork());
+        if (lp == null) return null;
+        for (android.net.RouteInfo r : lp.getRoutes())
+            if (r.getDestination().getPrefixLength() == 0 && r.getGateway() instanceof java.net.Inet4Address) return r.getGateway();
+        return null;
+    }
+
+    /** 电脑上的中转（手机平板互相连不上时走它）：{地址, 端口, 配对码}；电脑没连上就是 null */
+    String[] relay() {
+        JSONObject h = health;
+        return h == null || h.optInt("relay") <= 0 ? null : new String[] { host, String.valueOf(h.optInt("relay")), code() };
+    }
+
     private synchronized void stopFind() {
         if (discovery != null) try { nsd.stopServiceDiscovery(discovery); } catch (RuntimeException ignored) {}
         discovery = null;
