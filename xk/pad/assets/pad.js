@@ -96,7 +96,8 @@
   // ── 手机推过来的事件（加密长轮询，Java 解好了递过来） ──
   window.padEvent = (ev) => {
     if (ev.type !== "xk") return;
-    if (ev.op === "room") { add(ev.msg); if (ROLE[ev.msg.from] && voiceOk) Pad.say(ev.msg.from, ev.msg.text); }
+    // 按消息号只念一次：长轮询重连时补发的旧消息不再念第二遍（#101）
+    if (ev.op === "room") { add(ev.msg); if (ROLE[ev.msg.from] && voiceOk && ev.msg.n > spoken) { spoken = ev.msg.n; Pad.say(ev.msg.from, ev.msg.text); } }
     else if (ev.op === "room_typing") {
       if (ev.on) talking.add(ev.role); else talking.delete(ev.role);
       $("#typing").innerHTML = [...talking].map((id) => `<span style="--c:${ROLE[id]?.c}">${esc(ROLE[id]?.name || id)}在说…</span>`).join("");
@@ -116,7 +117,7 @@
   $("#upd").onclick = () => Pad.update();
 
   // ── 声音：直连主人电脑上的语音服务（xk/voice），念她们的话、按住说话 ──
-  let voiceOk = false;
+  let voiceOk = false, spoken = -1;
   window.padVoice = (v) => {
     voiceOk = v.ok && v.on;
     $("#mic").hidden = !v.ok;

@@ -4,7 +4,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { CFG } from "../gw/config.mjs";
+import { CFG, PATHS } from "../gw/config.mjs";
 import { onPublish } from "../gw/bus.mjs";
 import { ensureRoles } from "../gw/xk-roles.mjs";
 import { STATE } from "../gw/xk-core.mjs";
@@ -43,6 +43,33 @@ test("mcp_config.json 里有东西但不是 JSON：不覆盖主人的文件，�
   assert.match(evs.find((e) => e.type === "error").message, /读不了 .*mcp_config\.json/);
   assert.equal(fs.readFileSync(MCP, "utf8"), "{ 这不是 json");
   fs.writeFileSync(MCP, "");
+});
+
+test("MCP 配置两个位置都写（命令行版读 antigravity-cli/，#101）：记忆服务补上，别的条目和字段原样留着", async () => {
+  const CLI = path.join(CFG.home, ".gemini", "antigravity-cli", "mcp_config.json");
+  fs.writeFileSync(MCP, JSON.stringify({ mcpServers: { other: { command: "x" } }, keep: 1 }));
+  fs.rmSync(CLI, { force: true });
+  await okAgy();
+  await run({ id: "xc3", message: "在吗", sessionId: null });
+  const a = JSON.parse(fs.readFileSync(MCP, "utf8")), b = JSON.parse(fs.readFileSync(CLI, "utf8"));
+  assert.ok(a.mcpServers["xk-memory"] && b.mcpServers["xk-memory"]);
+  assert.deepEqual(a.mcpServers.other, { command: "x" }); assert.equal(a.keep, 1);
+  assert.deepEqual(b.mcpServers["xk-memory"], a.mcpServers["xk-memory"]);
+  fs.writeFileSync(MCP, "");
+});
+
+test("没 SUCCESS 但话已经出来了（收尾报「流中断」，#101）：话记进会话，错误照样报", async () => {
+  await stopAgy();
+  fakeAgy(AGY, { lines: [
+    { event: "step_update", step_update: { step_type: "agent_response", text_delta: "我觉得先试第二种。" } },
+    { event: "result", result: { conversation_id: "c9", status: "ERROR", error: "The stream was interrupted. Please continue the task you were working on." } },
+  ] });
+  const evs = await run({ id: "xc4", message: "你说呢", sessionId: null });
+  assert.match(evs.find((e) => e.type === "error").message, /stream was interrupted/);
+  assert.equal(evs.at(-1).isError, true);
+  const sid = evs.find((e) => e.type === "init").sessionId;
+  const f = fs.readdirSync(PATHS.projects, { recursive: true }).find((x) => String(x).endsWith(sid + ".jsonl"));
+  assert.match(fs.readFileSync(path.join(PATHS.projects, String(f)), "utf8"), /我觉得先试第二种。/);
 });
 
 test("模型清单：按 Tab 分代号和名字；日志行不算模型", () => {

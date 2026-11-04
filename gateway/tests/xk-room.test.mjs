@@ -156,6 +156,15 @@ test("她还在说时主人又说了：跑完再来一轮，只递新的；说�
   assert.match(messages().at(-1).text, /小鱼没说出来/);
 });
 
+test("话说完了、收尾才报错（agy 的「流中断」）：话照样贴进群，再说一声收尾出了错（#101）", async () => {
+  await ownerSays("哈基米你说呢", ["hachimi"]).decided;
+  const q = queued.find((x) => x.agy);
+  answer(q, "hachimi", "我觉得可以先试试第二种。", { isError: true, subtype: "The stream was interrupted" });
+  const m = said();
+  assert.deepEqual(m.at(-2), ["hachimi", "我觉得可以先试试第二种。", ""]);
+  assert.match(m.at(-1)[1], /哈基米这一轮收尾报了错：The stream was interrupted（上面的话是她说完了的）/);
+});
+
 test("接口：POST 说一句（可以 @ 人），GET 拿新消息和成员", async () => {
   const call = async (method, p, body) => {
     const req = Object.assign(Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []), { method, headers: {} });

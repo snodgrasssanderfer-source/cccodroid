@@ -13,8 +13,6 @@ import android.util.Log;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -166,12 +164,24 @@ final class PadVoice {
 
     // ── 念：按句排队，取和放分两条线 ──
     private static final class Line { final String role, text; final long gen; Line(String r, String t, long g) { role = r; text = t; gen = g; } }
-    private static final class Clip { final File f; final long gen; Clip(File f, long g) { this.f = f; this.gen = g; } }
+    // 音频留在内存里排队：以前写进 8 个轮用的文件，取得比放得快时前面的还没放就被后面的盖掉（跳句、重念，#101）
+    private static final class Clip { final byte[] wav; final long gen; Clip(byte[] w, long g) { wav = w; gen = g; } }
+    private static final class Bytes extends android.media.MediaDataSource {
+        private final byte[] b;
+        Bytes(byte[] b) { this.b = b; }
+        @Override public int readAt(long pos, byte[] out, int off, int size) {
+            if (pos >= b.length) return -1;
+            int n = (int) Math.min(size, b.length - pos);
+            System.arraycopy(b, (int) pos, out, off, n);
+            return n;
+        }
+        @Override public long getSize() { return b.length; }
+        @Override public void close() { }
+    }
     private final LinkedBlockingQueue<Line> lines = new LinkedBlockingQueue<>();
     private final LinkedBlockingQueue<Clip> clips = new LinkedBlockingQueue<>();
     private volatile long gen;   // 主人按住说话时加一：排着的、正放的都作废
     private volatile MediaPlayer playing;
-    private int seq;
 
     /** 群里她说了一段：开着「念出来」、电脑通了、她挑好了音色才念 */
     void say(String role, String text) {
@@ -217,9 +227,7 @@ final class PadVoice {
             if (l.gen != gen) continue;
             try {
                 byte[] wav = http("POST", "/tts", new JSONObject().put("role", l.role).put("text", l.text).toString().getBytes(StandardCharsets.UTF_8), "application/json", 60_000);
-                File f = new File(ctx.getCacheDir(), "tts-" + (seq++ % 8) + ".wav");
-                try (FileOutputStream o = new FileOutputStream(f)) { o.write(wav); }
-                clips.add(new Clip(f, l.gen));
+                clips.add(new Clip(wav, l.gen));
             } catch (Exception e) {
                 Log.w(TAG, "念不了：" + e.getMessage());
                 error = "念不了：" + e.getMessage(); changed();
@@ -235,7 +243,7 @@ final class PadVoice {
             final Object done = new Object();
             MediaPlayer mp = new MediaPlayer();
             try {
-                mp.setDataSource(c.f.getPath());
+                mp.setDataSource(new Bytes(c.wav));
                 mp.setOnCompletionListener(m -> { synchronized (done) { done.notifyAll(); } });
                 mp.setOnErrorListener((m, w, x) -> { synchronized (done) { done.notifyAll(); } return true; });
                 mp.prepare();
