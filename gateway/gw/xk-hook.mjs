@@ -1,11 +1,12 @@
 // Claude Code 的 hook（角色项目的 .claude/settings.json 里挂的）：node xk-hook.mjs <start|prompt> <角色目录>
 //   start  ：会话开始，带上这个角色记忆的要点
-//   prompt ：每条消息前，带上可能相关的记忆、接班说明（只带一次）、留言板上给她的新便条、人设的 post_history_instructions（贴着最新那条消息）
+//   prompt ：每条消息前，带上可能相关的记忆、接班说明（只带一次）、留言板上给她的新便条、人设的 post_history_instructions（贴着最新那条消息），再从示例池抽一两句
 // 失败就非零退出、原因写 stderr：Claude Code 会把 hook 出错显示出来，这一轮照常进行。
 import fs from "node:fs";
 import path from "node:path";
 import { digest, line, search } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
+import { examplesText } from "./xk-examples.mjs";
 
 const [ev, dir] = process.argv.slice(2);
 let raw = "";
@@ -42,6 +43,8 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
       if (model) parts.push(`（系统：你这一轮用的模型是 ${model}${prov ? "，接口 " + prov : ""}。主人问起就照这个答。）`);
       const ph = path.join(dir, "persona", "post_history.md");
       if (fs.existsSync(ph)) { const t = fs.readFileSync(ph, "utf8").trim(); if (t) parts.push(t); }
+      const ex = examplesText(dir);
+      if (ex) parts.push(ex);
     } else throw new Error("不认识的 hook 事件：" + ev);
     if (parts.length) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: ev === "start" ? "SessionStart" : "UserPromptSubmit", additionalContext: parts.join("\n\n") } }));
   } catch (e) {

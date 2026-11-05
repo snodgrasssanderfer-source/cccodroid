@@ -16,6 +16,7 @@ import { END_HOOKS } from "./queue.mjs";
 import { projectSlug } from "./projects.mjs";
 import { rememberSession } from "./runs.mjs";
 import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
+import { examplesText } from "./xk-examples.mjs";
 import { line, search } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
@@ -190,6 +191,8 @@ export function runAgy(item, extra = {}) {
   if (board) ctx.push(board);
   ctx.push(`（系统：你这一轮经 Antigravity 用的是 Gemini，模型 ${STATE.agyModel || "是 agy 的默认"}。主人问起就照这个答。）`);
   if (fs.existsSync(postHistoryFile("hachimi"))) ctx.push(fs.readFileSync(postHistoryFile("hachimi"), "utf8").trim());
+  const ex = examplesText(roleDir("hachimi"));
+  if (ex) ctx.push(ex);
   const content = [...(ctx.length ? [{ type: "text", text: "（给你自己看的背景，不是主人说的话）\n" + ctx.join("\n\n") }] : []), { type: "text", text: item.message }];
   let parent = null;
   const finish = (fields) => {
