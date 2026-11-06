@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { PATHS } from "../gw/config.mjs";
-import { ENGINE_RUN, STATE } from "../gw/xk-core.mjs";
+import { ENGINE_RUN, STATE, sweepQuiet } from "../gw/xk-core.mjs";
 import { ROLES_DIR, ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { list, post, quietFile, takeUnread, toId, unreadText } from "../gw/xk-board.mjs";
 import { shiftEnd } from "../gw/xk-board-gw.mjs";
@@ -41,6 +41,15 @@ test("网关自己起的轮次不把便条读掉", () => {
   const q = quietFile(ROLES_DIR, "run-q1"); fs.mkdirSync(path.dirname(q), { recursive: true }); fs.writeFileSync(q, "");
   assert.equal(unreadText(ROLES_DIR, "xiaoke", "run-q1"), "");
   assert.match(unreadText(ROLES_DIR, "xiaoke", "run-real"), /主人留给大家.*早点睡/);
+});
+
+test("被杀留下的「这一轮别读便条」记号：网关启动时清掉（11-06 大扫除）", () => {
+  const q = quietFile(ROLES_DIR, "run-dead");
+  fs.mkdirSync(path.dirname(q), { recursive: true });
+  fs.writeFileSync(q, "");
+  assert.equal(fs.existsSync(q), true);
+  sweepQuiet();
+  assert.equal(fs.existsSync(path.dirname(q)), false, "整个 quiet 目录清掉");
 });
 
 test("hook：每条消息前带上给她的新便条，只带一次", () => {
@@ -138,4 +147,11 @@ test("下班补一张：还有额度就补跑一轮让她自己写；这一班�
     assert.equal(shiftEnd({ from: "hachimi", to: "xiaoke", sid: sid(2) }), null, "这一班写过了");
     assert.equal(ran.length, 1);
   } finally { ENGINE_RUN.agy = keep; }
+});
+
+test("一次超过 5 张：只递 5 张、只记 5 张已读，剩下的下一轮接着递（11-06）", () => {
+  for (let i = 0; i < 7; i++) post(ROLES_DIR, { from: "owner", text: "第" + i + "张" });
+  assert.equal(takeUnread(ROLES_DIR, "xiaoke").length, 5);
+  assert.equal(takeUnread(ROLES_DIR, "xiaoke").length, 2, "剩下两张下一轮递");
+  assert.deepEqual(takeUnread(ROLES_DIR, "xiaoke"), []);
 });

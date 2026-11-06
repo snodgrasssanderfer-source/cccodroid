@@ -33,7 +33,9 @@ test("mcp_config.json 是 agy 建的空文件：当空配置，补上记忆服�
   const evs = await run({ id: "xc1", message: "在吗", sessionId: null });
   assert.equal(evs.find((e) => e.type === "error"), undefined, "不该报准备失败");
   assert.equal(evs.at(-1).isError, false);
-  assert.ok(JSON.parse(fs.readFileSync(MCP, "utf8")).mcpServers["xk-memory"]);
+  const mem = JSON.parse(fs.readFileSync(MCP, "utf8")).mcpServers["xk-memory"];
+  assert.ok(mem);
+  assert.equal(mem.env.XK_ROOM_FILE, path.join(CFG.home, ".config", "xiaoke", "room.jsonl"), "哈基米的 room_read 也要拿到群文件路径（#132）");
 });
 
 test("mcp_config.json 里有东西但不是 JSON：不覆盖主人的文件，报错说清楚", async () => {

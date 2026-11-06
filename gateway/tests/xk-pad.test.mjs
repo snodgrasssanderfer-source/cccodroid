@@ -1,9 +1,32 @@
 // 平板 App 的手机一侧（第三步 3a）：配对比 6 位数、加密请求、序号和时间、只放行聊天要用的接口、加密长轮询
 import crypto from "node:crypto";
+import http from "node:http";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { CFG } from "../gw/config.mjs";
 import { onPublish, publish } from "../gw/bus.mjs";
-import { PROXY, confirmPair, derive, devices, open, openPairing, padCall, pairRequest, seal, unpair } from "../gw/xk-pad.mjs";
+import { confirmPair, derive, devices, open, openPairing, padCall, pairRequest, seal, unpair } from "../gw/xk-pad.mjs";
+
+/** 平板放行的请求最后是转给网关自己的接口（selfApi，真 HTTP 到本机）：在同一个端口上起一个假的门口，记下转来了什么 */
+async function fakeGateway() {
+  const gw = { calls: [], reply: (m, p, b) => ({ ok: true, p }) };
+  gw.srv = http.createServer((req, res) => {
+    let t = "";
+    req.on("data", (c) => (t += c));
+    req.on("end", () => {
+      const body = t ? JSON.parse(t) : null, p = new URL(req.url, "http://x").pathname;
+      gw.calls.push([req.method, p, body]);
+      let out;
+      try { out = { s: 200, b: gw.reply(req.method, p, body) }; }
+      catch (e) { out = { s: e.status || 500, error: e.message }; }
+      res.writeHead(out.s, { "content-type": "application/json" });
+      res.end(JSON.stringify(out.s < 300 ? out.b : { error: out.error }));
+    });
+  });
+  await new Promise((ok) => gw.srv.listen(CFG.port, "127.0.0.1", ok));
+  gw.close = () => new Promise((ok) => gw.srv.close(ok));
+  return gw;
+}
 
 /** 假平板：照平板 App 的算法走一遍 */
 function tablet() {
@@ -53,24 +76,27 @@ test("中间人换了公钥：两边的 6 位数对不上（主人就不会点�
 test("加密请求：放行的接口转给本机；别的接口、旧序号、钟差太大、别人的密钥都不认", async () => {
   openPairing();
   const t = tablet(); const r = pairRequest({ pub: t.pub }); t.finish(r); confirmPair(r.id);
-  const calls = [];
-  PROXY.call = async (m, p, b) => { calls.push([m, p, b]); return { ok: true, p }; };
-  assert.deepEqual(await t.call({ m: "POST", p: "/api/xk/room", b: { text: "在吗" } }), { s: 200, b: { ok: true, p: "/api/xk/room" } });
-  assert.deepEqual(calls[0], ["POST", "/api/xk/room", { text: "在吗" }]);
-  await assert.rejects(t.call({ m: "GET", p: "/api/files/list" }), /不能用这个接口/);
-  const old = t.req({ m: "GET", p: "/api/xk/roles" });
-  await padCall(old);
-  await assert.rejects(padCall(old), /序号旧了/, "同一个请求再发一遍");
-  // 同时发的两个请求先后颠倒到达：都认（长轮询和发消息同时在路上）
-  const a = t.req({ m: "GET", p: "/api/xk/roles" }), b = t.req({ m: "GET", p: "/api/xk/roles" });
-  await padCall(b); await padCall(a);
-  await assert.rejects(padCall(a), /序号旧了/);
-  await assert.rejects(padCall(t.req({ m: "GET", p: "/api/xk/roles" }, Date.now() - 5 * 60000)), /时间对不上/);
-  const other = tablet(); other.id = t.id; other.key = crypto.randomBytes(32);
-  await assert.rejects(padCall(other.req({ m: "GET", p: "/api/xk/roles" })), /解不开/);
-  // 本机接口报错：错误加密带回去，不是明文
-  PROXY.call = async () => { throw Object.assign(new Error("text 不能为空"), { status: 400 }); };
-  assert.deepEqual(await t.call({ m: "POST", p: "/api/xk/room", b: {} }), { s: 400, error: "text 不能为空" });
+  const gw = await fakeGateway();
+  try {
+    assert.deepEqual(await t.call({ m: "POST", p: "/api/xk/room", b: { text: "在吗" } }), { s: 200, b: { ok: true, p: "/api/xk/room" } });
+    assert.deepEqual(gw.calls[0], ["POST", "/api/xk/room", { text: "在吗" }]);
+    await assert.rejects(t.call({ m: "GET", p: "/api/files/list" }), /不能用这个接口/);
+    const old = t.req({ m: "GET", p: "/api/xk/roles" });
+    await padCall(old);
+    await assert.rejects(padCall(old), /序号旧了/, "同一个请求再发一遍");
+    // 同时发的两个请求先后颠倒到达：都认（长轮询和发消息同时在路上）
+    const a = t.req({ m: "GET", p: "/api/xk/roles" }), b = t.req({ m: "GET", p: "/api/xk/roles" });
+    await padCall(b); await padCall(a);
+    await assert.rejects(padCall(a), /序号旧了/);
+    await assert.rejects(padCall(t.req({ m: "GET", p: "/api/xk/roles" }, Date.now() - 5 * 60000)), /时间对不上/);
+    const other = tablet(); other.id = t.id; other.key = crypto.randomBytes(32);
+    await assert.rejects(padCall(other.req({ m: "GET", p: "/api/xk/roles" })), /解不开/);
+    // 本机接口报错：错误加密带回去，不是明文；上游的状态码原样给平板（以前一律变成 500）
+    gw.reply = () => { throw Object.assign(new Error("text 不能为空"), { status: 400 }); };
+    const err = await t.call({ m: "POST", p: "/api/xk/room", b: {} });
+    assert.equal(err.s, 400);
+    assert.match(err.error, /text 不能为空/);
+  } finally { await gw.close(); }
   unpair(r.id);
 });
 
