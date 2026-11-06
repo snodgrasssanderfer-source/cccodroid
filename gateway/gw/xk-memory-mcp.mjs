@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { KINDS, line, remember, remove, search, today } from "./xk-memstore.mjs";
-import { WHO, list as boardList, noteLine, post as boardPost, toId } from "./xk-board.mjs";
+import { list as boardList, noteLine, post as boardPost, toId } from "./xk-board.mjs";
+import { displayName, writeJson } from "./xk-shared.mjs";
 
 const dir = process.argv[2];
 if (!dir || !fs.existsSync(dir)) { process.stderr.write("用法：xk-memory-mcp.mjs <角色目录>\n"); process.exit(2); }
@@ -61,37 +62,31 @@ function call(name, a) {
   if (name === "board_write") {
     const me = path.basename(dir);
     const n = boardPost(path.dirname(dir), { from: me, to: toId(a.to), text: a.text, replaces: a.replaces || null });
-    const re = n.replaces ? `，旧的那张撤下了${n.replaces.readBy.length ? `；${n.replaces.readBy.map((r) => WHO[r]).join("、")}读过旧的，下一轮会再收到这张` : ""}` : "";
+    const re = n.replaces ? `，旧的那张撤下了${n.replaces.readBy.length ? `；${n.replaces.readBy.map(displayName).join("、")}读过旧的，下一轮会再收到这张` : ""}` : "";
     return `贴好了${re}：${noteLine(n)}`;
   }
   if (name === "board_read") {
     const ns = boardList(path.dirname(dir)).slice(0, Number(a.limit) || 10);
-    return ns.length ? ns.map((n) => `[${n.id}] ` + noteLine(n) + (n.readBy.length ? `（${n.readBy.map((r) => WHO[r]).join("、")}看过）` : "")).join("\n") : "留言板上还没有便条。";
+    return ns.length ? ns.map((n) => `[${n.id}] ` + noteLine(n) + (n.readBy.length ? `（${n.readBy.map(displayName).join("、")}看过）` : "")).join("\n") : "留言板上还没有便条。";
   }
   // 群：MCP 是单独的进程，碰不到网关，和留言板一样写文件交接——网关每秒把 outbox 里的话贴进群，点了名的叫她接（xk-room.mjs）
   if (name === "room_say") {
     const text = String(a.text || "").trim();
     if (!text) throw new Error("text 不能为空");
     const box = path.join(path.dirname(dir), ".room", "outbox");
-    fs.mkdirSync(box, { recursive: true });
-    const f = path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}.json`);
-    fs.writeFileSync(f + ".tmp", JSON.stringify({ from: path.basename(dir), text, at: Date.now() }));
-    fs.renameSync(f + ".tmp", f);
+    writeJson(path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}.json`), { from: path.basename(dir), text, at: Date.now() });
     return "贴进群里了，网关一两秒内送到；点了名的她会在群里接。";
   }
   if (name === "room_mode") {
     const box = path.join(path.dirname(dir), ".room", "outbox");
-    fs.mkdirSync(box, { recursive: true });
-    const f = path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}-mode.json`);
-    fs.writeFileSync(f + ".tmp", JSON.stringify({ from: path.basename(dir), mode: "normal", at: Date.now() }));
-    fs.renameSync(f + ".tmp", f);
+    writeJson(path.join(box, `${Date.now()}-${process.pid}-${path.basename(dir)}-mode.json`), { from: path.basename(dir), mode: "normal", at: Date.now() });
     return "群一两秒内切回平时，群里会有一句提示。";
   }
   if (name === "room_read") {
     const f = path.join(os.homedir(), ".config", "xiaoke", "room.jsonl");
     let ms = [];
     try { ms = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch (e) { if (e.code !== "ENOENT") throw e; }
-    const name = (id) => ({ owner: "主人", system: "（系统）", xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" })[id] || id;
+    const name = (id) => (id === "system" ? "（系统）" : displayName(id));
     const pick = ms.slice(-(Number(a.limit) || 20));
     return pick.length ? pick.map((m) => `${new Date(m.at).toLocaleString("zh-CN", { hour12: false })} ${name(m.from)}：${m.text}`).join("\n") : "群里还没人说话。";
   }
@@ -99,10 +94,7 @@ function call(name, a) {
   if (name === "context_next") {
     const mode = a.mode === "compact" || a.mode === "new" ? a.mode : null;
     if (!mode) throw new Error("mode 只能是 compact 或 new");
-    const f = path.join(path.dirname(dir), ".ctl", path.basename(dir) + ".json");
-    fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f + ".tmp", JSON.stringify({ mode, why: String(a.why || ""), at: Date.now() }));
-    fs.renameSync(f + ".tmp", f);
+    writeJson(path.join(path.dirname(dir), ".ctl", path.basename(dir) + ".json"), { mode, why: String(a.why || ""), at: Date.now() });
     return mode === "compact" ? "好，这一轮结束后压缩这段对话。" : "好，这一轮结束后换一段新对话。";
   }
   if (name === "forget") return `删掉了：${line(remove(dir, String(a.id || "")))}`;

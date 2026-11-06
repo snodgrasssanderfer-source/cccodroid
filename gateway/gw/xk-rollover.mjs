@@ -12,6 +12,7 @@ import { END_HOOKS } from "./queue.mjs";
 import { INTERNAL, STATE, internalRun, projectOf, saveState } from "./xk-core.mjs";
 import { roleDir, roleOfDir } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
+import { writeJson } from "./xk-shared.mjs";
 
 export const ROLLOVER_AT = 0.2;          // 默认占到两成就问
 // 单独定的线：哈基米 60%（主人 11-03 定的；agy 没有对外暴露的压缩线，就按这个换）
@@ -34,7 +35,6 @@ const choiceFile = (id) => path.join(path.dirname(roleDir(id)), ".ctl", id + ".j
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
 const rm = (f) => { try { fs.rmSync(f); } catch {} };
-const writeJson = (f, o) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + ".tmp", JSON.stringify(o)); fs.renameSync(f + ".tmp", f); };
 
 /** 递给她的一句话：走 xk-hook（小克、小鱼每条消息前都会读这个文件） */
 export const askText = (pct) => `（系统：这段对话占到 ${Math.round(pct * 100)}%，过线了。` +

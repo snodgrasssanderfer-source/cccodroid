@@ -10,6 +10,7 @@ import { LAST_SESSION, forgetSession, rememberSession } from "./runs.mjs";
 import { ROLES, ROLES_DIR, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { quietFile } from "./xk-board.mjs";
 import { recentText } from "./xk-transcript.mjs";
+import { writeJson } from "./xk-shared.mjs";
 
 export const XK_HOME = path.join(CFG.home, ".config", "xiaoke");
 fs.mkdirSync(XK_HOME, { recursive: true });
@@ -18,7 +19,7 @@ fs.mkdirSync(XK_HOME, { recursive: true });
 const STATE_FILE = path.join(XK_HOME, "state.json");
 export const STATE = { active: "xiaoke", order: ["xiaoke", "hachimi", "deepseek"], projects: {}, cooldown: {}, origin: {}, pending: {} };
 try { Object.assign(STATE, JSON.parse(fs.readFileSync(STATE_FILE, "utf8"))); } catch (e) { if (e.code !== "ENOENT") throw new Error("小克状态文件坏了：" + e.message); }
-export function saveState() { fs.writeFileSync(STATE_FILE + ".tmp", JSON.stringify(STATE, null, 1)); fs.renameSync(STATE_FILE + ".tmp", STATE_FILE); }
+export function saveState() { writeJson(STATE_FILE, STATE, { indent: 1 }); }
 
 // 各模块往这里挂：handlers(req, res, u, p) 不认领就返回 NEXT
 export const ROUTES = [];

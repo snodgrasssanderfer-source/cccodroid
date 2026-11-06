@@ -130,7 +130,8 @@ START_GUARDS.push((q) => {
 // ── 输入栏换型号：选了另一个角色那家的模型，就换成那个角色（接她最近那段，没有才新开；带上这段对话），原会话不动 ──
 const roleOfProvider = (pid) => (pid ? ROLES.find((r) => r.provider === pid) || null : null);
 // 从接班会话换回原角色：resume 是她原来那段的会话号，界面打开它接着聊（#1）；没有就照旧新开
-// 每个角色最近一段主人自己聊的会话（网关自己起的整理记忆、日记、空闲压缩不算）：换人时接着她这段，不再次次新开
+// 每个角色最近一段主人自己聊的会话（网关自己起的整理记忆、日记、空闲压缩不算）：换人时接着她这段，不再次次新开。
+// 只这一处写 STATE.lastByRole（11-06 大扫除把 xk-room 里那份重复的收掉了，那边收尾时用 JUST 认这一轮的会话号）
 END_HOOKS.push((run) => {
   if (!run || run.sched || run.auto || run.internal || !run.sessionId) return;
   const r = roleOfDir(run.cwd);

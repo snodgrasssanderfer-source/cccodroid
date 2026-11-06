@@ -14,6 +14,7 @@ import { CFG, LIVE, log } from "./config.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { NEXT, sendJson } from "./http.mjs";
 import { XK_HOME, addRoute, httpError, json, selfApi } from "./xk-core.mjs";
+import { writeJson } from "./xk-shared.mjs";
 
 export const PAD_PORT = Number(process.env.CCAPP_PAD_PORT || CFG.port + 7);
 const FILE = path.join(XK_HOME, "pads.json");   // 配对过的平板和各自的密钥：只在手机上，不进仓库
@@ -29,7 +30,11 @@ export function devices() {
   try { DB = JSON.parse(fs.readFileSync(FILE, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw new Error(`平板配对记录读不了（${FILE}）：${e.message}`); DB = { devices: [] }; }
   return DB;
 }
-function save() { fs.writeFileSync(FILE + ".tmp", JSON.stringify(DB, null, 1), { mode: 0o600 }); fs.renameSync(FILE + ".tmp", FILE); }
+function save() { writeJson(FILE, DB, { indent: 1, mode: 0o600 }); }
+// 每个请求都要记序号（防重放），但不必每个请求写一次盘：攒 1 秒写一次（11-06 大扫除，小鱼查的）。
+// 代价是最多 1 秒的序号还停在盘上，网关正好在这 1 秒里重启的话，这几个旧请求理论上能再发一遍；窗口很短
+let saveTimer = null;
+function saveSoon() { if (!saveTimer) { saveTimer = setTimeout(() => { saveTimer = null; save(); }, 1000); saveTimer.unref?.(); } }
 const byId = (id) => devices().devices.find((d) => d.id === id);
 
 // ── 加解密 ──
@@ -98,7 +103,6 @@ export function unpair(id) {
 // ── 平板发来的加密请求 ──
 // 不转给本机接口、网关自己答的（平板更新：xk-padupd.mjs）：路径 → (请求体, 设备) => { s, b } 或 { s, error }
 export const PAD_SPECIAL = {};
-export const PROXY = { call: (method, p, body) => selfApi(method, p, body) };
 /** 解开 → 核对时间和序号 → 放行的接口转给本机 → 加密回去。序号要一直变大：截下来的旧请求再发一遍不认 */
 /** 解开平板发来的一个信封，核对时间和序号：回 { d: 设备, key, q: 明文 } */
 function verify(env, now) {
@@ -110,7 +114,7 @@ function verify(env, now) {
   // 比见过的最大号往回 64 以内、而且没用过的才认；序号落盘，网关重启后旧请求照样不认
   const n = Number(q.q), seen = d.seen || [];
   if (!(n > 0) || n <= d.seq - 64 || seen.includes(n)) throw httpError(401, "序号旧了：这个请求已经用过");
-  d.seen = [...seen, n].slice(-64); d.seq = Math.max(d.seq, n); d.lastSeen = now; save();
+  d.seen = [...seen, n].slice(-64); d.seq = Math.max(d.seq, n); d.lastSeen = now; saveSoon();
   return { d, key, q };
 }
 export async function padCall(env, now = Date.now()) {
@@ -123,7 +127,7 @@ export async function padCall(env, now = Date.now()) {
   if (q.ev != null) return seal(key, await waitEvents(Number(q.ev), Number(q.ev) < 0 ? 0 : 25000), d.id);
   if (!ALLOW.some((re) => re.test(p))) throw httpError(403, "平板不能用这个接口：" + p);
   let out;
-  try { out = { s: 200, b: await PROXY.call(method, p, q.b ?? null) }; }
+  try { out = { s: 200, b: await selfApi(method, p, q.b ?? null) }; }
   catch (e) { out = { s: e.status || 500, error: e.message }; }
   return seal(key, out, d.id);
 }

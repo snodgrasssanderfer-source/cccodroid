@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CFG } from "./config.mjs";
 import { findSessionFile, peekSession } from "./sessions.mjs";
+import { writeFileAtomic as write } from "./xk-shared.mjs";
 
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
@@ -13,6 +14,7 @@ export const ROLES = [
   { id: "hachimi", name: "哈基米", provider: null, engine: "agy" },           // Gemini，经 Antigravity CLI（xk-agy.mjs）
   { id: "deepseek", name: "DeepSeek", provider: "deepseek", engine: "claude" },
 ];
+// name 是角色名（给上游、给引擎看的）；界面上叫「小鱼」这些，在 xk-shared.mjs 的 DISPLAY / displayName 里
 export const roleById = (id) => ROLES.find((r) => r.id === id) || null;
 export const roleDir = (id) => path.join(ROLES_DIR, id);
 export const WORLDBOOK = path.join(ROLES_DIR, "CLAUDE.md");
@@ -38,7 +40,6 @@ export function roleOfSession(sid) {
   return f ? roleOfDir(peekSession(f.file).cwd) : null;
 }
 
-const write = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + ".tmp", s); fs.renameSync(f + ".tmp", f); };
 const agentFile = (id) => path.join(roleDir(id), ".claude", "agents", id + ".md");
 export const postHistoryFile = (id) => path.join(roleDir(id), "persona", "post_history.md");
 
