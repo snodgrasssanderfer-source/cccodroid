@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CFG } from "./config.mjs";
 import { findSessionFile, peekSession } from "./sessions.mjs";
+import { writeFileAtomic as write, xkHome } from "./xk-shared.mjs";
 
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
@@ -13,6 +14,7 @@ export const ROLES = [
   { id: "hachimi", name: "哈基米", provider: null, engine: "agy" },           // Gemini，经 Antigravity CLI（xk-agy.mjs）
   { id: "deepseek", name: "DeepSeek", provider: "deepseek", engine: "claude" },
 ];
+// name 是角色名（给上游、给引擎看的）；界面上叫「小鱼」这些，在 xk-shared.mjs 的 DISPLAY / displayName 里
 export const roleById = (id) => ROLES.find((r) => r.id === id) || null;
 export const roleDir = (id) => path.join(ROLES_DIR, id);
 export const WORLDBOOK = path.join(ROLES_DIR, "CLAUDE.md");
@@ -38,7 +40,6 @@ export function roleOfSession(sid) {
   return f ? roleOfDir(peekSession(f.file).cwd) : null;
 }
 
-const write = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + ".tmp", s); fs.renameSync(f + ".tmp", f); };
 const agentFile = (id) => path.join(roleDir(id), ".claude", "agents", id + ".md");
 export const postHistoryFile = (id) => path.join(roleDir(id), "persona", "post_history.md");
 
@@ -47,7 +48,7 @@ const MECHANICS = `# 怎么用你的记忆、日记、留言板和群
 
 - 你有一套只属于你的长期记忆（工具 remember / recall / forget）。主人告诉你的事实、发生的事、计划、你自己的看法，觉得以后用得上就当场 remember。
 - 记的时候把"昨天""下周"换成具体日期（今天的日期在环境信息里）。事情变了就用 remember 记新的，并在 ends 里填旧记忆的 id，旧的会标成"已过去"留着。
-- 每条消息前会自动附上几条可能相关的记忆，不全；主人问到具体的事而那里没有，先 recall 换个说法查，查不到就说没印象，不编。
+- 每条消息前会自动附上几条可能相关的记忆，不全，同一段对话里附过的不再附，长的截短了；主人问到具体的事而那里没有，先 recall 换个说法查，查不到就说没印象，不编。
 - 提起旧事时说清大概是哪天、当时谁怎么说（"你上周三说……""我当时觉得……"）；已过去的事用过去的说法。
 - diary/ 里是你写的日记，inputs/ 是每天的素材，主人想看可以读。
 - 留言板是三个人和主人共用的（工具 board_write / board_read）。主人交代的事做到一半、你要下班（主人换人、你额度快用完）时，用 board_write 给接班的人留张便条：交代了什么、办到哪、还差什么，结论放前面；不抄你的私人记忆。你下班时要是还没留，系统会再提醒你一次。
@@ -68,9 +69,17 @@ export function ensureRoles() {
       agent: r.id,
       enableAllProjectMcpServers: true,
       hooks: { SessionStart: hook("start"), UserPromptSubmit: hook("prompt") },
+      // 省额度（#125，11-06 真机 2.1.309 实测两项都生效）：主人账号上 claude.ai 的 Docs 连接器屋里用不上，说明加工具约 1700 字；
+      // 自带技能（dataviz、claude-api、schedule……）的清单约 6800 字，每段会话开头都带。自己装的技能不受影响
+      disableClaudeAiConnectors: true,
+      disableBundledSkills: true,
     }, null, 1) + "\n");
     // alwaysLoad：不然记忆工具被收进 ToolSearch，每次想起旧事都要多一个来回
-    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": { type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true } } }, null, 1) + "\n");
+    // XK_ROOM_FILE：群消息文件的路径由网关给，记忆工具不自己拼（它拿不到 CFG，以前靠 HOME 猜，换环境就读到空群）
+    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": {
+      type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true,
+      env: { XK_ROOM_FILE: path.join(xkHome(CFG.home), "room.jsonl") },
+    } } }, null, 1) + "\n");
     write(path.join(d, "CLAUDE.md"), MECHANICS);
   }
 }

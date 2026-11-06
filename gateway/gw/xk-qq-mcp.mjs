@@ -10,6 +10,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { CFG } from "./config.mjs";
+import { writeJson } from "./xk-shared.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLEAN_DIR = path.join(CFG.workspace, "qq-clean");
@@ -26,8 +27,7 @@ async function rpc(tool, args, timeoutMs = 30000) {
   const id = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   fs.mkdirSync(REQ_DIR, { recursive: true });
   const f = path.join(REQ_DIR, id + ".json");
-  fs.writeFileSync(f + ".tmp", JSON.stringify({ id, runId: RUN_ID, tool, args: args || {}, at: Date.now() }));
-  fs.renameSync(f + ".tmp", f);
+  writeJson(f, { id, runId: RUN_ID, tool, args: args || {}, at: Date.now() });
   const t0 = Date.now();
   for (;;) {
     const out = path.join(RES_DIR, id + ".json");

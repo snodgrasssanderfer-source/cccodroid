@@ -22,6 +22,7 @@
   const moving = () => root.dataset.motion !== "off" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ── 三位住客 ──
+  // name 要和网关 xk-shared.mjs 的 DISPLAY 对上（前端 import 不了网关模块，只能各留一份，改名字两处一起改）
   const ROLE = {
     xiaoke: { name: "小克", sub: "Claude", mark: "icon/flower_open", s: { idle: "01_idle", thinking: "02_thinking", working: "03_working", happy: "04_flustered", sleeping: "09_sleeping", wave: "12_wave", memory: "11_memory", diary: "10_diary" } },
     hachimi: { name: "哈基米", sub: "Gemini", mark: "icon/mark_paw", s: { idle: "01_idle", thinking: "02_thinking", working: "03_working", happy: "04_happy", sleeping: "07_sleeping", wave: "08_wave" } },
@@ -148,14 +149,7 @@
     const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) fix(n);
   }
-  new MutationObserver((ms) => {
-    for (const m of ms) {
-      if (m.type === "characterData") fix(m.target);
-      else for (const n of m.addedNodes) n.nodeType === 1 ? brand(n) : n.nodeType === 3 && fix(n);
-    }
-    const t = document.title.replace(BRAND, "小克");
-    if (t !== document.title) document.title = t;
-  }).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+  // 这个观察器（整个文档、子树、文字变化）和后面设置页那个参数一模一样，11-06 大扫除并成了一个，见「流式输出时 DOM」那句
   brand(document.body);
   document.title = "小克";
 
@@ -234,6 +228,7 @@
     const cc = window.__cc; if (!cc) return;
     const sid = cc.view.sessionId || null;
     if (!force && sid === cur.sid) return;
+    if (sid !== cur.sid) resetRuns();   // 换会话了：上一段没等到 run_end 的记录一并清掉
     cur.sid = sid;
     if (!ROLES) await loadRoles();
     const r = await api("/api/xk/session-role" + (sid ? "?sid=" + encodeURIComponent(sid) : ""));
@@ -276,6 +271,13 @@
   }).observe(document.body, { childList: true, subtree: true });
   const PRAISE = /可爱|厉害|好看|真棒|聪明|喜欢你|好乖/;
   const runs = new Map();   // run 号 → { praise, said }
+  /** 换了会话、断线重连之后清掉上一段的运行记录：漏一条 run_end（断线、进程被杀），live 再也归不了零，
+   *  思考块就一直敞着、表情也停在上一轮（11-06 大扫除，小鱼查的） */
+  function resetRuns() {
+    runs.clear(); follow.clear(); live = 0;
+    document.querySelectorAll("#chat details.think[data-xk]").forEach((d) => { d.open = false; });
+    peek(null);
+  }
   function mine(ev) { const cc = window.__cc; return cc && ((ev.runId && cc.view.runIds && cc.view.runIds.has(ev.runId)) || (ev.sessionId && ev.sessionId === cc.view.sessionId)); }
   function onRun(ev) {
     if (ev.type === "run_start") {
@@ -306,7 +308,8 @@
     const OFF = {};
     for (const r of Object.keys(ROLE)) fetch(stateArt("offline", r)).then((x) => x.blob()).then((bl) => { OFF[r] = URL.createObjectURL(bl); }).catch(() => {});
     es.onerror = () => { if (!offT) offT = setTimeout(() => { offT = 0; if (es.readyState !== 1 && !offSaid) { offSaid = true; toast("连不上了", "小屋的网关没应答，正在重连", OFF[root.dataset.xkRole] || OFF.xiaoke, true); } }, 4000); };
-    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } };
+    // 连回来时也清一遍：断线那段里漏掉的 run_end 补不回来了
+    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } resetRuns(); };
     es.onmessage = (m) => {
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
@@ -436,9 +439,12 @@
   const noteWhen = (t) => { const d = new Date(t); return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
   let notes = [], boardAll = false;
   async function loadBoard() { notes = (await api("/api/xk/board")).notes || []; boardDot(); return notes; }
-  // 角色栏上的点：有我还没看过的、她们留的便条
+  // 角色栏上的点：有我还没看过的、她们留的便条。水位只跟着她们留的走——主人贴一张新的，
+  // 不该把她之前没看的红点压掉（11-06 大扫除，小鱼查的）
+  const roleNotes = () => notes.filter((n) => n.from !== "owner");
+  const boardWatermark = () => roleNotes().reduce((m, n) => Math.max(m, n.at), 0);
   function boardDot() {
-    const seen = LS.get("boardSeen", 0), on = notes.some((n) => n.from !== "owner" && n.at > seen);
+    const seen = LS.get("boardSeen", 0), on = roleNotes().some((n) => n.at > seen);
     tabsEl.querySelector('.xk-tab[data-i="1"]')?.classList.toggle("dot", on);
   }
   function boardHtml() {
@@ -453,7 +459,9 @@
     box.innerHTML = boardHtml();
     box.querySelectorAll(".xk-note").forEach((x) => x.onclick = () => noteSheet(notes.find((n) => n.id === x.dataset.id)));
     const all = $("#xk-b-all", box); if (all) all.onclick = () => { boardAll = !boardAll; SFX.play("tap"); paintBoard(); };
-    if (notes.length) { LS.set("boardSeen", notes[0].at); boardDot(); }
+    const w = boardWatermark();
+    if (w > LS.get("boardSeen", 0)) LS.set("boardSeen", w);
+    boardDot();
   }
   function noteSheet(n) {
     if (!n) return;
@@ -633,6 +641,7 @@
 
   // ── 记忆页 ──
   const KIND = { fact: "事实", event: "事件", plan: "计划", opinion: "看法" };
+  // 渠道名要和网关 xk-shared.mjs 的 CHANNEL 对上（前端 import 不了网关模块）
   const CH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
   let memRole = null, memItems = [];
   async function renderMem() {
@@ -1547,9 +1556,20 @@
       info.after(n);
     }
   }
-  // 流式输出时 DOM 每秒变很多次：合并到下一帧再看一次，别每次变动都查
+  // 流式输出时 DOM 每秒变很多次：合并到下一帧再看一次，别每次变动都查。
+  // 同样的参数原来挂了两个观察器（这里一个，上面品牌替换一个），11-06 大扫除并成一个（小鱼）
   let provQ = 0;
-  new MutationObserver(() => { if (!provQ) provQ = requestAnimationFrame(() => { provQ = 0; paintProv(); }); }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      if (m.type === "characterData") fix(m.target);
+      else for (const n of m.addedNodes) n.nodeType === 1 ? brand(n) : n.nodeType === 3 && fix(n);
+    }
+    const t = document.title.replace(BRAND, "小克");
+    if (t !== document.title) document.title = t;
+    if (!provQ) provQ = requestAnimationFrame(() => { provQ = 0; paintProv(); });
+  }).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+  // 它比原来那个品牌观察器注册得晚：脚本开头到这儿之间插进来的节点再扫一遍（只扫这一遍，之后由上面的观察器接）
+  brand(document.body);
 
   // ── 键盘弹起时让路（#14，主人 11-02 定的：平时一直摆着，只在键盘弹起这段时间让）：
   //    收起底栏和输入框上方的小人，输入框下那行合成一行（放不下就横着滑）

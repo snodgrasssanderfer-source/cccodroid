@@ -253,7 +253,8 @@ test("计划模式（#108）：群上下文带「不动手」的规矩；平时�
 test("room_say：她在私聊里用工具往群里说一句，点了名的那位接（分派）；room_read 看得到群里的话", () => {
   const mcp = (role, calls) => {
     const msgs = [{ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, ...calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 2, method: "tools/call", params: c }))];
-    const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), roleDir(role)], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8" });
+    const env = { ...process.env, XK_ROOM_FILE: path.join(CFG.home, ".config", "xiaoke", "room.jsonl") };   // 网关写 .mcp.json 时带的那个变量
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), roleDir(role)], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8", env });
     return r.stdout.trim().split("\n").map((l) => JSON.parse(l)).slice(1).map((x) => x.result.content[0].text);
   };
   const [ok] = mcp("xiaoke", [{ name: "room_say", arguments: { text: "小鱼，主人要的歌单交给你：按心情分三组，做完在群里说一声" } }]);
@@ -286,4 +287,26 @@ test("群里的话插进她正在跑的私聊那轮：只贴群聊那条后面�
   ];
   assert.equal(roomReply(ts), "群里这句可以说");
   assert.equal(roomReply(ts.slice(0, 2)), "", "这一轮里没有群聊那条：什么都不贴");
+});
+
+test("说完一轮之后，记着的轮次清干净；起不来（引擎抛错）也不把她卡在「在说…」（11-06 大扫除）", async () => {
+  const { roomPending } = await import("../gw/xk-room.mjs");
+  await ownerSays("小鱼在吗").decided;
+  const sid = answer(queued[0], "deepseek", "在");
+  assert.ok(sid);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(roomPending(), { busy: [], turns: 0, cids: 0 }, "收尾把 cid、turn、在说 都删了");
+  // 引擎起不来：这一轮要退干净，下一句照样能递给她
+  const boom = () => { throw new Error("引擎起不来"); };
+  ENGINE_RUN.agy = boom;
+  try {
+    await ownerSays("哈基米你说呢").decided;
+    assert.deepEqual(roomPending(), { busy: [], turns: 0, cids: 0 }, "起不来也退干净");
+    const before = queued.length;
+    ENGINE_RUN.agy = (item) => queued.push({ ...item, agy: true });
+    await ownerSays("哈基米？").decided;
+    assert.equal(queued.length, before + 1, "没卡住：下一句照常递给她");
+  } finally {
+    ENGINE_RUN.agy = (item) => queued.push({ ...item, agy: true });
+  }
 });

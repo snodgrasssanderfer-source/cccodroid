@@ -14,6 +14,7 @@ import { RUNS } from "./runs.mjs";
 import { STATE, projectOf, saveState } from "./xk-core.mjs";
 import { roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
+import { writeJson } from "./xk-shared.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -443,15 +444,10 @@ function roleSid(id) {
 
 // ── 聊天工具的 MCP（xk-qq-mcp.mjs）：MCP 是另一个进程，碰不到这条 WebSocket，借文件来回 ──
 const readJson = (f, def = null) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code === "ENOENT") return def; throw e; } };
-function writeJsonAtomic(f, v) {
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f + ".tmp", JSON.stringify(v));
-  fs.renameSync(f + ".tmp", f);
-}
 /** 这一轮是哪个会话、回话发给谁：MCP 靠它知道目标（号码只从这里来） */
 function writeRunCtx(runId, r) {
   try {
-    writeJsonAtomic(path.join(RUN_DIR, String(runId) + ".json"), {
+    writeJson(path.join(RUN_DIR, String(runId) + ".json"), {
       runId: String(runId), key: r.key, type: r.ev.message_type === "group" ? "group" : "private",
       group_id: r.ev.group_id ?? null, user_id: r.ev.user_id ?? null,
       group_name: r.ev.group_name ?? null, message_id: r.ev.message_id ?? null, at: r.at,
@@ -520,7 +516,7 @@ async function syncFaces(force = false) {
     const d = await act("fetch_custom_face_detail", { count: 500 }, 30000);
     const list = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : (Array.isArray(d?.emojiInfoList) ? d.emojiInfoList : null));
     if (!list) throw new Error("fetch_custom_face_detail 返回的不是数组");
-    writeJsonAtomic(STICKER_FILE, mergeStickerLibrary(loadStickers(), list));
+    writeJson(STICKER_FILE, mergeStickerLibrary(loadStickers(), list));
     FACES_AT = Date.now();
   })();
   FACES_JOB = job;
@@ -736,13 +732,13 @@ async function runTool(req, ctx, r) {
       if (r) r.usedSend = true;
       const messageId = await sendSegs(ctx, segsOf(ctx, a, [{ type: "image", data: { file: "base64://" + buf.toString("base64") } }]), 30000);
       const used = markStickerUsed(loadStickers(), it.id, "");
-      writeJsonAtomic(STICKER_FILE, used.entries);
+      writeJson(STICKER_FILE, used.entries);
       return { sent: true, messageId, id: it.id, text: "表情已发送。" };
     }
     case "sticker_note": {
       const p = applyStickerNote(loadStickers(), a.stickerId, { note: a.note, tags: a.tags, usage: a.usage });
       if (!p.entry) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
-      writeJsonAtomic(STICKER_FILE, p.entries);
+      writeJson(STICKER_FILE, p.entries);
       return { updated: true, id: p.entry.id, localNote: p.entry.localNote, tags: p.entry.tags, text: "记下了。" };
     }
     case "collect_sticker": {
@@ -777,7 +773,7 @@ async function runTool(req, ctx, r) {
       const note = String(a.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
       if (note) {
         const p = applyStickerNote(list, hit.id, { note });
-        if (p.entry) { writeJsonAtomic(STICKER_FILE, p.entries); hit = p.entry; }
+        if (p.entry) { writeJson(STICKER_FILE, p.entries); hit = p.entry; }
       }
       return { collected: true, id: hit.id, note: sanitizeUserText(hit.localNote || ""), kind: "QQ收藏表情", text: `收进 QQ 收藏了：${hit.id}（${sanitizeUserText(hit.desc || "无备注")}）` };
     }
@@ -787,7 +783,7 @@ async function runTool(req, ctx, r) {
       const ms = readJson(MEMORY_FILE, []) || [];
       const m = { id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text, at: Date.now() };
       ms.push(m); while (ms.length > 300) ms.shift();
-      writeJsonAtomic(MEMORY_FILE, ms);
+      writeJson(MEMORY_FILE, ms);
       return { saved: true, id: m.id, text: "记下了（" + m.id + "）：" + text };
     }
     case "memory_query": {
@@ -802,7 +798,7 @@ async function runTool(req, ctx, r) {
       const i = ms.findIndex((m) => m.id === String(a.id));
       if (i < 0) throw new Error("没有这条记忆：" + a.id);
       const [gone] = ms.splice(i, 1);
-      writeJsonAtomic(MEMORY_FILE, ms);
+      writeJson(MEMORY_FILE, ms);
       return { text: "删掉了：" + gone.text };
     }
     default: throw new Error("没有这个工具：" + req.tool);
@@ -834,7 +830,7 @@ async function handleReq(req) {
   try {
     // 超时重试来的时候，头一次往往还没做完：认正在做的那一份，等它的结果，不另起一遍
     const hit = replayGet(req);
-    if (hit) { out.result = await hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out); }
+    if (hit) { out.result = await hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJson(path.join(RES_DIR, String(req.id) + ".json"), out); }
     const ctx = runCtxOf(req.runId);
     if (!ctx) throw new Error("这一轮不在 QQ 会话里（没有会话记录）");
     const r = RUNSQQ.get(String(req.runId)) || [...RUNSQQ.values()].find((x) => x.cid === req.runId) || null;
@@ -845,7 +841,7 @@ async function handleReq(req) {
   } catch (e) {
     out.ok = false; out.error = String(e.message || e).slice(0, 300);
   }
-  writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out);
+  writeJson(path.join(RES_DIR, String(req.id) + ".json"), out);
 }
 
 let LAST_SWEEP = 0;

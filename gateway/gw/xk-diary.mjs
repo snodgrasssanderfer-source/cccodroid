@@ -11,9 +11,8 @@ import { ROLES, roleById, roleDir, roleOfDir } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { today } from "./xk-memstore.mjs";
 import { ENGINE_RUN, INTERNAL, STATE, addRoute, httpError, projectOf, saveState, selfApi } from "./xk-core.mjs";
+import { channelName, displayName } from "./xk-shared.mjs";
 
-const CH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
-const NICK = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" };   // 界面上的叫法，和角色名（DeepSeek）不一样，导出文件用这个
 const DIARY_TIME = "22:00";
 STATE.diaryTasks ||= {};   // 角色 → 上游定时任务号
 STATE.diaryRetry ||= {};   // 角色 → 额度恢复后补写的时刻
@@ -38,8 +37,15 @@ export function appendInputs(run, f = {}) {
   catch (e) { if (e.code !== "ENOENT") throw e; }
   const day = today(new Date(run.startedAt));
   fs.mkdirSync(inputsDir(role.id), { recursive: true });
+  // 群里那一轮：run.text 是整段群消息（「（群聊：」开头，三个人的话都在里面），不是主人说的一句。
+  // 只摘主人在群里说的那几句，标成「群里」；他没开口（她们之间接话、目标模式接着干）就不写「主人：」那行（11-06 大扫除，小鱼查的）
+  let ask = String(run.text || "").trim(), where = channelName(channel);
+  if (ask.startsWith("（群聊：")) {
+    where = "群里";
+    ask = ask.split("\n").filter((l) => l.startsWith("主人：")).map((l) => l.slice(3).trim()).join(" / ");
+  }
   fs.appendFileSync(path.join(inputsDir(role.id), day + ".md"),
-    `\n## ${hhmm(run.startedAt)} · ${CH[channel] || channel}\n主人：${String(run.text || "").trim()}\n${role.name}：${answer}\n`);
+    `\n## ${hhmm(run.startedAt)} · ${where}\n${ask ? "主人：" + ask + "\n" : ""}${role.name}：${answer}\n`);
 }
 
 function retryAfterQuota(role, taskId) {
@@ -95,6 +101,34 @@ function pendingDays(id) {
   const ins = fs.existsSync(inputsDir(id)) ? fs.readdirSync(inputsDir(id)).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)) : [];
   return ins.map((f) => f.slice(0, 10)).filter((d) => !fs.existsSync(path.join(roleDir(id), "diary", d + ".md")));
 }
+// 小克、小鱼：日记本来靠上游定时任务（22:00）。任务「已经排上、还没跑完」时网关重启，那一轮会无声丢掉、也不补（#125，11-06 查的）。
+// 这里补一道网：启动时和之后每 30 分钟看一遍，有素材、没日记的日子就把任务再跑一次。今天的这篇晚一个小时再看，
+// 免得和 22:00 那一轮撞上（任务在跑时手动跑会被拒，一天又只补一次）
+const BACKFILL_AFTER = 23;
+function backfillDays(id, now = new Date()) {
+  const t = today(now);
+  return pendingDays(id).filter((d) => d < t || now.getHours() >= BACKFILL_AFTER);
+}
+/** 该补写的有谁、缺哪几天（小克、小鱼） */
+export function claudeDiaryDue(now = new Date()) {
+  return ROLES.filter((r) => r.engine === "claude").map((r) => ({ role: r, days: backfillDays(r.id, now) })).filter((x) => x.days.length);
+}
+async function claudeDiaryTick() {
+  STATE.diaryBackfill ||= {};   // 角色 → 上次补的日子：一天最多补一次
+  for (const { role, days } of claudeDiaryDue()) {
+    const task = STATE.diaryTasks?.[role.id];
+    if (!task || STATE.cooldown[role.id]) continue;   // 额度用完的：等 xk-handover 的冷却和 retryAfterQuota
+    if (STATE.diaryBackfill[role.id] === today()) continue;
+    STATE.diaryBackfill[role.id] = today();
+    saveState();
+    try {
+      await selfApi("POST", `/api/sched/${encodeURIComponent(task)}/run`, {});
+      log(`📔 ${role.name}有 ${days.length} 天日记没写（${days.join("、")}），补跑一次`);
+    } catch (e) {
+      publish({ type: "xk", op: "diary", error: true, text: `${role.name}的日记补跑没成：${e.message}` });
+    }
+  }
+}
 export function agyDiaryDue(now = new Date()) {
   const t = today(now), [h, m] = DIARY_TIME.split(":").map(Number);
   const after = now.getHours() * 60 + now.getMinutes() >= h * 60 + m;
@@ -116,6 +150,10 @@ if (LIVE) {
   for (const r of Object.keys(STATE.diaryRetry)) armRetry(r);
   setInterval(agyDiaryTick, 30 * 60000).unref();
   setTimeout(agyDiaryTick, 60000).unref();
+  // 补写：等定时任务建好再开始看；每半小时一遍，缺的日子照样补
+  const tickBackfill = () => claudeDiaryTick().catch((e) => log("⚠️ 日记补写没成：" + e.message));
+  setTimeout(tickBackfill, 15000).unref();
+  setInterval(tickBackfill, 30 * 60000).unref();
 }
 
 // ── 界面：导出成图片 ──
@@ -143,7 +181,7 @@ export function saveDiaryPng(roleId, date, buf) {
   const role = roleById(roleId);
   if (!role) throw httpError(404, "没有这个角色");
   if (!fs.existsSync(path.join(roleDir(role.id), "diary", date + ".md"))) throw httpError(404, "这天没有日记");
-  return saveExportPng(`diary-${role.id}-${date}`, `${NICK[role.id] || role.name}的日记 ${date}.png`, buf, /^diary-.*\.png$/);
+  return saveExportPng(`diary-${role.id}-${date}`, `${displayName(role.id)}的日记 ${date}.png`, buf, /^diary-.*\.png$/);
 }
 // 群聊长截图：前端把选中的气泡画成一张长图传上来，这里只落盘
 export function saveRoomPng(buf) {
