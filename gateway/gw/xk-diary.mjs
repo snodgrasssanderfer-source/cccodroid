@@ -38,8 +38,15 @@ export function appendInputs(run, f = {}) {
   catch (e) { if (e.code !== "ENOENT") throw e; }
   const day = today(new Date(run.startedAt));
   fs.mkdirSync(inputsDir(role.id), { recursive: true });
+  // 群里那一轮：run.text 是整段群消息（「（群聊：」开头，三个人的话都在里面），不是主人说的一句。
+  // 只摘主人在群里说的那几句，标成「群里」；他没开口（她们之间接话、目标模式接着干）就不写「主人：」那行（11-06 大扫除，小鱼查的）
+  let ask = String(run.text || "").trim(), where = CH[channel] || channel;
+  if (ask.startsWith("（群聊：")) {
+    where = "群里";
+    ask = ask.split("\n").filter((l) => l.startsWith("主人：")).map((l) => l.slice(3).trim()).join(" / ");
+  }
   fs.appendFileSync(path.join(inputsDir(role.id), day + ".md"),
-    `\n## ${hhmm(run.startedAt)} · ${CH[channel] || channel}\n主人：${String(run.text || "").trim()}\n${role.name}：${answer}\n`);
+    `\n## ${hhmm(run.startedAt)} · ${where}\n${ask ? "主人：" + ask + "\n" : ""}${role.name}：${answer}\n`);
 }
 
 function retryAfterQuota(role, taskId) {
