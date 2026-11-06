@@ -1,5 +1,5 @@
 // 小克：角色目录、人设导入、hook 注入
-import "../gw/config.mjs";
+import { CFG } from "../gw/config.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -25,7 +25,10 @@ test("角色目录：agent 人设、hook、记忆服务都摆好；导入不被�
   const st = JSON.parse(fs.readFileSync(path.join(d, ".claude/settings.json"), "utf8"));
   assert.equal(st.agent, "xiaoke");
   assert.match(st.hooks.UserPromptSubmit[0].hooks[0].command, /xk-hook\.mjs' prompt /);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(d, ".mcp.json"), "utf8")).mcpServers["xk-memory"].alwaysLoad, true);
+  const mcp = JSON.parse(fs.readFileSync(path.join(d, ".mcp.json"), "utf8")).mcpServers["xk-memory"];
+  assert.equal(mcp.alwaysLoad, true);
+  // 群消息文件的路径由网关传给记忆工具（它拿不到 CFG，以前靠 HOME 猜）
+  assert.equal(mcp.env.XK_ROOM_FILE, path.join(CFG.home, ".config", "xiaoke", "room.jsonl"));
   assert.equal(personaStatus("xiaoke").imported, false);
   importPersona("xiaoke", "【一】system_prompt\n虚构人设正文\n【二】post_history_instructions\n虚构的贴尾提醒\n【三】mes_example\n虚构示例");
   ensureRoles();

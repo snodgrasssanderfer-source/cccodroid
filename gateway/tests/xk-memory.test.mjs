@@ -90,3 +90,19 @@ test("每条消息前的记忆（#125）：同一段会话不重复、最多 4 �
   assert.equal(injectFor(d, "s3", "开始第三批", now), "");
   assert.ok(search(d, "开始第三批", 8, now).length > 0, "recall 照旧能找到");
 });
+
+test("room_read：群文件路径由网关给；没给就说清楚，不拿 HOME 猜（11-06 大扫除）", () => {
+  const d = tmp("mem-room");
+  const call = (env) => {
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), d],
+      { input: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "room_read", arguments: {} } }) + "\n", encoding: "utf8", env });
+    return JSON.parse(r.stdout.trim()).result;
+  };
+  const env = { ...process.env }; delete env.XK_ROOM_FILE;
+  const bad = call(env);
+  assert.equal(bad.isError, true, "没传路径就报错，不读到空群还说「群里还没人说话」");
+  assert.match(bad.content[0].text, /XK_ROOM_FILE/);
+  const file = path.join(d, "room.jsonl");
+  fs.writeFileSync(file, JSON.stringify({ n: 0, from: "owner", text: "在吗", at: Date.parse("2026-11-06T10:00:00") }) + "\n");
+  assert.match(call({ ...process.env, XK_ROOM_FILE: file }).content[0].text, /主人：在吗/);
+});

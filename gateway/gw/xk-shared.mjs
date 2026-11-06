@@ -12,6 +12,9 @@ export const displayName = (id) => DISPLAY[id] || id;
 export const CHANNEL = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
 export const channelName = (c) => CHANNEL[c] || c;
 
+/** 网关自己那些文件（state.json、room.jsonl、pads.json…）放在哪：home 下面一处，别的地方照着拼 */
+export const xkHome = (home) => path.join(home, ".config", "xiaoke");
+
 /** 先写 .tmp 再改名：进程被杀、写到一半断电时不会留下半个文件。data 是字符串或 Buffer */
 export function writeFileAtomic(file, data, { mode } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });

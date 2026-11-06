@@ -91,11 +91,10 @@ test("加密请求：放行的接口转给本机；别的接口、旧序号、�
     await assert.rejects(padCall(t.req({ m: "GET", p: "/api/xk/roles" }, Date.now() - 5 * 60000)), /时间对不上/);
     const other = tablet(); other.id = t.id; other.key = crypto.randomBytes(32);
     await assert.rejects(padCall(other.req({ m: "GET", p: "/api/xk/roles" })), /解不开/);
-    // 本机接口报错：错误加密带回去，不是明文。selfApi 只把上游的状态码写进消息、不单独带出来，
-    // 所以平板看到的是 500（以前这里把 PROXY 换成假的，看不出这一点；实际行为照旧，没改）
+    // 本机接口报错：错误加密带回去，不是明文；上游的状态码原样给平板（以前一律变成 500）
     gw.reply = () => { throw Object.assign(new Error("text 不能为空"), { status: 400 }); };
     const err = await t.call({ m: "POST", p: "/api/xk/room", b: {} });
-    assert.equal(err.s, 500);
+    assert.equal(err.s, 400);
     assert.match(err.error, /text 不能为空/);
   } finally { await gw.close(); }
   unpair(r.id);

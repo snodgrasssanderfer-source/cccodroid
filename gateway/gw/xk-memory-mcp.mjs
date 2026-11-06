@@ -1,7 +1,6 @@
 // 记忆工具的 MCP 服务（stdio）：node xk-memory-mcp.mjs <角色目录>。由角色项目的 .mcp.json 让 Claude Code 拉起，
 // 所以它只能碰自己这个角色的记忆。渠道（App / QQ 私聊 / QQ 群）由网关按 run 号写在 .xk/runs/ 里，没有就是 App。
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { KINDS, line, remember, remove, search, today } from "./xk-memstore.mjs";
@@ -83,7 +82,9 @@ function call(name, a) {
     return "群一两秒内切回平时，群里会有一句提示。";
   }
   if (name === "room_read") {
-    const f = path.join(os.homedir(), ".config", "xiaoke", "room.jsonl");
+    // 路径由网关在 .mcp.json 的 env 里给（它知道 CFG.home）；以前拿 HOME 自己拼，换环境就读到空群
+    const f = process.env.XK_ROOM_FILE;
+    if (!f) throw new Error("没拿到群消息文件的路径：网关写 .mcp.json 时没带上 XK_ROOM_FILE，重启一次网关让它重写");
     let ms = [];
     try { ms = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch (e) { if (e.code !== "ENOENT") throw e; }
     const name = (id) => (id === "system" ? "（系统）" : displayName(id));

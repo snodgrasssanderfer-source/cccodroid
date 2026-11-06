@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { CFG } from "./config.mjs";
+import { CFG, LIVE } from "./config.mjs";
 import { readBody } from "./http.mjs";
 import { TOKEN } from "./access.mjs";
 import { END_HOOKS, START_GUARDS, enqueue } from "./queue.mjs";
@@ -10,10 +10,13 @@ import { LAST_SESSION, forgetSession, rememberSession } from "./runs.mjs";
 import { ROLES, ROLES_DIR, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { quietFile } from "./xk-board.mjs";
 import { recentText } from "./xk-transcript.mjs";
-import { writeJson } from "./xk-shared.mjs";
+import { writeJson, xkHome } from "./xk-shared.mjs";
 
-export const XK_HOME = path.join(CFG.home, ".config", "xiaoke");
+export const XK_HOME = xkHome(CFG.home);
 fs.mkdirSync(XK_HOME, { recursive: true });
+/** 清掉被杀留下的「这一轮别读便条」记号（网关启动时叫一次；只有网关会叫，hook 和记忆工具不 import 这个文件） */
+export function sweepQuiet() { fs.rmSync(path.join(ROLES_DIR, ".board", "quiet"), { recursive: true, force: true }); }
+if (LIVE) sweepQuiet();
 
 // ── 状态：当前角色、接班顺序、冷却、会话从哪个角色接过来 ──
 const STATE_FILE = path.join(XK_HOME, "state.json");
@@ -39,7 +42,9 @@ export function selfApi(method, p, body) {
       headers: { host: "127.0.0.1:" + CFG.port, "x-cc-token": TOKEN, ...(data ? { "content-type": "application/json", "content-length": data.length } : {}) } }, (res) => {
       let t = ""; res.on("data", (c) => (t += c)); res.on("end", () => {
         let j; try { j = JSON.parse(t); } catch { j = { raw: t }; }
-        res.statusCode < 300 ? resolve(j) : reject(new Error(`${method} ${p} → ${res.statusCode} ${j.error || j.message || t.slice(0, 200)}`));
+        if (res.statusCode < 300) return resolve(j);
+        // 状态码带上：平板那条路要把上游的 400 原样回给平板，不能一律说成 500
+        reject(Object.assign(new Error(`${method} ${p} → ${res.statusCode} ${j.error || j.message || t.slice(0, 200)}`), { status: res.statusCode }));
       });
     });
     r.on("error", reject);
