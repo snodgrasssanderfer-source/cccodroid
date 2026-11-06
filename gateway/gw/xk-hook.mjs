@@ -1,10 +1,10 @@
 // Claude Code 的 hook（角色项目的 .claude/settings.json 里挂的）：node xk-hook.mjs <start|prompt> <角色目录>
 //   start  ：会话开始，带上这个角色记忆的要点
-//   prompt ：每条消息前，带上可能相关的记忆、接班说明（只带一次）、留言板上给她的新便条、人设的 post_history_instructions（贴着最新那条消息）
+//   prompt ：每条消息前，带上可能相关的记忆（同一段会话不重复）、接班说明（只带一次）、留言板上给她的新便条、人设的 post_history_instructions（贴着最新那条消息）
 // 失败就非零退出、原因写 stderr：Claude Code 会把 hook 出错显示出来，这一轮照常进行。
 import fs from "node:fs";
 import path from "node:path";
-import { digest, line, search } from "./xk-memstore.mjs";
+import { digest, idsIn, injectFor, injectReset } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 
 const [ev, dir] = process.argv.slice(2);
@@ -15,10 +15,13 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
     const parts = [];
     if (ev === "start") {
       const d = digest(dir);
+      // 已带清单：新开、清空、压缩后都重来（压缩把以前带的连同对话一起摘没了）；resume 是同一段接着跑，接着记
+      injectReset(dir, input.session_id, idsIn(d), input.source !== "resume");
       if (d) parts.push("你记得的要点（自动带上的，不全；需要时用 recall 查）：\n" + d);
     } else if (ev === "prompt") {
-      const hits = search(dir, input.prompt || "", 6);
-      if (hits.length) parts.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准）：\n" + hits.map(line).join("\n"));
+      // 同一段会话里带过的不再带，最多 4 条、每条截短（#125 省额度）
+      const hits = injectFor(dir, input.session_id, input.prompt || "");
+      if (hits) parts.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准；这段对话里带过的不再重复）：\n" + hits);
       // 接班 / 交回说明按这一轮的 run 号放（xk-handover.mjs 在起进程之前写好），用完就删，只出现在接手后的第一条
       const run = process.env.CCAPP_RUN_ID;
       const carry = run && path.join(dir, ".xk", "carry", run + ".md");
