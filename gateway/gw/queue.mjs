@@ -295,12 +295,17 @@ const MSG_MAX = 2000000;                        // 字（UTF-16 码元）：两�
 const SID_OK = /^[A-Za-z0-9_-]{1,80}$/;
 /** 字符串数组：只留字符串，条数、每条长度、总长都有上限（总长见 settings-store 的 capList） */
 export const strList = (a, n, len, total) => capList(a, n, len, total);
-/** 干净会话（QQ 聊天模式，#134）：只给列出的内置工具、不挂任何 MCP、系统提示整个换成这里给的（不要 Claude Code 默认那套）。
+/** 干净会话（QQ 聊天模式，#134）：只给列出的内置工具、不挂别的 MCP、系统提示整个换成这里给的（不要 Claude Code 默认那套）。
+ *  mcpConfig 是唯一允许挂的那个 MCP 服务的配置（JSON 串，服务器自己拼），坏了一律当没有——宁可少挂，不能多挂。
  *  只有网关自己能设（和 cwd、unattended 一样在 internal 里） */
 export function cleanOpt(c) {
   if (!c || typeof c !== "object" || typeof c.systemPrompt !== "string" || !c.systemPrompt.trim()) return null;
   const tools = Array.isArray(c.tools) ? c.tools.map(String).filter((t) => /^[A-Za-z]+$/.test(t)) : [];
-  return { tools, systemPrompt: c.systemPrompt };
+  let mcpConfig = null;
+  if (typeof c.mcpConfig === "string" && c.mcpConfig.length <= 4096) {
+    try { const j = JSON.parse(c.mcpConfig); if (j && typeof j === "object" && j.mcpServers && typeof j.mcpServers === "object") mcpConfig = c.mcpConfig; } catch {}
+  }
+  return { tools, systemPrompt: c.systemPrompt, mcpConfig };
 }
 export function enqueue(body) {
   const item = {

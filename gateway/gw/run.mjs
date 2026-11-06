@@ -191,7 +191,11 @@ export async function startRun(item) {
   // 干净会话（QQ 聊天模式，#134）：只给白名单里的内置工具；--strict-mcp-config 不带 --mcp-config＝一个 MCP 都不挂
   // （全局的 B站、设备、记忆都不要）；系统提示整个换成人设卡，不追加工具说明和子代理规矩
   const clean = item.clean || null;
-  if (clean) argv.push("--tools", clean.tools.join(","), "--strict-mcp-config", "--system-prompt", clean.systemPrompt);
+  if (clean) {
+    argv.push("--tools", clean.tools.join(","), "--strict-mcp-config", "--system-prompt", clean.systemPrompt);
+    // 干净会话唯一允许挂的 MCP（QQ 聊天工具，见 xk-qq-mcp.mjs）：还是 strict，别的配置一律不读
+    if (clean.mcpConfig) argv.push("--mcp-config", clean.mcpConfig);
+  }
   const devMcp = clean ? null : deviceMcpConfig();
   if (devMcp && !P.local && (await privCall({ op: "dev_status" }, 3000)).on) argv.push("--mcp-config", devMcp);
 
