@@ -12,7 +12,7 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, GROUP_CARD_FILE, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
+  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   drainQQSay, ensureClean, handleEvent, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
@@ -929,33 +929,27 @@ test("群里那轮没调 send_message：最后那段短话切成几个气泡", (
   assert.deepEqual(REPLIES.slice(before).map((x) => x.text), ["来了。", "你有什么事？"]);
 });
 
-test("群里干活那段是模型本色：不叠口吻、不叫主管；私聊卡和群聊卡分开", () => {
+test("群里干活那段是模型本色：不叠口吻、不叫主管；私聊和群里同一张聊天卡", () => {
   handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   const q = queued.at(-1);
   assert.match(q.appendSystemPrompt, /没有角色设定/);
   assert.ok(!q.appendSystemPrompt.includes("主管"), "XK-01 那套作废了");
   finish(q, "在。");
-  // 群聊卡：群里聊天模式读 card-group.md，私聊读 card.md；群聊卡没写时用占位，不借私聊那张
+  // 私聊和群里同一张卡（11-07 起贵族卡撤了）；改卡时私聊、群里都从新的一段开始
   fs.mkdirSync(CLEAN_DIR, { recursive: true });
-  fs.writeFileSync(CARD_FILE, "私聊卡：贵族\n");
-  fs.rmSync(GROUP_CARD_FILE, { force: true });
-  handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 你好" } }]), "小克 你好");
-  assert.ok(!queued.at(-1).clean.systemPrompt.includes("贵族"), "群里不用私聊那张");
-  finish(queued.at(-1), "好");
-  fs.writeFileSync(GROUP_CARD_FILE, "群聊卡：小螃蟹\n");
+  fs.writeFileSync(CARD_FILE, "卡：小螃蟹\n");
   handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 你好" } }]), "小克 你好");
   assert.match(queued.at(-1).clean.systemPrompt, /小螃蟹/);
-  assert.equal(queued.at(-1).sessionId, null, "群聊卡换了，群里从新的一段开始");
   finish(queued.at(-1), "好");
   handleMessage(cfg, priv(STRANGER, "你好"), "你好");
-  assert.match(queued.at(-1).clean.systemPrompt, /贵族/, "私聊照旧");
-  const pq = queued.at(-1); finish(pq, "好");
-  // 改群聊卡不放掉私聊那段
-  fs.writeFileSync(GROUP_CARD_FILE, "群聊卡：第二版\n");
-  handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 再来" } }]), "小克 再来");
+  assert.match(queued.at(-1).clean.systemPrompt, /小螃蟹/, "私聊也是这张");
   finish(queued.at(-1), "好");
+  fs.writeFileSync(CARD_FILE, "卡：第二版\n");
   handleMessage(cfg, priv(STRANGER, "还在吗"), "还在吗");
-  assert.ok(queued.at(-1).sessionId, "私聊那段还接着");
+  assert.equal(queued.at(-1).sessionId, null, "卡换了，私聊从新的一段开始");
+  finish(queued.at(-1), "好");
+  handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 再来" } }]), "小克 再来");
+  assert.equal(queued.at(-1).sessionId, null, "群里也是");
 });
 
 // ── 群聊记忆、问屋里、屋里往群里发话（#134 第三步补的三条）──

@@ -35,8 +35,6 @@ export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit
 // 人设卡：主人改好的琉璃川椿卡放这里。不能叫 CLAUDE.md（那会被当成项目说明，叠在 Claude Code 默认的编程助手提示下面）；
 // 它整个当系统提示（--system-prompt），Claude Code 默认那套一个字都不带
 export const CARD_FILE = path.join(CLEAN_DIR, "card.md");
-// 群里的聊天卡（主人 11-06 定：贵族卡只在私聊；群里用 12 号卡改的那张，主人亲手改）。没有这个文件时群里用占位卡，不借私聊那张
-export const GROUP_CARD_FILE = path.join(CLEAN_DIR, "card-group.md");
 // 群里干活的那段（「回来」「换成工作模式」）：模型本色，不带人设卡、不读世界书（主人 11-06 定）。
 // 所以不放 roles/ 下面（那里有 agent 设置和两份 CLAUDE.md）；记忆照旧记在 roles/xiaoke/qq-memory（按 run 号认）
 export const SELF_DIR = path.join(CFG.workspace, "qq-self");
@@ -1385,10 +1383,8 @@ export function ensureClean(scope = "p") {
   let had = ""; try { had = fs.readFileSync(f, "utf8"); } catch {}
   if (had !== want) fs.writeFileSync(f, want);
   if (!fs.existsSync(CARD_FILE)) fs.writeFileSync(CARD_FILE, CLEAN_MD);
-  let raw;
-  if (scope === "g") { try { raw = fs.readFileSync(GROUP_CARD_FILE, "utf8").trim(); } catch {} }
-  else raw = fs.readFileSync(CARD_FILE, "utf8").trim();
-  raw ||= CLEAN_MD;
+  // 私聊和群里用同一张（主人 11-07 定：贵族卡撤了，只留 12 号卡）；hash 按私聊、群各记各的，改卡时两边都会放掉
+  const raw = fs.readFileSync(CARD_FILE, "utf8").trim() || CLEAN_MD;
   const hash = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
   const hk = scope === "g" ? "cardHashG" : "cardHash";
   if (STATE.qq[hk] !== hash) {
