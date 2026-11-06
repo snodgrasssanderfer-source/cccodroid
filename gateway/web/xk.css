@@ -395,3 +395,7 @@ html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-du
 .xk-work[open]>summary .chev{transform:rotate(90deg)}
 .xk-work>summary .n{margin-inline-start:auto}
 .xk-work[open]{padding-bottom:4px;border-bottom:1px dashed var(--tool-line)}
+/* 重说：等的时候原话淡一点，好了换成重说的；原话收在干活过程最底下 */
+.txt.xk-recasting{opacity:.55}
+.txt.xk-recasting::after{content:"重说中…";display:block;margin-top:4px;font-size:12px;color:var(--fg3)}
+.xk-work .xk-raw-h{margin:10px 0 2px;font-size:12px;color:var(--fg3)}

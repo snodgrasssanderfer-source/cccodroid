@@ -20,6 +20,7 @@ import "./xk-board-gw.mjs";
 import "./xk-overlay.mjs";
 import "./xk-room.mjs";
 import "./xk-pad.mjs";
+import "./xk-recast.mjs";
 import "./xk-padupd.mjs";
 import { takeRollover } from "./xk-rollover.mjs";
 

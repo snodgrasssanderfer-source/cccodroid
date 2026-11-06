@@ -40,6 +40,16 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
       // 这一轮实际用的模型：人设里写着「系统写了就照实说」，这里就是系统写的那句（run.mjs 起 claude 时设的环境变量）
       const model = process.env.ANTHROPIC_MODEL, prov = process.env.CCAPP_PROVIDER;
       if (model) parts.push(`（系统：你这一轮用的模型是 ${model}${prov ? "，接口 " + prov : ""}。主人问起就照这个答。）`);
+      // 重说（xk-recast.mjs）：上一轮最后那段主人看到的是重说过的，告诉她一次，免得她照着自己的原话往下接
+      try {
+        const sid = String(input.session_id || ""), recs = fs.readFileSync(path.join(dir, ".xk", "recast.jsonl"), "utf8").trim().split("\n");
+        const last = sid && recs.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.sid === sid).pop();
+        const seenF = path.join(dir, ".xk", "recast-seen.json"), seen = fs.existsSync(seenF) ? JSON.parse(fs.readFileSync(seenF, "utf8")) : {};
+        if (last && seen[sid] !== last.uuid) {
+          parts.push(`（系统：你上一轮最后那段，主人实际看到的是重说过的这句，接着聊时以它为准：\n${last.text}）`);
+          seen[sid] = last.uuid; fs.writeFileSync(seenF, JSON.stringify(seen));
+        }
+      } catch {}
       const ph = path.join(dir, "persona", "post_history.md");
       if (fs.existsSync(ph)) { const t = fs.readFileSync(ph, "utf8").trim(); if (t) parts.push(t); }
     } else throw new Error("不认识的 hook 事件：" + ev);

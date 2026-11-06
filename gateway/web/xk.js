@@ -277,6 +277,14 @@
   // 干活过程收起来（主人 11-06 定的）：一轮跑完，最后一段正文之前的东西（工具组、思考、夹在工具中间的碎话）
   // 收进一个折叠块，只露最后那段。跑着的时候不动（气泡里还有 .live-tail）；历史页翻出来的同样处理。
   // 没动过工具的回复、最后停在工具或报错上的回复，原样不动
+  function mkWork(b, before, steps) {
+    const d = document.createElement("details");
+    d.className = "xk-work";
+    d.innerHTML = `<summary><span class="chev">▶</span>干活过程<span class="n">${steps ? steps + " 步" : ""}</span></summary>`;
+    d.append(...before);
+    b.prepend(d);
+    return d;
+  }
   function foldWork(b) {
     // 还在跑的、还不能折的都不打记号，下次变动再看（刚起的气泡只有三个点，那时连 .live-tail 都还没有）
     if (b.dataset.xkf || b.querySelector(":scope > .live-tail")) return;
@@ -287,14 +295,52 @@
     const steps = before.reduce((n, el) => n + el.querySelectorAll(".tool").length, 0);
     if (!steps) return;
     b.dataset.xkf = "1";
-    const d = document.createElement("details");
-    d.className = "xk-work";
-    d.innerHTML = `<summary><span class="chev">▶</span>干活过程<span class="n">${steps} 步</span></summary>`;
-    d.append(...before);
-    b.prepend(d);
+    mkWork(b, before, steps);
+    const said = lastTxt.dataset.uuid && RECAST.get(window.__cc?.view.sessionId)?.[lastTxt.dataset.uuid];
+    if (said) sayAgain(b, said);
+  }
+  // 重说（网关 xk-recast.mjs，先只给小克）：干活那一轮的最后一段换成重说过的，原话收进「干活过程」最底下
+  const RECAST = new Map();   // 会话号 → { 原话那条的 uuid: 重说的话 }
+  function sayAgain(b, text) {
+    if (!b || b.dataset.xkr) return;
+    const last = b.lastElementChild;
+    if (!last || !last.classList.contains("txt")) return;
+    const d = b.querySelector(":scope > details.xk-work") || mkWork(b, [], 0);
+    b.dataset.xkr = "1";
+    last.classList.remove("xk-recasting");
+    const h = document.createElement("div"); h.className = "xk-raw-h"; h.textContent = "原话";
+    d.append(h, last);
+    const el = document.createElement("div");
+    el.className = "txt md xk-said";
+    el.innerHTML = window.__cc?.md ? window.__cc.md(text) : esc(text).replace(/\n/g, "<br>");
+    b.append(el);
+  }
+  const runBubble = (runId) => [...document.querySelectorAll(`#chat .msg.bot[data-run="${CSS.escape(String(runId))}"] > .bubble`)].pop();
+  function onRecast(ev) {
+    const m = RECAST.get(ev.sessionId);
+    if (ev.phase === "done" && m) m[ev.uuid] = ev.text;
+    const b = runBubble(ev.runId); if (!b) return;
+    const last = b.lastElementChild;
+    if (ev.phase === "start") last?.classList.contains("txt") && !b.dataset.xkr && last.classList.add("xk-recasting");
+    else if (ev.phase === "fail") last?.classList.remove("xk-recasting");
+    else if (ev.phase === "done") sayAgain(b, ev.text);
+  }
+  let recastSid = "";
+  function loadRecast() {
+    const sid = window.__cc?.view.sessionId;
+    if (!sid || RECAST.has(sid) || recastSid === sid) return;
+    recastSid = sid;
+    api("/api/xk/recast?sid=" + encodeURIComponent(sid)).then((r) => {
+      RECAST.set(sid, r.items || {});
+      if (!Object.keys(r.items || {}).length) return;
+      document.querySelectorAll("#chat .msg.bot > .bubble[data-xkf]:not([data-xkr])").forEach((b) => {
+        const u = b.lastElementChild?.dataset.uuid, t = u && r.items[u];
+        if (t) sayAgain(b, t);
+      });
+    }).catch(() => { recastSid = ""; });
   }
   let foldQ = 0;
-  const foldAll = () => { foldQ = 0; document.querySelectorAll("#chat .msg.bot:not(.welcome) > .bubble:not([data-xkf])").forEach(foldWork); };
+  const foldAll = () => { foldQ = 0; loadRecast(); document.querySelectorAll("#chat .msg.bot:not(.welcome) > .bubble:not([data-xkf])").forEach(foldWork); };
   new MutationObserver(() => { if (!foldQ) foldQ = requestAnimationFrame(foldAll); }).observe($("#chat") || document.body, { childList: true, subtree: true });
   const PRAISE = /可爱|厉害|好看|真棒|聪明|喜欢你|好乖/;
   const runs = new Map();   // run 号 → { praise, said }
@@ -355,6 +401,7 @@
           loadRoles().then(() => { paintHead(); if ($("#xk-p-roles.on")) renderRoles(); }).catch(() => {});
         } else if (ev.op === "handover_none") { peek("sleeping"); toast(`${rname(ev.from)}睡着了`, ev.reason, sprite(ev.from, "sleeping"), true); }
         else if (ev.op === "room") roomMsg(ev.msg);
+        else if (ev.op === "recast") onRecast(ev);
         else if (ev.op === "room_mode") roomModePaint(ev.mode);
         else if (ev.op === "room_typing") roomTyping(ev.role, ev.on);
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
