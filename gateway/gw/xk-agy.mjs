@@ -16,7 +16,7 @@ import { END_HOOKS } from "./queue.mjs";
 import { projectSlug } from "./projects.mjs";
 import { rememberSession } from "./runs.mjs";
 import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
-import { line, search } from "./xk-memstore.mjs";
+import { injectFor } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 import { agyUsage } from "./xk-rollover.mjs";
@@ -109,7 +109,10 @@ function writeAgents() {
   const persona = fs.existsSync(agent) ? fs.readFileSync(agent, "utf8").replace(/^---[\s\S]*?---\n/, "") : "";
   const wb = fs.existsSync(WORLDBOOK) ? fs.readFileSync(WORLDBOOK, "utf8") : "";
   const mech = fs.existsSync(path.join(DIR, "CLAUDE.md")) ? fs.readFileSync(path.join(DIR, "CLAUDE.md"), "utf8") : "";
-  fs.writeFileSync(path.join(DIR, "AGENTS.md"), [persona.trim(), wb.trim(), mech.trim(), toolsHowTo()].filter(Boolean).join("\n\n---\n\n") + "\n");
+  const f = path.join(DIR, "AGENTS.md"), text = [persona.trim(), wb.trim(), mech.trim(), toolsHowTo()].filter(Boolean).join("\n\n---\n\n") + "\n";
+  // 每轮都会调到这里：内容没变就不写（#125 小鱼查的）
+  let cur = null; try { cur = fs.readFileSync(f, "utf8"); } catch {}
+  if (cur !== text) fs.writeFileSync(f, text);
 }
 
 /** agy 在手机上挂不上 MCP（#101），上面说的工具改从终端调 xk-tool.mjs；挂上了也照样能用 */
@@ -117,7 +120,7 @@ function toolsHowTo() {
   const cmd = `"${process.execPath}" "${XK_TOOL}"`;
   return `# 你的工具在终端里调
 
-上面说的记忆（remember / recall / forget）、留言板、群（room_say / room_read），还有手机上的设备工具（读屏 screen_read、截图、点按、滑动、打字……），你的工具列表里可能没有：agy 在这台手机上挂不上它们。用终端命令调，效果一样：
+上面说的记忆、留言板、群，还有设备工具（读屏、截图、点按……），工具列表里没有的话（agy 在这台手机上常挂不上），用终端调，效果一样：
 
 - 看有哪些工具、要什么参数：\`${cmd}\`
 - 调一个：\`${cmd} 工具名 '{"参数":"值"}'\`，比如 \`${cmd} recall '{"query":"主人喜欢的游戏"}'\`
@@ -183,8 +186,9 @@ export function runAgy(item, extra = {}) {
   const emit = (ev) => publish({ ...ev, runId });
   emit({ type: "run_start", text: item.message, sessionId: isNew ? null : sid, startedAt, ...(extra.internal ? { auto: "xk-agy" } : {}) });
   const ctx = [];
-  const hits = search(DIR, item.message, 6);
-  if (hits.length) ctx.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准）：\n" + hits.map(line).join("\n"));
+  // 同一段会话里带过的不再带，最多 4 条、每条截短（#125）。新会话的会话号是刚生成的，清单自然是空的
+  const hits = injectFor(DIR, sid, item.message);
+  if (hits) ctx.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准；这段对话里带过的不再重复）：\n" + hits);
   if (extra.carry) ctx.push(extra.carry);
   const board = extra.internal ? "" : unreadText(path.dirname(DIR), "hachimi");
   if (board) ctx.push(board);

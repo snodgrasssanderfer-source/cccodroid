@@ -47,7 +47,7 @@ const MECHANICS = `# 怎么用你的记忆、日记、留言板和群
 
 - 你有一套只属于你的长期记忆（工具 remember / recall / forget）。主人告诉你的事实、发生的事、计划、你自己的看法，觉得以后用得上就当场 remember。
 - 记的时候把"昨天""下周"换成具体日期（今天的日期在环境信息里）。事情变了就用 remember 记新的，并在 ends 里填旧记忆的 id，旧的会标成"已过去"留着。
-- 每条消息前会自动附上几条可能相关的记忆，不全；主人问到具体的事而那里没有，先 recall 换个说法查，查不到就说没印象，不编。
+- 每条消息前会自动附上几条可能相关的记忆，不全，同一段对话里附过的不再附，长的截短了；主人问到具体的事而那里没有，先 recall 换个说法查，查不到就说没印象，不编。
 - 提起旧事时说清大概是哪天、当时谁怎么说（"你上周三说……""我当时觉得……"）；已过去的事用过去的说法。
 - diary/ 里是你写的日记，inputs/ 是每天的素材，主人想看可以读。
 - 留言板是三个人和主人共用的（工具 board_write / board_read）。主人交代的事做到一半、你要下班（主人换人、你额度快用完）时，用 board_write 给接班的人留张便条：交代了什么、办到哪、还差什么，结论放前面；不抄你的私人记忆。你下班时要是还没留，系统会再提醒你一次。
@@ -68,6 +68,10 @@ export function ensureRoles() {
       agent: r.id,
       enableAllProjectMcpServers: true,
       hooks: { SessionStart: hook("start"), UserPromptSubmit: hook("prompt") },
+      // 省额度（#125，11-06 真机 2.1.309 实测两项都生效）：主人账号上 claude.ai 的 Docs 连接器屋里用不上，说明加工具约 1700 字；
+      // 自带技能（dataviz、claude-api、schedule……）的清单约 6800 字，每段会话开头都带。自己装的技能不受影响
+      disableClaudeAiConnectors: true,
+      disableBundledSkills: true,
     }, null, 1) + "\n");
     // alwaysLoad：不然记忆工具被收进 ToolSearch，每次想起旧事都要多一个来回
     write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": { type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true } } }, null, 1) + "\n");
