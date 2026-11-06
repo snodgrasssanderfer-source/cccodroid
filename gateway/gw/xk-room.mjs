@@ -51,6 +51,8 @@ export const PACE = { quietMs: 2000, maxMs: 8000, calledMs: 1000, followMs: 5 * 
 // 上限：一批主人的话，第一波最多两个人开口；之后主人不开口，她们之间点名交办的最多再接六句、没点名自己插话的最多三句，两样分开算，
 // 免得派活被闲聊吃掉（主人 11-03 定的）。到了上限群里说一声，不然看着像谁不理人。插话和接话都用她平时的模型（#64）
 export const CAP = { wave: 2, chain: 3, named: 6 };
+export const GOAL_REST = "【歇】";
+const GOAL_SELF = 30;   // 目标模式里一个人自己接着干的上限（一批里），防空转烧额度
 
 // ── 群的四种模式（#108，主人 11-04 定的）：主人在群页的二级弹窗里切，带一段补充说明 ──
 // 平时就是上面这套；计划：能查能读能讨论、不动手，小克收成一份计划等主人点头；目标：点名接话不设上限，做到完为止；
@@ -58,7 +60,7 @@ export const CAP = { wave: 2, chain: 3, named: 6 };
 export const MODES = {
   normal: { name: "平时", rules: "" },
   plan: { name: "计划", rules: "这一轮只商量不动手：可以查资料、读代码和文档、上网看、讨论；不改文件、不装东西、不重启网关、不往外发消息。商量完由小克把计划收成一份（目标、谁做哪块、怎么算做完）贴在群里，等主人点头再开工。" },
-  goal: { name: "目标", rules: "围着这个目标一直干到完成：谁做完一块就在群里报一句结果（第一段只写结果）；点名接话不设上限，但别几个人抢着说同一件事。小克判断目标达成后，在群里报总结果，再用 room_mode 切回平时。" },
+  goal: { name: "目标", rules: "围着这个目标一直干到完成：谁做完一块就在群里报一句结果（第一段只写结果）；点名接话不设上限，但别几个人抢着说同一件事。小克判断目标达成后，在群里报总结果，再用 room_mode 切回平时。说完系统会叫你接着干；你那份做完了、要等别人或主人拿主意，就在这句末尾写「【歇】」，有人点你名再起来。" },
   live: { name: "直播", rules: "在直播：同一时刻只一个人出声，一人操作、一人旁观解说；台词短，先说后做，别抢别人的话。" },
 };
 STATE.room.mode ||= { kind: "normal", prompt: "", since: 0, rounds: 0 };
@@ -106,16 +108,17 @@ export async function judge(mode, after, taken = []) {
 }
 
 // ── 递进她那段：群里她上次看过之后的新发言 ──
-function feed(id, kind, caller) {
+function feed(id, kind, caller, cont = false) {
   const all = messages(), from = (STATE.room.seen[id] ?? -1) + 1;
   const lines = all.slice(from).filter((m) => m.from !== id).map((m) => `${nameOf(m.from)}：${m.text}`);
-  const ask = kind === "aside"
+  if (STATE.room.mode.kind === "goal" && kind === "aside") kind = "reply";   // 11-06：目标模式里没有插话，都是干活
+  const ask = cont ? "你上一句说完了，群里没人叫停：接着干你手上那份；做完了就在句末写「【歇】」。" : kind === "aside"
     ? `你可以插一句（一两句话就好）；不想插就只回「${PASS}」。`
     : (caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。") +
       "要是在汇报干了什么活，第一段一两句只写结果，过程和细节空一行放后面（群页会把后面折起来，主人点开才看）。";
   const md = STATE.room.mode, m = MODES[md.kind];
   const mode = md.kind === "normal" ? "" : `\n（现在是${m.name}模式${md.prompt ? "，主人说：" + md.prompt : ""}。${m.rules}）`;
-  return { upTo: all.length - 1, fresh: lines.length > 0, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）${mode}\n${lines.join("\n")}\n\n（${ask}）` };
+  return { upTo: all.length - 1, fresh: lines.length > 0 || cont, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）${mode}\n${lines.join("\n")}\n\n（${ask}）` };
 }
 
 // 她当前那段会话：#23 记的「最近那段」，得还在、还是她的；没有就在她的项目里新开
@@ -131,11 +134,11 @@ const BUSY = new Set();      // 正在群里说话的人：一个人一次只跑
 const AGAIN = new Map();     // 她跑着时又轮到她：跑完再来一轮（kind）
 
 /** 让 id 在群里说一轮（kind：reply / aside） */
-export function speak(id, kind = "reply", round = null, caller = null) {
+export function speak(id, kind = "reply", round = null, caller = null, cont = false) {
   const role = roleById(id);
   if (!role || asleep(id)) return null;
   if (BUSY.has(id)) { if (kind === "reply" || !AGAIN.has(id)) AGAIN.set(id, { kind, round, caller }); return null; }
-  const { text, upTo, fresh } = feed(id, kind, caller);
+  const { text, upTo, fresh } = feed(id, kind, caller, cont);
   if (!fresh) return null;   // 她跑着时攒下的已经在上一轮里看过了
   if (STATE.room.mode.kind === "goal") { STATE.room.mode.rounds++; publish({ type: "xk", op: "room_mode", mode: STATE.room.mode }); }   // 群页顶上「目标 · 已 N 轮」：额度主人自己盯
   let sid = sidOf(id), carry = "";
@@ -223,13 +226,22 @@ function callNamed(r, round, ids, caller) {
   for (const id of ids) { if (r.named > 0) { r.named--; speak(id, "reply", round, caller); } else dropped = true; }
   if (dropped && !r.capped) { r.capped = true; append({ from: "system", text: CAPPED }); saveState(); }
 }
-let ROUND = 0;
+let ROUND = 0, OWNER_ROUND = 0;
 const asideOk = (id) => !asleep(id) && !BUSY.has(id) && Date.now() - (STATE.room.lastAside[id] || 0) >= ASIDE_GAP.ms;
 async function afterSaid(who, text, round) {
   const r = ROUNDS.get(round);
-  if (!r || round !== ROUND) return;   // 主人又开口了：旧的那批不再往下接
+  // 主人又开口了：旧的那批不再往下接（目标模式里只认主人开口；她们私聊里 room_say 进来的不打断别人接着干）
+  if (!r || (STATE.room.mode.kind === "goal" ? round < OWNER_ROUND : round !== ROUND)) return;
   const named = called(text, who).filter((id) => !asleep(id));
-  if (named.length) { callNamed(r, round, named, who); return; }
+  if (named.length) callNamed(r, round, named, who);
+  if (STATE.room.mode.kind === "goal") {
+    if (String(text || "").includes(GOAL_REST)) return;
+    r.self ||= {}; r.self[who] = (r.self[who] || 0) + 1;
+    if (r.self[who] > GOAL_SELF) { append({ from: "system", text: `${nameOf(who)}自己接着干了 ${GOAL_SELF} 轮，先停一下，等你开口` }); saveState(); return; }
+    speak(who, "reply", round, null, true);
+    return;
+  }
+  if (named.length) return;
   if (r.left <= 0 || r.aside || r.pending > 0) return;
   let j = {};
   try { j = await judge("chain", who); } catch (e) { log("聊天室：判断有没有人接话失败（这次就不接了）：" + e.message); }
@@ -255,7 +267,7 @@ export function ownerSays(text, to = []) {
 }
 
 async function decide(b) {
-  const round = ++ROUND, r = { left: CAP.chain, named: named(), pending: 0, aside: false, capped: false };
+  const round = OWNER_ROUND = ++ROUND, r = { left: CAP.chain, named: named(), pending: 0, aside: false, capped: false };
   ROUNDS.set(round, r);
   if (ROUNDS.size > 20) ROUNDS.delete(ROUNDS.keys().next().value);
   // 规则先定：@ 的、叫到名字的；没有就是正和主人一来一回的那位
@@ -272,7 +284,9 @@ async function decide(b) {
     try { aside = (await judge("owner", null, ids)).aside; }
     catch (e) { log("聊天室：判断有没有人插话失败（这次就不插了）：" + e.message); }
   }
-  ids = ids.slice(0, CAP.wave);
+  const goal = STATE.room.mode.kind === "goal";
+  if (goal) { const n = [...new Set([...b.to, ...b.texts.flatMap((x) => called(x))])].filter((id) => !asleep(id)); ids = n.length ? n : ROLES.map((x) => x.id).filter((id) => !asleep(id)); aside = null; }   // 11-06：目标模式点了名叫点名的，没点名醒着的全叫
+  else ids = ids.slice(0, CAP.wave);
   if (!ids.length) { append({ from: "system", text: "她们都睡着了，等额度恢复再来" }); return []; }
   for (const id of ids) speak(id, "reply", round);
   if (aside && !ids.includes(aside) && ids.length < CAP.wave && asideOk(aside)) { r.aside = true; STATE.room.lastAside[aside] = Date.now(); speak(aside, "aside", round); }
