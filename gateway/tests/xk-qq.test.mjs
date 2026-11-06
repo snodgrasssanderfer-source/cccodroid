@@ -13,7 +13,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, GROUP_CARD_FILE, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  drainQQSay, ensureClean, handleEvent, handleMessage, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
+  drainQQSay, ensureClean, handleEvent, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -564,7 +564,7 @@ test("聊天模式什么都没说就什么都不发；出错也不往群里冒�
 
 test("工具服务只挂给干净会话：工作那一轮没有 clean", () => {
   handleMessage(cfg, priv(STRANGER, "你好"), "你好");
-  assert.equal(queued[0].clean.mcpConfig, qqMcpConfig(), "聊天那轮带着它");
+  assert.ok(JSON.parse(queued[0].clean.mcpConfig).mcpServers.qq, "聊天那轮带着它");
   assert.match(queued[0].clean.mcpConfig, /xk-qq-mcp\.mjs/);
   finish(queued[0]);
   handleMessage(cfg, priv(OWNER, "换成工作模式"), "换成工作模式");
@@ -1079,4 +1079,22 @@ test("主动插话：小模型答是就起一轮，工具按群友那轮限住�
     finish(q, "不插了，这个话题没什么可补充的。");
     assert.equal(REPLIES.length, before, "插话那轮最后的自言自语不发进群，只认她自己调 send_message");
   } finally { ASK.claude = orig; }
+});
+
+test("切模式的说法放宽：换到、切到、句尾标点都认；别的话不算", () => {
+  for (const t of ["换成工作模式", "换到工作模式", "切到工作模式。", "切换到 工作模式！", "换成工作模型", "工作模式"]) assert.equal(modeCmd(t), "work", t);
+  for (const t of ["换成聊天模式", "回到聊天模式", "切回聊天模式~"]) assert.equal(modeCmd(t), "chat", t);
+  assert.equal(modeCmd("回来"), "self");
+  for (const t of ["工作模式是什么", "你换到工作模式了吗", "回来了"]) assert.equal(modeCmd(t), null, t);
+  // 真机那句：主人说「换到工作模式」，群里切到本色那段
+  handleMessage(cfg, group(OWNER, [{ type: "text", data: { text: "换到工作模式" } }]), "换到工作模式");
+  assert.equal(modeOf("g:555", cfg), "self");
+  assert.equal(queued.length, 0, "暗号不递给模型");
+});
+
+test("干净会话只列聊天那套 QQ 工具：没有 ask_owner、ask_home、owner_away", () => {
+  handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+  const env = JSON.parse(queued.at(-1).clean.mcpConfig).mcpServers.qq.env.CCAPP_QQ_TOOLS.split(",");
+  for (const t of ["ask_owner", "ask_home", "owner_away"]) assert.ok(!env.includes(t), t);
+  assert.ok(env.includes("send_message"));
 });

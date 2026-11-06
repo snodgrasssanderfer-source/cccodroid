@@ -76,8 +76,18 @@ export const APPROVALS_FILE = path.join(CFG.home, ".config", "xiaoke", "qq-appro
 
 const RECONNECT_MAX = 30000;
 const retryBase = () => Number(process.env.CCAPP_QQ_RETRY_MS) || 1000;
-const WORK_ON = ["换成工作模型", "换成工作模式"], WORK_OFF = ["回到聊天模式"];
-const SELF_ON = ["回来"], CLEAN_ON = ["换成聊天模式"];
+// 切模式的暗号（只认主人的号）：「换成/换到/切到/切换到…工作模式」「…聊天模式」「回来」都认，句尾标点不算
+// （11-07 真机：主人说「换到工作模式」没对上「换成工作模式」，干净会话那边还假装切了）
+const VERB = "(?:换成|换到|换回|切到|切成|切回|切换到|切换成|转到|进入|回到)?";
+const WORK_RE = new RegExp(`^${VERB}工作(?:模式|模型)$`), CHAT_RE = new RegExp(`^${VERB}聊天模式$`);
+/** 这句是不是切模式：返回 work / chat / self，不是就 null */
+export function modeCmd(text) {
+  const t = String(text || "").replace(/\s+/g, "").replace(/[。！!.~～]+$/, "");
+  if (t === "回来") return "self";
+  if (WORK_RE.test(t)) return "work";
+  if (CHAT_RE.test(t)) return "chat";
+  return null;
+}
 const MODE_TEXT = { work: "已切到工作模式", chat: "已回到聊天模式", self: "已切到工作模式" };
 // 群友叫起来的那一轮：只给搜索、读网页、QQ 工具、记忆（recall + remember）（#134 第三步）
 const SELF_DENY = [
@@ -437,8 +447,7 @@ export async function handleEvent(cfg, ev) {
     pending = pendingNote();
   }
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
-  const bare = p.text.replace(/\s+/g, "");
-  const cmd = isOwner && [...WORK_ON, ...WORK_OFF, ...SELF_ON, ...CLEAN_ON].includes(bare);
+  const cmd = isOwner && !!modeCmd(p.text);
   if (!cmd && !addressed(ev, cfg)) {
     historyPush(ev, line);
     // 群里接本人、没人叫她：先过筛、再掷骰子、再问一次便宜档（能不能插一句）。不挡事件处理
@@ -616,14 +625,13 @@ function useAwait(ev) {
 export function handleMessage(cfg, ev, text, extra = {}) {
   const key = convKey(ev);
   const owner = String(ev.user_id) === String(cfg.owner);
-  const bare = String(text).replace(/\s+/g, "");
   // 切模式：只认发送者的号，不看内容是谁写的；别人的同一句话当普通消息
-  if (owner && ev.message_type === "group" && CLEAN_ON.includes(bare)) { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
-  if (owner && ev.message_type === "group" && SELF_ON.includes(bare)) { setMode(key, "self"); return reply(cfg, ev, MODE_TEXT.self); }
+  const mc = owner ? modeCmd(text) : null;
+  if (mc === "chat") { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
+  if (mc === "self" && ev.message_type === "group") { setMode(key, "self"); return reply(cfg, ev, MODE_TEXT.self); }
   // 群里「换成工作模式」＝本色那段（主人 11-06 定：群里默认 12 号卡聊天，干活切本色）；私聊照旧是屋里那段
-  if (owner && ev.message_type === "group" && WORK_ON.includes(bare)) { setMode(key, "self"); return reply(cfg, ev, MODE_TEXT.self); }
-  if (owner && WORK_ON.includes(bare)) { setMode(key, "work"); return reply(cfg, ev, MODE_TEXT.work); }
-  if (owner && WORK_OFF.includes(bare)) { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
+  if (mc === "work" && ev.message_type === "group") { setMode(key, "self"); return reply(cfg, ev, MODE_TEXT.self); }
+  if (mc === "work") { setMode(key, "work"); return reply(cfg, ev, MODE_TEXT.work); }
   if (!addressed(ev, cfg)) return;
   if (owner && ev.message_type === "group") useAwait(ev);
   const kind = modeOf(key, cfg);
@@ -694,7 +702,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
         provider: roleById("xiaoke").provider,
         // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
         allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
-        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfig() },
+        // 只列聊天那套：ask_owner、ask_home、owner_away 调了也会被拒，列出来她会当成自己有（11-07 真机她把这三样报给了主人）
+        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS) },
       });
       // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
       r.scope = scope; r.cardHash = cardHashOf(scope);
