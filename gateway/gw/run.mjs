@@ -218,7 +218,8 @@ export async function startRun(item) {
     : `You are ${model}, a small open model running locally on the user's Android device through llama.cpp (not Claude). Reply in the user's language; keep answers short.`;
   // 建档（脉络）：常驻规则 + 这一轮该不该先建档（见 archive.mjs）
   const xkRole = inXkRole(cwd);   // xk
-  const arch = P.local || xkRole ? null : await archiveHint(run.sessionId).catch(() => null);
+  // QQ 群里本色那段（xk-qq，跑在 qq-self）也不建档：群友那轮没有 Bash，叫它建档只会白耗一步
+  const arch = P.local || xkRole || item.auto === "xk-qq" ? null : await archiveHint(run.sessionId).catch(() => null);
   // 网关自己给的补充（QQ 群那轮的审核规矩，见 xk-qq.mjs）：只接在最后，别的照旧
   const extraPrompt = String(item.appendSystemPrompt || "").trim();
   const appendPrompt = [xkRole ? integrityHint() : [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n"), extraPrompt].filter(Boolean).join("\n\n");
