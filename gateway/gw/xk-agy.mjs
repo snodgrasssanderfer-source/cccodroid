@@ -16,6 +16,7 @@ import { END_HOOKS } from "./queue.mjs";
 import { projectSlug } from "./projects.mjs";
 import { rememberSession } from "./runs.mjs";
 import { WORLDBOOK, postHistoryFile, roleDir } from "./xk-roles.mjs";
+import { xkHome } from "./xk-shared.mjs";
 import { injectFor } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 import { ENGINES, ENGINE_ASK, ENGINE_RUN, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
@@ -133,7 +134,8 @@ function toolsHowTo() {
  *  （google-antigravity/antigravity-cli#60；11-03 起她的工具全没了，agy 会自己更新，#101）。别的条目原样留着 */
 export const AGY_MCP_FILES = () => ["config", "antigravity-cli"].map((d) => path.join(CFG.home, ".gemini", d, "mcp_config.json"));
 export function ensureMcp() {
-  const want = { "xk-memory": goCommand(process.execPath, [MEM_MCP, DIR]) };
+  // XK_ROOM_FILE：room_read 只认网关给的群文件路径（#132），小克、小鱼在 .mcp.json 里带，这里给哈基米带上；xk-tool 也读这份配置
+  const want = { "xk-memory": { ...goCommand(process.execPath, [MEM_MCP, DIR]), env: { XK_ROOM_FILE: path.join(xkHome(CFG.home), "room.jsonl") } } };
   // 设备工具（通知、剪贴板、读屏点按…）：和 Claude 那两位挂的是同一个（usage.mjs），用哪些由应用里的开关定
   const dev = deviceMcpConfig();
   if (dev) { const { type, command, args, ...d } = JSON.parse(dev).mcpServers.device; want.device = { ...d, ...goCommand(command, args || []) }; }
