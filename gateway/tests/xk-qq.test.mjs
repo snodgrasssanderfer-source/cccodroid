@@ -6,11 +6,11 @@ import path from "node:path";
 import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { CFG } from "../gw/config.mjs";
-import { END_HOOKS, START_GUARDS } from "../gw/queue.mjs";
+import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  CLEAN_DIR, CONFIG_FILE, REPLIES, decodeFrames, handleMessage, loadConfig, modeOf,
+  CARD_FILE, CLEAN_DIR, CONFIG_FILE, REPLIES, decodeFrames, handleMessage, loadConfig, modeOf,
   qqLog, qqStatus, resetQQ, shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 
@@ -151,6 +151,12 @@ test("聊天模式：干净会话（不在 roles 下面），只开搜索和读�
   const st = JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".claude/settings.json"), "utf8"));
   assert.deepEqual(st.permissions.allow, ["WebSearch", "WebFetch"]);
   assert.ok(st.permissions.deny.includes("Write") && st.permissions.deny.includes("mcp__device") && st.permissions.deny.includes("mcp__xk-memory"));
+  // 真正管用的是白名单：只有搜索、读网页两样内置工具，一个 MCP 都不挂，系统提示整个换成人设卡
+  assert.deepEqual(q.clean.tools, ["WebSearch", "WebFetch"]);
+  assert.ok(q.clean.systemPrompt.length > 0);
+  for (const t of ["Read", "Grep", "Glob", "Task"]) assert.ok(q.disallowedTools.includes(t), "兜底也禁 " + t);
+  assert.ok(st.permissions.deny.includes("mcp__bili"), "全局挂着的 B站工具也禁");
+  assert.ok(!fs.existsSync(path.join(CLEAN_DIR, "CLAUDE.md")), "人设卡不叫 CLAUDE.md");
   finish(q, "你好，我在");
   assert.match(REPLIES.at(-1).text, /你好，我在/);
   assert.ok(STATE.qq.sessions["p:" + STRANGER], "记住这段干净会话");
@@ -246,4 +252,24 @@ test("真连上以后：收得到 QQ 的消息，群里的回话引用对方那�
     assert.match(act.params.message[1].data.text, /已切到工作模式/);
     assert.equal(modeOf("g:555"), "work");
   } finally { stopQQ(); bot.close(); delete process.env.CCAPP_QQ_RETRY_MS; }
+});
+
+test("人设卡改了：各会话从新的一段开始（旧段落的系统提示已经记死了）", () => {
+  fs.mkdirSync(CLEAN_DIR, { recursive: true });
+  fs.writeFileSync(CARD_FILE, "你是旧卡");
+  handleMessage(cfg, priv(STRANGER, "一"), "一");
+  assert.equal(queued[0].clean.systemPrompt, "你是旧卡");
+  finish(queued[0], "嗯");
+  assert.ok(STATE.qq.sessions["p:" + STRANGER]);
+  fs.writeFileSync(CARD_FILE, "你是新卡");
+  handleMessage(cfg, priv(STRANGER, "二"), "二");
+  assert.equal(queued[1].clean.systemPrompt, "你是新卡");
+  assert.equal(queued[1].sessionId, null, "换卡以后新开一段");
+  fs.rmSync(CARD_FILE, { force: true });
+});
+
+test("cleanOpt：前端递不进来；工具名只认字母，提示不能空", () => {
+  assert.equal(cleanOpt(null), null);
+  assert.equal(cleanOpt({ tools: ["WebSearch"], systemPrompt: " " }), null);
+  assert.deepEqual(cleanOpt({ tools: ["WebSearch", "Bash(rm -rf)", "WebFetch"], systemPrompt: "卡" }).tools, ["WebSearch", "WebFetch"]);
 });

@@ -18,8 +18,13 @@ import { turns } from "./xk-transcript.mjs";
 export const CONFIG_FILE = path.join(CFG.home, ".config", "xiaoke", "qq.json");
 // 聊天模式的干净会话：不放 roles/ 下面，不然会读到世界书和三人的 CLAUDE.md（roleOfDir 也认不出它）
 export const CLEAN_DIR = path.join(CFG.workspace, "qq-clean");
-// 聊天模式只给联网搜索和读网页：执行命令、写文件、设备、记忆这些一律不给（AstrBot 的做法，主人 11-06 定的）
-export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit"];
+// 聊天模式只给联网搜索和读网页（AstrBot 的做法，主人 11-06 定的）。用白名单（--tools）而不是黑名单：
+// 黑名单漏了 Read/Grep 就能读到手机上的 token 和记忆，漏了 mcp__bili 群里谁都能让她去 B站删评论（小克审 #135 时查出来的）
+export const CLEAN_TOOLS = ["WebSearch", "WebFetch"];
+export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "Agent", "Skill"];
+// 人设卡：主人改好的琉璃川椿卡放这里。不能叫 CLAUDE.md（那会被当成项目说明，叠在 Claude Code 默认的编程助手提示下面）；
+// 它整个当系统提示（--system-prompt），Claude Code 默认那套一个字都不带
+export const CARD_FILE = path.join(CLEAN_DIR, "card.md");
 
 const RECONNECT_MAX = 30000;
 const retryBase = () => Number(process.env.CCAPP_QQ_RETRY_MS) || 1000;
@@ -273,10 +278,11 @@ function deliver(cfg, ev, key, kind, text) {
       // 她那段正有一轮在跑：消息插进那一轮，认那一轮的结束（和 xk-room 一样）
       if (item.injected) { const cur = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (cur) RUNSQQ.set(cur.id, r); }
     } else {
-      ensureClean();
+      const card = ensureClean();
       item = enqueue({
         message: text, sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
+        clean: { tools: CLEAN_TOOLS, systemPrompt: card },
       });
     }
     RUNSQQ.set(item.id, r);
@@ -292,15 +298,25 @@ function roleSid(id) {
   return sid && roleOfSession(sid)?.id === id ? sid : null;
 }
 
-// 聊天模式的干净会话：目录和它的项目级设置（只开联网搜索、读网页；命令、写文件、设备、记忆都禁掉）
-function ensureClean() {
+// 聊天模式的干净会话：目录、项目级设置（兜底，真正管用的是 run 里的 --tools 白名单和 --strict-mcp-config）、人设卡。
+// 返回人设卡正文。卡改过了就把各会话的旧段落放掉：claude 第一轮就把系统提示记死了，续旧段落用的还是旧卡
+export function ensureClean() {
   const f = path.join(CLEAN_DIR, ".claude", "settings.json");
-  if (fs.existsSync(f)) return;
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(path.join(CLEAN_DIR, "CLAUDE.md"), CLEAN_MD);
-  fs.writeFileSync(f, JSON.stringify({
-    permissions: { allow: ["WebSearch", "WebFetch"], deny: [...CLEAN_DENY, "mcp__device", "mcp__xk-memory"] },
-  }, null, 1) + "\n");
+  const want = JSON.stringify({
+    permissions: { allow: CLEAN_TOOLS, deny: [...CLEAN_DENY, "mcp__device", "mcp__xk-memory", "mcp__bili"] },
+    disableClaudeAiConnectors: true, disableBundledSkills: true,
+  }, null, 1) + "\n";
+  let had = ""; try { had = fs.readFileSync(f, "utf8"); } catch {}
+  if (had !== want) fs.writeFileSync(f, want);
+  if (!fs.existsSync(CARD_FILE)) fs.writeFileSync(CARD_FILE, CLEAN_MD);
+  const card = fs.readFileSync(CARD_FILE, "utf8").trim() || CLEAN_MD;
+  const hash = crypto.createHash("sha256").update(card).digest("hex").slice(0, 16);
+  if (STATE.qq.cardHash !== hash) {
+    if (STATE.qq.cardHash) say("人设卡换了，各会话从新的一段开始");
+    STATE.qq.cardHash = hash; STATE.qq.sessions = {}; saveState();
+  }
+  return card;
 }
 // 占位：主人改好的琉璃川椿卡给过来之前先用这个，别让人一进 QQ 就撞上空的
 export const CLEAN_MD = "# 在这个窗口里\n\n你是主人在 QQ 上聊天的那一位。用中文、口语，短句；不聊自己的设定和别人的事，不透露主人这边的任何信息。\n";
