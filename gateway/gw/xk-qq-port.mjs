@@ -3,6 +3,7 @@
 //   - src/core/util.js：normalizeMessageList / unwrapMessage / unquoteJsonString / sanitizeUserText
 //   - src/onebot/stickers.js：normalizeStickerEntry / mergeStickerLibrary / findSticker / formatStickerList
 //   - src/tools/tools-core.js：normalizeMid / resolveMessageTarget 的判断顺序
+//   - src/onebot/sender.js：leadDelayFor（首条消息前的停顿）
 // Copyright (c) 2026 Kondius
 // MIT 许可全文与署名见仓库根 NOTICE 和 ThirdPartyLicenses/qq-agent-plus.txt。
 // 我们的外壳（白名单、strict MCP、号码只从事件里取、oneLine、重试去重、cardHash）不在这里。
@@ -302,4 +303,21 @@ export function markStickerUsed(entries, ref, context = "") {
   const out = [...entries];
   out[index] = next;
   return { entries: out, entry: next };
+}
+
+// ── 发言节奏（#134 第三步「像人」那一条）──
+// 首条前的停顿照 qq-agent-plus 的 src/onebot/sender.js（leadDelayFor，MIT）：500–1800ms 随机，每个字再加 12ms，最多 8 秒。
+// 条与条之间照 AstrBot 的 log 模式：log_2.6(字数+1) 秒，±20% 抖动，夹在 0.6–5 秒。公式是照文档写的，没有搬代码。
+/** 首条消息发出前停多久（毫秒） */
+export function leadDelayFor(text, rnd = Math.random) {
+  const chars = [...String(text || "")].length;
+  return Math.min(8000, Math.round(500 + rnd() * 1300 + chars * 12));
+}
+
+/** 上一条发完到这一条之间隔多久（毫秒），按上一条的字数算 */
+export function gapForChars(chars, rnd = Math.random) {
+  const n = Math.max(0, Number(chars) || 0);
+  const base = (Math.log2(n + 1) / Math.log2(2.6)) * 1000;
+  const jittered = base * (0.8 + rnd() * 0.4);
+  return Math.round(Math.min(5000, Math.max(600, jittered)));
 }
