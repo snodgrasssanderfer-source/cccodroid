@@ -60,10 +60,10 @@ function fakeOneBot(token) {
         if (f.opcode !== 0x1) continue;
         const a = JSON.parse(f.payload.toString("utf8"));
         st.actions.push(a);
-        // 照真 NapCat 的样子回一句：默认带 message_id；特殊动作由 answer 里给
+        // 照真 NapCat 的样子回一句：默认带 message_id；特殊动作由 answer 里给（可以是 Promise，用来造慢动作）
         st.seq = (st.seq || 0) + 1;
-        const data = st.answer[a.action] ? st.answer[a.action](a.params || {}) : { message_id: 1000 + st.seq };
-        sock.write(serverText(JSON.stringify({ status: "ok", retcode: 0, data, echo: a.echo })));
+        const val = st.answer[a.action] ? st.answer[a.action](a.params || {}) : { message_id: 1000 + st.seq };
+        Promise.resolve(val).then((data) => { try { sock.write(serverText(JSON.stringify({ status: "ok", retcode: 0, data, echo: a.echo }))); } catch {} });
       }
     });
     sock.on("error", () => {});
@@ -507,4 +507,64 @@ test("MCP 服务真起得来：工具清单齐，send_message 走一遍文件来
     assert.match(r.result.content[0].text, /发出去了 2 条/);
     assert.equal(bot.actions.filter((a) => a.action === "send_group_msg").length, 2);
   } finally { clearInterval(timer); c.ch.kill(); stopQQ(); bot.close(); }
+});
+
+test("卡换掉时正在跑的那一轮，不把旧会话写回去", () => {
+  fs.mkdirSync(path.dirname(CARD_FILE), { recursive: true });
+  fs.writeFileSync(CARD_FILE, "卡一：小克\n");
+  handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+  const q = queued[0];
+  assert.ok(STATE.qq.cardHash, "这张卡记下了");
+  fs.writeFileSync(CARD_FILE, "卡二：换了一张\n");
+  ensureClean();   // 这一下把各会话作废（STATE.qq.sessions = {}）
+  finish(q, "在");
+  assert.equal(STATE.qq.sessions["p:" + STRANGER], undefined, "旧卡那一段不写回去");
+});
+
+test("一个群在下图，不耽误另一个群发消息", async () => {
+  const bot = await connectedBot();
+  bot.answer.get_msg = () => new Promise((ok) => setTimeout(() => ok({ message: [{ type: "image", data: { url: bot.img } }] }), 400));
+  try {
+    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 看图" } }]), "小克 看图");
+    const gq = queued[0];
+    handleMessage(cfg, priv("33333", "你好"), "你好");
+    const pq = queued[1];
+    rpcReq("slow", gq, "get_message_images", { messageId: "gm12345" });
+    rpcReq("fast", pq, "send_message", { messages: [{ text: "在" }] });
+    const t0 = Date.now();
+    const done = drainQQRpc();
+    await wait(() => bot.actions.some((a) => a.action === "send_private_msg"));
+    const ms = Date.now() - t0;
+    assert.ok(ms < 350, "发消息没被下图堵住（等了 " + ms + "ms）");
+    await done;
+    assert.ok(rpcRes("slow").ok);
+    assert.equal(rpcRes("slow").result.files.length, 1);
+  } finally { stopQQ(); bot.close(); }
+});
+
+test("模型超时重试同一句：不再发第二遍", async () => {
+  const bot = await connectedBot();
+  try {
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    const q = queued[0];
+    rpcReq("d1", q, "send_message", { messages: [{ text: "在" }] });
+    await drainQQRpc();
+    rpcReq("d2", q, "send_message", { messages: [{ text: "在" }] });
+    await drainQQRpc();
+    assert.equal(bot.actions.filter((a) => a.action === "send_private_msg").length, 1, "只发了一次");
+    assert.equal(rpcRes("d2").replayed, true);
+    assert.deepEqual(rpcRes("d2").result, rpcRes("d1").result);
+  } finally { stopQQ(); bot.close(); }
+});
+
+test("没人取的旧结果和临时文件会被清掉", async () => {
+  const old = path.join(CLEAN_DIR, ".rpc", "res", "old.json");
+  const oldTmp = path.join(CLEAN_DIR, ".rpc", "tmp", "old.img");
+  for (const f of [old, oldTmp]) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, "{}"); }
+  const past = new Date(Date.now() - 20 * 60000);
+  fs.utimesSync(old, past, past);
+  fs.utimesSync(oldTmp, past, past);
+  await drainQQRpc();
+  assert.ok(!fs.existsSync(old), "过期的结果删了");
+  assert.ok(!fs.existsSync(oldTmp), "过期的临时图删了");
 });

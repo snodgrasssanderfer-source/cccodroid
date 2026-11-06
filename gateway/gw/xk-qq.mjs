@@ -58,6 +58,7 @@ export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；�
 export function resetQQ() {
   STATE.qq = { modes: {}, sessions: {} };
   BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); HISTORY.clear(); REPLIES.length = 0;
+  REPLAY.clear(); LAST_SWEEP = 0;
 }
 function remember(id, o, map, cap) {
   if (!id) return;
@@ -405,6 +406,8 @@ function deliver(cfg, ev, key, kind, text, line = "") {
         allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
         clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfig() },
       });
+      // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
+      r.cardHash = STATE.qq.cardHash;
       // MCP 那边靠这个文件知道「这一轮是哪个会话、回话发给谁」
       writeRunCtx(item.id, r);
     }
@@ -661,35 +664,76 @@ async function runTool(req, ctx, r) {
   }
 }
 
-let DRAINING = false;
-/** 把 MCP 发过来的请求做完（测试也直接调）。一次只做一个：网关一侧的动作是串行的 */
-export async function drainQQRpc() {
-  if (DRAINING) return 0;
-  DRAINING = true;
-  let n = 0;
+/** 重试去重：同一个 run 里，同一份发送参数在 10 分钟内又来一次，就回上次的结果，不再发一遍。
+ *  （MCP 那头 60 秒没等到回话，模型会重试同一句；网关这边可能其实已经发出去了） */
+const REPLAY = new Map();
+const REPLAY_MS = 10 * 60000;
+const SEND_TOOLS = new Set(["send_message", "send_sticker", "send_poke"]);
+const stable = (v) => (Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v);
+const replayKey = (req) => req.runId + "|" + req.tool + "|" + JSON.stringify(stable(req.args || {}));
+function replayGet(req) {
+  const k = replayKey(req), hit = REPLAY.get(k);
+  if (!hit) return null;
+  if (Date.now() - hit.at > REPLAY_MS) { REPLAY.delete(k); return null; }
+  return hit;
+}
+function replayPut(req, result) {
+  if (!SEND_TOOLS.has(req.tool)) return;
+  REPLAY.set(replayKey(req), { at: Date.now(), result });
+  while (REPLAY.size > 500) REPLAY.delete(REPLAY.keys().next().value);
+}
+
+/** 做完一个请求，把结果写回 res/。各请求互不等待：一个群在下图，不能把别的群发消息堵住 */
+async function handleReq(req) {
+  const out = { id: req.id, ok: true };
   try {
-    let files = [];
-    try { files = fs.readdirSync(REQ_DIR).filter((f) => f.endsWith(".json")).sort(); } catch (e) { if (e.code !== "ENOENT") throw e; }
-    for (const f of files) {
-      const p = path.join(REQ_DIR, f);
-      let req = null;
-      try { req = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
-      fs.rmSync(p, { force: true });
-      if (!req?.id || !req.tool) continue;
-      const out = { id: req.id, ok: true };
-      try {
-        const ctx = runCtxOf(req.runId);
-        if (!ctx) throw new Error("这一轮不在 QQ 会话里（没有会话记录）");
-        const r = RUNSQQ.get(String(req.runId)) || [...RUNSQQ.values()].find((x) => x.cid === req.runId) || null;
-        out.result = await runTool(req, ctx, r);
-      } catch (e) {
-        out.ok = false; out.error = String(e.message || e).slice(0, 300);
-      }
-      writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out);
-      n++;
+    const hit = replayGet(req);
+    if (hit) { out.result = hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out); }
+    const ctx = runCtxOf(req.runId);
+    if (!ctx) throw new Error("这一轮不在 QQ 会话里（没有会话记录）");
+    const r = RUNSQQ.get(String(req.runId)) || [...RUNSQQ.values()].find((x) => x.cid === req.runId) || null;
+    out.result = await runTool(req, ctx, r);
+    replayPut(req, out.result);
+  } catch (e) {
+    out.ok = false; out.error = String(e.message || e).slice(0, 300);
+  }
+  writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out);
+}
+
+let LAST_SWEEP = 0;
+/** 清掉没人取的旧文件：MCP 超时以后留下的结果、临时图、没跑完的会话记录（10 分钟；runs 留一小时） */
+export function sweepRpc(now = Date.now()) {
+  LAST_SWEEP = now;
+  const sweepDir = (d, ms) => {
+    let names = [];
+    try { names = fs.readdirSync(d); } catch { return; }
+    for (const n of names) {
+      const p = path.join(d, n);
+      try { if (fs.statSync(p).mtimeMs < now - ms) fs.rmSync(p, { force: true }); } catch {}
     }
-  } finally { DRAINING = false; }
-  return n;
+  };
+  sweepDir(RES_DIR, 10 * 60000);
+  sweepDir(TMP_DIR, 10 * 60000);
+  sweepDir(REQ_DIR, 10 * 60000);
+  sweepDir(RUN_DIR, 60 * 60000);
+}
+/** 把 MCP 发过来的请求做完（测试也直接调）。每个请求各自跑；同一个请求不会做两遍 */
+export async function drainQQRpc() {
+  if (!LAST_SWEEP || Date.now() - LAST_SWEEP > 60000) sweepRpc();
+  let files = [];
+  try { files = fs.readdirSync(REQ_DIR).filter((f) => f.endsWith(".json")); } catch (e) { if (e.code !== "ENOENT") throw e; }
+  const tasks = [];
+  for (const f of files) {
+    const p = path.join(REQ_DIR, f);
+    let req = null;
+    // 取走和读完是同一个同步动作：并发的 drain 不会重复处理同一个文件
+    try { req = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
+    fs.rmSync(p, { force: true });
+    if (!req?.id || !req.tool) continue;
+    tasks.push(handleReq(req).catch((e) => say("处理聊天工具请求失败：" + e.message)));
+  }
+  await Promise.all(tasks);
+  return tasks.length;
 }
 
 // 聊天模式的干净会话：目录、项目级设置（兜底，真正管用的是 run 里的 --tools 白名单和 --strict-mcp-config）、人设卡。
@@ -746,7 +790,8 @@ END_HOOKS.push((run, f = {}) => {
   RUNSQQ.delete(run.id); if (run.cid) RUNSQQ.delete(run.cid);
   if (BUSY.get(r.key)?.cid === r.cid) BUSY.delete(r.key);
   fs.rmSync(path.join(RUN_DIR, String(run.id) + ".json"), { force: true });
-  if (run.sessionId && r.kind === "chat") { STATE.qq.sessions[r.key] = String(run.sessionId); saveState(); }
+  // 这一轮跑着的时候人设卡被换掉了（各会话已经作废）：旧 sid 不能再写回去，不然下一句又接旧卡
+  if (run.sessionId && r.kind === "chat" && r.cardHash === STATE.qq.cardHash) { STATE.qq.sessions[r.key] = String(run.sessionId); saveState(); }
   const ts = run.sessionId ? turns(String(run.sessionId), r.at) : [];
   const said = r.kind === "work" ? workReply(ts, r.head) : lastReply(ts);
   if (r.kind === "work") {
@@ -786,6 +831,7 @@ if (LIVE) {
   };
   setTimeout(tick, 5000).unref();
   setInterval(tick, 60000).unref();
-  // 聊天工具来的请求：两百毫秒看一次，有就做
+  // 聊天工具来的请求：两百毫秒看一次，有就做；起手先清一遍没人取的旧文件
+  try { sweepRpc(); } catch {}
   setInterval(() => { drainQQRpc().catch((e) => say("聊天工具出错：" + e.message)); }, 200).unref();
 }
