@@ -350,6 +350,12 @@ test("拍一拍整理成一行；拍的是她就算叫她，别人互相拍不�
   assert.equal(queued.length, 1, "别人互相拍不起轮次");
 });
 
+test("光 @ 她不打字也算叫她", async () => {
+  await handleEvent(cfg, group(OWNER, [{ type: "at", data: { qq: BOT } }]));
+  assert.equal(queued.length, 1);
+  assert.match(queued[0].message, /\[@你\]/);
+});
+
 test("拍一拍：NapCat 按 OneBot 11 发 notice_type notify + sub_type poke，也认", async () => {
   await handleEvent(cfg, { post_type: "notice", notice_type: "notify", sub_type: "poke", user_id: OWNER, target_id: BOT, sender_id: OWNER });
   assert.equal(queued.length, 1, "私聊拍她算叫她");

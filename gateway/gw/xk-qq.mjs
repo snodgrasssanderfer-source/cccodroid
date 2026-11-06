@@ -290,7 +290,10 @@ export function parseSegments(message, bot, sent = SENT) {
     else if (s.type === "image") text += "[图片]";
     else if (s.type === "face" || s.type === "mface") text += "[表情]";
   }
-  return { text: text.replace(/\s+/g, " ").trim(), atBot, reply, replySelf };
+  text = text.replace(/\s+/g, " ").trim();
+  // 光 @ 她、什么字都没打（11-06 真机：主人在群里只 @ 了一下）：空文本会在 handleEvent 里被当成没内容丢掉
+  if (!text && atBot) text = "[@你]";
+  return { text, atBot, reply, replySelf };
 }
 /** 群里要不要接：被 @、引用了我们的话、或者叫到 names 里的名字；私聊每条都接 */
 export function shouldAnswer(ev, cfg) {
