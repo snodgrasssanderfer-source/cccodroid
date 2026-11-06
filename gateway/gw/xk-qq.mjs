@@ -9,10 +9,10 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { CFG, LIVE, log } from "./config.mjs";
 import { END_HOOKS, enqueue } from "./queue.mjs";
-import { markRun } from "./xk-memory.mjs";
+import { ASK, markRun } from "./xk-memory.mjs";
 import { RUNS } from "./runs.mjs";
 import { STATE, projectOf, saveState } from "./xk-core.mjs";
-import { memoryMcpServer, roleDir, roleOfSession } from "./xk-roles.mjs";
+import { memoryMcpServer, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { writeJson } from "./xk-shared.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
@@ -37,7 +37,7 @@ export const CARD_FILE = path.join(CLEAN_DIR, "card.md");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "memory_append", "memory_query", "memory_remove"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "memory_append", "memory_query", "memory_remove"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list） */
@@ -78,7 +78,9 @@ const SELF_DENY = [
   "mcp__xk-memory__room_say", "mcp__xk-memory__room_read", "mcp__xk-memory__context_next", "mcp__xk-memory__room_mode",
   "mcp__device", "mcp__bili",
 ];
-const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。";
+const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。"
+  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：先调 ask_owner 报上去，别自己先做，也别反复报同一件。"
+  + "主管在群里时它会让你在群里请主管点头（主管下一句话不用叫你也会递给你）；主管说过不在群时，网关会攒成清单私聊给他。";
 /** 群里那段的口吻（#134：主管、基金会文风）：小克写在手机上，文件不存在就什么都不加 */
 export const GROUP_STYLE_FILE = path.join(roleDir("xiaoke"), "qq-group-style.md");
 export function groupStyle() {
@@ -87,8 +89,6 @@ export function groupStyle() {
     return t ? "\n\n" + t : "";
   } catch { return ""; }
 }
-  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主管在群里时，就在群里说一句「这个得主管点头」，等主管回话；"
-  + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
 
 STATE.qq ||= { modes: {}, sessions: {} };   // 会话 → 模式（chat / work）；会话 → 干净会话的 Claude 会话号
 const BUSY = new Map();      // 会话 → { at, cid }：正在跑一轮
@@ -103,7 +103,7 @@ const SENT_KEY = new Map();  // 会话 → Set(自己发出去的 message_id)：
 export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；真发由 send 去做）
 /** 测试用：把模块里的会话状态清干净 */
 export function resetQQ() {
-  STATE.qq = { modes: {}, sessions: {} };
+  STATE.qq = { modes: {}, sessions: {}, interject: {}, lastMine: {} };
   BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); REPLIES.length = 0;
   FACES_AT = 0; FACES_JOB = null;
   REPLAY.clear(); LAST_SWEEP = 0;
@@ -224,11 +224,15 @@ function connect(cfg) {
         else if (f.opcode === 0x9) { try { socket.write(encodeFrame(f.payload, 0xa)); } catch {} }
       }
     });
+    // NapCat 每 30 秒发一次心跳；90 秒什么都没收到就当断了（手机换网、热点断了时 TCP 不一定报错，会一直挂着）
+    socket.setTimeout(90000, () => { say("90 秒没动静，断开重连"); drop(cfg, socket); });
     socket.on("error", (e) => { say("连接出错：" + hide(e.message)); drop(cfg, socket); });
     socket.on("close", () => drop(cfg, socket));
   });
   req.on("response", (res) => { res.resume(); again(`HTTP ${res.statusCode}`); });
   req.on("error", (e) => again(e.message));
+  // 握手卡住不回（11-06 真机：网关重启时手机网络还没就绪，请求挂着既不报错也不超时，再也没重连）
+  req.setTimeout(15000, () => req.destroy(new Error("握手超时")));
   req.end();
 }
 function drop(cfg, socket) {
@@ -370,7 +374,7 @@ function onOneBot(cfg, raw) {
 
 /** 一条事件（消息 / 拍一拍）：整理了再决定接不接 */
 export async function handleEvent(cfg, ev) {
-  if (ev.post_type === "notice" && ev.notice_type === "poke") {
+  if (ev.post_type === "notice" && (ev.notice_type === "poke" || (ev.notice_type === "notify" && ev.sub_type === "poke"))) {
     const line = pokeLine(ev, cfg.bot);
     // 拍的是她（或在私聊里）：当成叫她；@ 自己是用来说「这句是冲她来的」，原话在 line 里
     const toMe = String(ev.target_id) === String(cfg.bot) || ev.group_id == null;
@@ -401,13 +405,20 @@ export async function handleEvent(cfg, ev) {
   let pending = "";
   if (isOwner) {
     if (STATE.qq.away) { STATE.qq.away = false; saveState(); }
-    if (/不用了|都不做/.test(p.text) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
+    if (/^(不用了|都不做|都不用)[。！!.]*$/.test(p.text.replace(/\s+/g, "")) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
     pending = pendingNote();
   }
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
   const bare = p.text.replace(/\s+/g, "");
   const cmd = isOwner && [...WORK_ON, ...WORK_OFF, ...SELF_ON, ...CLEAN_ON].includes(bare);
-  if (!cmd && !addressed(ev, cfg)) return historyPush(ev, line);
+  if (!cmd && !addressed(ev, cfg)) {
+    historyPush(ev, line);
+    // 群里接本人、没人叫她：先过筛、再掷骰子、再问一次便宜档（能不能插一句）。不挡事件处理
+    if (ev.message_type === "group" && modeOf(convKey(ev), cfg) === "self") {
+      maybeInterject(cfg, ev, line).catch((e) => say("主动插话判断出错：" + e.message));
+    }
+    return;
+  }
   // 叫到她了：把没叫她的那些一起递进去（工作模式不掺，和以前一样只递那句话）
   const ctx = modeOf(convKey(ev), cfg) !== "work" ? historyTake(ev) : "";
   handleMessage(cfg, ev, p.text, { line: ctx + line, pending });
@@ -452,7 +463,7 @@ function reply(cfg, ev, text, { split = false } = {}) {
       if (wait) await sleep(wait);
       await signalTyping(cfg, ev);
       const msg = [];
-      if (ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
+      if (i === 0 && ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
       msg.push({ type: "text", data: { text: c } });
       const ok = ev.message_type === "group"
         ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
@@ -476,10 +487,101 @@ export function modeOf(key, cfg = null) {
 const setMode = (key, mode) => { STATE.qq.modes[key] = mode; saveState(); };
 /** self 那段会话和干净会话分开存：切过来切过去不能把一段 cwd 不对的会话接上去 */
 const selfKey = (key) => key + "#self";
+// ── 主动插话（#134：只对小克本人所在群；数字都在 qq.json 的 interject 里调）──
+export const INTERJECT = {
+  enabled: true, dice: 0.3, cooldownMs: 20 * 60000, afterMineMs: 3 * 60000, dailyMax: 6,
+  nightFrom: 30, nightTo: 480,          // 0:30–8:00 不插（一天里的分钟数）
+  keywords: ["代码", "SCP", "词源", "游戏", "剧情", "老手艺", "修复", "猫"],
+  mention: ["AI", "人工智能", "机器人", "XK"],
+};
+function interjectOf(cfg) {
+  const j = cfg?.interject && typeof cfg.interject === "object" ? cfg.interject : {};
+  const num = (k) => (Number.isFinite(Number(j[k])) ? Number(j[k]) : INTERJECT[k]);
+  return {
+    enabled: j.enabled !== false,
+    dice: Math.min(1, Math.max(0, num("dice"))),
+    cooldownMs: Math.max(0, num("cooldownMs")),
+    afterMineMs: Math.max(0, num("afterMineMs")),
+    dailyMax: Math.max(0, Math.floor(num("dailyMax"))),
+    nightFrom: Math.max(0, Math.min(1439, num("nightFrom"))),
+    nightTo: Math.max(0, Math.min(1439, num("nightTo"))),
+    keywords: Array.isArray(j.keywords) ? j.keywords.map(String).filter(Boolean) : INTERJECT.keywords,
+    mention: Array.isArray(j.mention) ? j.mention.map(String).filter(Boolean) : INTERJECT.mention,
+  };
+}
+STATE.qq.interject ||= {};   // 群号 → { at, day, count }：上次插的时间、当天插了几次
+STATE.qq.lastMine ||= {};    // 群号 → 她自己上次说话的时间
+const dayOf = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+/** 时段、冷却、每日上限：能插返回 null，不能插返回原因（测试直接调） */
+export function interjectBlock(cfg, gid, now = Date.now(), st = STATE.qq) {
+  const c = interjectOf(cfg);
+  if (!c.enabled) return "关着";
+  const t = new Date(now), mins = t.getHours() * 60 + t.getMinutes();
+  const night = c.nightFrom > c.nightTo ? (mins >= c.nightFrom || mins < c.nightTo) : (mins >= c.nightFrom && mins < c.nightTo);
+  if (night) return "夜里不插";
+  if (now - (st.lastMine?.[gid] || 0) < c.afterMineMs) return "她刚说完话";
+  const rec = st.interject?.[gid];
+  if (rec) {
+    if (now - rec.at < c.cooldownMs) return "冷却中";
+    if (rec.day === dayOf(now) && rec.count >= c.dailyMax) return "今天到上限了";
+  }
+  return null;
+}
+/** 想问的话：最近 15 条群消息 + 一句只答是/否 */
+async function askInterject(cfg, ev, now) {
+  STATE.qq.interject ||= {};
+  const lines = (HISTORY.get(String(ev.group_id)) || []).slice(-15).join("\n");
+  const r = await ASK.claude(`最近的群消息：\n${lines}\n\n你是 XK-01，这里插一句话合适吗，只答是或否。`, roleById("deepseek"), "你只回答「是」或「否」，不要解释。");
+  if (r.error) throw new Error(r.error);
+  const yes = /^\s*(是|yes)/i.test(String(r.text || "").trim());
+  if (!yes) return false;
+  const gid = String(ev.group_id);
+  const rec = STATE.qq.interject[gid];
+  const day = dayOf(now);
+  STATE.qq.interject[gid] = { at: now, day, count: rec?.day === day ? rec.count + 1 : 1 };
+  saveState();
+  return true;
+}
+/** 没人叫她的一条群消息：关键词 / 提问没人接 / 提到她（没 @ 没点名）→ 掷骰子 → 便宜档拍板 */
+export async function maybeInterject(cfg, ev, line, now = Date.now(), rnd = Math.random) {
+  const c = interjectOf(cfg);
+  if (!c.enabled) return false;
+  const gid = String(ev.group_id);
+  if (interjectBlock(cfg, gid, now)) return false;
+  const text = String(parseSegments(ev.message, cfg.bot).text || "");
+  const hitKeyword = c.keywords.some((k) => text.includes(k));
+  const hitMention = c.mention.some((k) => text.toUpperCase().includes(k.toUpperCase()));
+  // 提问没人接：这条像问题，已经过了 2 分钟，中间没人说话
+  const ASK_RE = /[?？]|吗|怎么|为什么|为啥|谁|哪里|哪儿|什么/;
+  const quiet = QUIET.get(gid);
+  const hitQuiet = !!(quiet && now - quiet.at >= 120000);
+  QUIET.delete(gid);
+  if (ASK_RE.test(text)) QUIET.set(gid, { at: now });
+  if (!hitKeyword && !hitMention && !hitQuiet) return false;
+  if (rnd() >= c.dice) return false;
+  if (!(await askInterject(cfg, ev, now))) return false;
+  const head = "（没人叫你，你自己决定插一句：要插就用 send_message 发，这一轮最后的文字不会发出去；不想插就什么都不发）";
+  // 只读一份最近的消息当上下文，不清空：下一条叫到她时，攒的还是从上次叫到之后算起
+  const hist = (HISTORY.get(String(ev.group_id)) || []).slice(0, -1);
+  const ctx = hist.length ? "[最近群里的消息]\n" + hist.join("\n") + "\n[/最近群里的消息]\n" : "";
+  deliver(cfg, ev, convKey(ev), "self", head + "\n" + text, head + "\n" + ctx + line, [ev], "", { interject: true });
+  return true;
+}
+const QUIET = new Map();   // 群号 → { at }：上一条像问题的消息，两分钟没人接才算候选
+
 /** 叫她了吗：@、引用、点名；self 群里主人的话（和 App 里一个分量）不用叫 */
 function addressed(ev, cfg) {
   if (shouldAnswer(ev, cfg)) return true;
-  return ev.message_type === "group" && modeOf(convKey(ev), cfg) === "self" && String(ev.user_id) === String(cfg.owner);
+  // 主人和群友一样，@、引用、点名才接（主人 11-06 定：他在群里和别人聊天时不插进来）。
+  // 例外：她刚在这个群请主人点头（ask_owner，主人在群），主人接下来那句不用叫她也算，十分钟内、用一次
+  if (ev.message_type !== "group" || String(ev.user_id) !== String(cfg.owner)) return false;
+  const gid = String(ev.group_id), at = STATE.qq.awaitOwner?.[gid];
+  return !!at && Date.now() - at <= 10 * 60000;
+}
+/** 主人那句点头递进去了：等他点头的标记用掉（handleEvent 和 handleMessage 都会问 addressed，只能在这里清） */
+function useAwait(ev) {
+  const gid = String(ev.group_id ?? "");
+  if (STATE.qq.awaitOwner?.[gid]) { delete STATE.qq.awaitOwner[gid]; saveState(); }
 }
 
 /** 收一条消息（测试也直接喂这个）。extra.line：整理好的一行（带号码和昵称），聊天模式用 */
@@ -493,12 +595,13 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   if (owner && WORK_ON.includes(bare)) { setMode(key, "work"); return reply(cfg, ev, MODE_TEXT.work); }
   if (owner && WORK_OFF.includes(bare)) { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
   if (!addressed(ev, cfg)) return;
+  if (owner && ev.message_type === "group") useAwait(ev);
   const kind = modeOf(key, cfg);
   if (kind === "work" && !owner) { say("工作模式：不是主人的消息，不递给两边"); return; }
   deliver(cfg, ev, key, kind, text, extra.line, null, extra.pending || "");
 }
 
-function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "") {
+function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "", opts = {}) {
   const b = BUSY.get(key);
   if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line, pending: pendingNote }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
   if (b) BUSY.delete(key);   // 记录里已经没有那一轮了（收尾事件丢了）：按实际放开
@@ -509,7 +612,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     sid = roleSid("xiaoke");
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
-  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text };
+  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject };
   if (kind === "self") {
     // 主人和群友的话混在一轮里：按最严的算，只要有一条不是主人发的就限权
     const evs = all?.length ? all : [ev];
@@ -530,7 +633,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       });
       RUNSQQ.set(item.id, r);
       writeRunCtx(item.id, r);
-      markRun("xiaoke", item.id, { channel: "qq-group", sessionId: item.sessionId || null });
+      markRun("xiaoke", item.id, { channel: "qq-group", sessionId: item.sessionId || null, kind: "self" });
     } catch (e) {
       r.done = true; RUNSQQ.delete(cid); BUSY.delete(key);
       say("这一轮没起来：" + e.message);
@@ -556,6 +659,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       item = enqueue({
         message: line || incomingLine(ev, text), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
+        // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
+        provider: roleById("xiaoke").provider,
         // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
         allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
         clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfig() },
@@ -901,6 +1006,30 @@ async function runTool(req, ctx, r) {
         : "";
       return { sent: n, messageIds: ids, note: [note, tail].filter(Boolean).join("；") };
     }
+    case "send_file": {
+      // 只能发发件箱里的：群友那一轮就算调得到，也碰不到手机上别的文件
+      const raw = String(a.path ?? "").trim();
+      if (!raw) throw new Error("path 不能为空：写发件箱里的文件名或相对路径");
+      const box = path.join(roleDir("xiaoke"), "qq-out");
+      let real;
+      try { real = fs.realpathSync(box); } catch { throw new Error("发件箱还没建（roles/xiaoke/qq-out/）"); }
+      const want = path.isAbsolute(raw) ? raw : path.join(box, raw);
+      let file;
+      try { file = fs.realpathSync(want); } catch { throw new Error("发件箱里没有这个文件：" + sanitizeUserText(raw)); }
+      const rel = path.relative(real, file);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("只能发发件箱里的文件");
+      try { if (fs.lstatSync(want).isSymbolicLink()) throw new Error("不认软链接：把文件本身放进发件箱"); } catch (e) { if (e.code !== "ENOENT") throw e; }
+      const st = fs.statSync(file);
+      if (!st.isFile()) throw new Error("这不是一个文件");
+      if (st.size > 20 * 1024 * 1024) throw new Error("文件超过 20MB，发不了");
+      const name = oneLine(a.name, 200) || path.basename(file);
+      // NapCat 在主人电脑上，读不到手机的路径：照偷图那次传 base64://（真机要核 upload_*_file 收不收）
+      const pdf = "base64://" + fs.readFileSync(file).toString("base64");
+      if (ctx.type === "group") await act("upload_group_file", { group_id: ctx.group_id, file: pdf, name }, 120000);
+      else await act("upload_private_file", { user_id: ctx.user_id, file: pdf, name }, 120000);
+      if (r) r.usedSend = true;
+      return { sent: true, name, text: "发出去了：" + name };
+    }
     case "send_poke": {
       const p = pokeTarget(ctx, a.targetUserId);
       if (p.error) throw new Error(p.error);
@@ -1030,7 +1159,8 @@ async function runTool(req, ctx, r) {
       if (!ctx.restricted) throw new Error("这一轮不用问主人，直接做");
       // 主人在群里：不用私聊、不用报审，在群里说一句请他点头就行
       if (!STATE.qq.away) {
-        return { pending: false, text: "主管在群里，不用私聊报审。在群里说一句「这个得主管点头」，等主管回话；别自己先做。" };
+        if (ctx.group_id) { STATE.qq.awaitOwner ||= {}; STATE.qq.awaitOwner[String(ctx.group_id)] = Date.now(); saveState(); }
+        return { pending: false, text: "主管在群里，不用私聊报审。在群里说一句请主管点头，等主管回话（他下一句不用叫你也会递给你）；别自己先做。" };
       }
       const request = oneLine(a.request, 500);
       if (!request) throw new Error("request 不能为空：写清对方要你做什么");
@@ -1276,7 +1406,8 @@ END_HOOKS.push((run, f = {}) => {
     else reply(r.cfg, r.ev, said || "（这次没说出话）");
   } else if (r.kind === "self") {
     // 群里接本人：自己发过了就不再另发；没说话只记日志
-    if (!r.usedSend && said) reply(r.cfg, r.ev, said, { split: true });
+    if (!r.usedSend && said && !r.interject) reply(r.cfg, r.ev, said, { split: true });
+    if (r.usedSend || (said && !r.interject)) { STATE.qq.lastMine ||= {}; STATE.qq.lastMine[r.key.slice(2)] = Date.now(); saveState(); }
     else if (!r.usedSend && (f.isError || f.failed)) say("群里这一轮没成，没回话（" + (f.error || "出错") + "）");
     // 主人批过的那件：办完/没办成都私聊回一句
     if (r.approval) {
