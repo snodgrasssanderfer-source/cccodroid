@@ -14,6 +14,11 @@ import { RUNS } from "./runs.mjs";
 import { STATE, projectOf, saveState } from "./xk-core.mjs";
 import { roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
+// 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
+import {
+  normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
+  mergeStickerLibrary, applyStickerNote, markStickerUsed, sanitizeUserText,
+} from "./xk-qq-port.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,7 +42,8 @@ export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: {
 // MCP 和网关不在一个进程里：借文件来回（和留言板、群一个路子）。MCP 写 req/，网关做完把结果写 res/
 export const RPC_DIR = path.join(CLEAN_DIR, ".rpc");
 const REQ_DIR = path.join(RPC_DIR, "req"), RES_DIR = path.join(RPC_DIR, "res"), RUN_DIR = path.join(RPC_DIR, "runs"), TMP_DIR = path.join(RPC_DIR, "tmp");
-export const STICKER_DIR = path.join(CLEAN_DIR, "stickers");
+// 表情：QQ 收藏表情是源（fetch_custom_face_detail / add_custom_face）；本地只留备注、笔记、标签、用过几次
+export const STICKER_FILE = path.join(CLEAN_DIR, "stickers.json");
 export const MEMORY_FILE = path.join(CLEAN_DIR, "memory.json");
 
 const RECONNECT_MAX = 30000;
@@ -52,12 +58,15 @@ const RUNSQQ = new Map();    // run 号 → { key, cfg, ev, kind, at, head }
 const SENT = new Set();      // 自己发出去的 message_id：群里「引用了机器人的话」要认它
 const WAITERS = new Map();   // 发出去的 echo → { action, resolve, reject, timer }
 const NICK = new Map();      // QQ 号 → 昵称（从收到的消息里记，拍一拍要用）
-const MSGS = new Map();      // message_id → { nick, text }：引用要还原成「谁说了什么」
+const MSGS = new Map();      // message_id → { key, nick, text, media }：引用、看图、收藏都要还原
+const MEMBERS = new Map();   // 会话 → Map(QQ 号 → 昵称)：@ 和拍一拍只认这个会话里出现过的人
+const SENT_KEY = new Map();  // 会话 → Set(自己发出去的 message_id)：引用自己的话也算数
 export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；真发由 send 去做）
 /** 测试用：把模块里的会话状态清干净 */
 export function resetQQ() {
   STATE.qq = { modes: {}, sessions: {} };
-  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); HISTORY.clear(); REPLIES.length = 0;
+  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); REPLIES.length = 0;
+  FACES_AT = 0; FACES_JOB = null;
   REPLAY.clear(); LAST_SWEEP = 0;
 }
 function remember(id, o, map, cap) {
@@ -324,7 +333,15 @@ export async function handleEvent(cfg, ev) {
   if (!p.text) return;
   const nick = nickOf(ev);
   NICK.set(String(ev.user_id), nick);
-  if (ev.message_id) remember(ev.message_id, { nick, text: p.text }, MSGS, 500);
+  const key = convKey(ev);
+  // 这个会话里出现过谁：@ 和拍一拍只认这里（原版护栏；号码只从事件里来）
+  const members = MEMBERS.get(key) || new Map();
+  members.set(String(ev.user_id), nick);
+  while (members.size > 200) members.delete(members.keys().next().value);
+  MEMBERS.set(key, members);
+  // 消息号、正文、图都记一份：引用、看图、收藏都靠它
+  const media = imageSegs(ev.message).slice(0, 4).map((s, i) => ({ kind: "image", index: i, url: s.url, file: s.file }));
+  if (ev.message_id) remember(ev.message_id, { key, nick, text: p.text, media }, MSGS, 500);
   const quote = p.reply ? await quoteOf(cfg, p.reply) : null;
   const line = incomingLine(ev, p.text, quote);
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
@@ -487,155 +504,285 @@ async function fetchImageOf(seg) {
   throw new Error("拿不到这张图");
 }
 
-const STICKERS = path.join(STICKER_DIR, "index.json");
-const loadStickers = () => readJson(STICKERS, { items: [] }) || { items: [] };
-const nextStickerId = (ix) => "s" + (1 + ix.items.reduce((m, i) => Math.max(m, Number(String(i.id).replace(/^s/, "")) || 0), 0));
-function saveSticker(ix, id, buf) {
-  fs.mkdirSync(STICKER_DIR, { recursive: true });
-  const ext = mimeOf(buf) === "image/png" ? "png" : mimeOf(buf) === "image/gif" ? "gif" : mimeOf(buf) === "image/webp" ? "webp" : "jpg";
-  const file = path.join(STICKER_DIR, id + "." + ext);
-  fs.writeFileSync(file, buf);
-  return file;
-}
-/** 刷新 QQ 收藏表情（fetch_custom_face）；NapCat 版本不同返回的形状不同，认得出的都收下 */
-async function refreshFaces(ix) {
-  let list = [];
+const loadStickers = () => {
   try {
-    const d = await act("fetch_custom_face", { count: 30 }, 8000);
-    list = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : Array.isArray(d?.urls) ? d.urls : []);
-  } catch { return; }
-  for (const x of list) {
-    const url = typeof x === "string" ? x : (x?.url || x?.file || "");
-    if (!/^https?:\/\//.test(url)) continue;
-    let it = ix.items.find((i) => i.url === url);
-    if (!it) { it = { id: nextStickerId(ix), url, desc: "", note: "", tags: [], uses: 0, addedAt: Date.now(), source: "qq" }; ix.items.push(it); }
-    if (typeof x === "object" && x.desc && !it.desc) it.desc = String(x.desc).slice(0, 80);
-  }
+    const j = JSON.parse(fs.readFileSync(STICKER_FILE, "utf8"));
+    return Array.isArray(j) ? j.map(normalizeStickerEntry).filter(Boolean) : [];
+  } catch { return []; }
+};
+/** 刷新 QQ 收藏表情（fetch_custom_face_detail）。形状认数组、{data:[]}、{emojiInfoList:[]}；
+ *  拉不到就继续用本地那份，不把备注清掉 */
+let FACES_AT = 0, FACES_JOB = null;
+async function syncFaces(force = false) {
+  if (!force && FACES_AT && Date.now() - FACES_AT < 60000) return loadStickers();
+  if (FACES_JOB) { await FACES_JOB.catch(() => {}); if (!force) return loadStickers(); }
+  const job = (async () => {
+    const d = await act("fetch_custom_face_detail", { count: 500 }, 30000);
+    const list = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : (Array.isArray(d?.emojiInfoList) ? d.emojiInfoList : null));
+    if (!list) throw new Error("fetch_custom_face_detail 返回的不是数组");
+    writeJsonAtomic(STICKER_FILE, mergeStickerLibrary(loadStickers(), list));
+    FACES_AT = Date.now();
+  })();
+  FACES_JOB = job;
+  try { await job; } catch (e) { say("拉 QQ 收藏表情没成：" + e.message); } finally { if (FACES_JOB === job) FACES_JOB = null; }
+  return loadStickers();
 }
-function stickerText(it) {
-  const bits = [it.id];
-  if (it.desc) bits.push("备注：" + it.desc);
-  if (it.note) bits.push("笔记：" + it.note);
-  if (it.tags?.length) bits.push("标签：" + it.tags.join("、"));
-  bits.push("用过 " + (it.uses || 0) + " 次");
-  return bits.join("  ");
+/** 找不到表情时把有效的列出来，模型同一轮就能改对 */
+function stickerHint(ref) {
+  const items = formatStickerList(loadStickers(), "", 12).stickers;
+  if (!items.length) return `你给的是「${sanitizeUserText(ref)}」，表情库现在是空的：可以用 collect_sticker 先收几张。`;
+  return `你给的是「${sanitizeUserText(ref)}」。有效 id 例如：${items.map((st) => `${st.id}（${st.localNote || st.desc || "无备注"}）`).join("；")}；完整列表用 list_stickers 查。`;
+}
+/** 这个会话里出现过的人（原版护栏）：@、拍一拍只认这里 */
+function hasParticipant(ctx, uid) {
+  if (ctx.type === "private") return String(uid) === String(ctx.user_id);
+  return Boolean(MEMBERS.get(ctx.key)?.has(String(uid)));
+}
+function memberHint(ctx) {
+  const list = [...(MEMBERS.get(ctx.key) || new Map())].slice(-8);
+  if (!list.length) return "当前没有可用的成员列表，请先等群友发言后再试";
+  return "请从当前会话成员里选一个 QQ 号填进去：\n" + list.map(([uid, nick]) => `- ${sanitizeUserText(nick)}：${uid}`).join("\n");
+}
+function midInConv(ctx, id) {
+  const hit = MSGS.get(String(id));
+  if (hit && hit.key === ctx.key) return true;
+  return Boolean(SENT_KEY.get(ctx.key)?.has(String(id)));
+}
+function midHint(ctx) {
+  const ids = [...MSGS].filter(([, m]) => m.key === ctx.key).map(([id]) => id).slice(-8);
+  return ids.length ? `最近的消息号：${ids.join("、")}` : "当前没有可用的消息号，等有新消息再试";
+}
+/** send_message 的降级版目标解析：正文永远优先，非法引用/@ 只丢掉目标，不丢整条回复 */
+function resolveMessageTarget(ctx, { replyToMessageId, atUserId } = {}) {
+  const notes = [];
+  let reply = normalizeMid(replyToMessageId);
+  let at = normalizeMid(atUserId);
+  if (reply && at) { at = ""; notes.push("同时给了引用和 @，已保留引用、忽略 @"); }
+  if (reply && !midInConv(ctx, reply)) { reply = ""; notes.push("引用目标无效，已按普通消息发送"); }
+  if (at) {
+    if (ctx.type !== "group") { at = ""; notes.push("私聊不需要 @，已忽略"); }
+    else if (!/^\d{1,15}$/.test(at)) { at = ""; notes.push("@ 目标不是 QQ 号，已忽略"); }
+    else if (!hasParticipant(ctx, at)) {
+      const looksLikeMid = midInConv(ctx, at);
+      at = "";
+      notes.push(looksLikeMid ? "@ 目标像消息 id，已忽略；如需引用请用 replyToMessageId" : "@ 目标不在当前会话成员里，已忽略");
+    }
+  }
+  return { replyToMessageId: reply, atUserId: at, note: notes.join("；") };
+}
+/** 严格版（send_sticker 用）：引用和 @ 只能选一个，目标必须真的在这个会话里 */
+function messageTargetError(ctx, { replyToMessageId, atUserId } = {}) {
+  const reply = normalizeMid(replyToMessageId), at = normalizeMid(atUserId);
+  if (reply && at) return "replyToMessageId 和 atUserId 只能选择一个";
+  if (reply) {
+    if (!/^-?\d{1,15}$/.test(reply)) return `replyToMessageId 必须是聊天记录中的消息 id。${midHint(ctx)}`;
+    if (!midInConv(ctx, reply)) return `当前会话找不到要引用的消息 ${reply}。${midHint(ctx)}`;
+  }
+  if (at) {
+    if (ctx.type !== "group") return "私聊不需要 atUserId";
+    if (!/^\d{1,15}$/.test(at)) return `atUserId 必须是当前群成员的数字 QQ 号。${memberHint(ctx)}`;
+    if (!hasParticipant(ctx, at)) {
+      return `${at} 不是当前群中已出现的成员 QQ 号${midInConv(ctx, at) ? "，它是消息 id；如需引用请改用 replyToMessageId" : ""}。${memberHint(ctx)}`;
+    }
+  }
+  return "";
 }
 
 // ── 工具：网关这边做（要 NapCat、要真实文件） ──
-async function sendOne(ctx, m) {
-  const text = oneLine(m.text, 1500);
-  if (!text) return null;
+function segsOf(ctx, m, tail) {
   const segs = [];
   if (ctx.type === "group" && m.replyToMessageId) segs.push({ type: "reply", data: { id: String(m.replyToMessageId) } });
   if (ctx.type === "group" && m.atUserId) segs.push({ type: "at", data: { qq: String(m.atUserId) } });
-  segs.push({ type: "text", data: { text } });
-  const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
-    ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, 20000);
-  return d?.message_id ?? null;
+  segs.push(...tail);
+  return segs;
 }
-function stickerBytes(it) {
-  if (it.file && fs.existsSync(it.file)) return fs.readFileSync(it.file);
-  if (it.url) return download(it.url);
-  throw new Error("这张表情没有图");
+async function sendSegs(ctx, segs, timeoutMs = 20000) {
+  const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
+    ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, timeoutMs);
+  const id = d?.message_id ?? null;
+  if (id != null) {
+    const set = SENT_KEY.get(ctx.key) || new Set();
+    set.add(String(id)); while (set.size > 200) set.delete(set.values().next().value);
+    SENT_KEY.set(ctx.key, set);
+  }
+  return id;
+}
+async function sendOne(ctx, m) {
+  const text = oneLine(m.text, 1500);
+  if (!text) return null;
+  return sendSegs(ctx, segsOf(ctx, m, [{ type: "text", data: { text } }]));
+}
+function extOf(buf) {
+  const m = mimeOf(buf);
+  return m === "image/png" ? "png" : m === "image/gif" ? "gif" : m === "image/webp" ? "webp" : "jpg";
+}
+function tmpImage(buf, tag = "img") {
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  const f = path.join(TMP_DIR, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}-${tag}.${extOf(buf)}`);
+  fs.writeFileSync(f, buf);
+  return f;
+}
+/** 拍一拍的目标：数字 QQ 号优先；名字只在唯一对上一个成员时认（原版的做法） */
+function pokeTarget(ctx, raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) {
+    if (ctx.type === "group") return { error: `群聊拍一拍必须传 targetUserId（数字 QQ 号）。${memberHint(ctx)}` };
+    return { target: String(ctx.user_id) };
+  }
+  const name = text.replace(/^@+/, "");
+  const id = normalizeMid(name);
+  if (ctx.type === "private") {
+    if (!id || id !== String(ctx.user_id)) return { error: "私聊只能拍当前聊天对象，省略 targetUserId 即可" };
+    return { target: id };
+  }
+  if (/^\d{1,15}$/.test(id)) {
+    if (!hasParticipant(ctx, id)) {
+      return { error: `${id} 不是当前群中已出现的成员 QQ 号${midInConv(ctx, id) ? "，它是消息 id" : ""}。${memberHint(ctx)}` };
+    }
+    return { target: id };
+  }
+  if (/^\d+$/.test(name)) {
+    return { error: `targetUserId 必须是 1-15 位数字 QQ 号（收到：${JSON.stringify(raw)}）。${memberHint(ctx)}` };
+  }
+  const hits = [...(MEMBERS.get(ctx.key) || new Map())].filter(([, n]) => n === name || n.includes(name));
+  if (hits.length === 1) return { target: hits[0][0] };
+  if (hits.length > 1) {
+    return { error: `「${sanitizeUserText(name)}」对上了不止一个人：${hits.map(([u, n]) => `${sanitizeUserText(n)}（${u}）`).join("、")}。${memberHint(ctx)}` };
+  }
+  return { error: `找不到「${sanitizeUserText(name)}」。${memberHint(ctx)}` };
 }
 
 async function runTool(req, ctx, r) {
   const a = req.args || {};
-  const args = Array.isArray(a.messages) ? a.messages : null;
   switch (req.tool) {
     case "send_message": {
-      const list = (args || []).slice(0, 10);
-      if (!list.length) throw new Error("messages 要是数组，至少一条");
+      // 照原版：字符串 / 字符串数组 / 对象数组都认；正文永远优先，非法目标只丢掉目标
+      const list = normalizeMessageList(a.messages).slice(0, 10);
+      if (!list.length) throw new Error("消息内容为空");
       if (r) r.usedSend = true;
+      const base = resolveMessageTarget(ctx, a);
       let n = 0;
+      const ids = [], failed = [], notes = [];
       for (let i = 0; i < list.length; i++) {
         if (i) await sleep(gapMs());
-        const m = typeof list[i] === "string" ? { text: list[i] } : (list[i] || {});
-        if (await sendOne(ctx, m)) n++;
+        const m = list[i];
+        const target = (m.atUserId || m.replyToMessageId) ? resolveMessageTarget(ctx, m) : base;
+        if (target.note) notes.push(target.note);
+        try {
+          const id = await sendOne(ctx, { text: m.text, ...target });
+          if (id != null) { n++; ids.push(id); }
+        } catch (e) {
+          failed.push(`第${i + 1}条「${String(m.text).slice(0, 15)}」：${e.message}`);
+        }
       }
-      return { sent: n };
+      const note = [...new Set(notes)].join("；");
+      const tail = failed.length
+        ? `另有 ${failed.length} 条发送失败：${failed.join("；")}——已成功的不需要重发，只补发失败的那几条或减少条数`
+        : "";
+      return { sent: n, messageIds: ids, note: [note, tail].filter(Boolean).join("；") };
     }
     case "send_poke": {
-      const target = a.targetUserId ? String(a.targetUserId) : String(ctx.user_id);
-      if (ctx.type === "group") await act("group_poke", { group_id: ctx.group_id, user_id: target }, 15000);
-      else await act("friend_poke", { user_id: target }, 15000);
-      return { ok: true };
+      const p = pokeTarget(ctx, a.targetUserId);
+      if (p.error) throw new Error(p.error);
+      if (ctx.type === "group") await act("group_poke", { group_id: ctx.group_id, user_id: p.target }, 15000);
+      else await act("friend_poke", { user_id: p.target }, 15000);
+      return { poked: true, ...(p.target ? { targetUserId: p.target } : {}), text: "拍了一下。" };
     }
     case "get_message_images": {
-      const id = a.messageId ?? ctx.message_id;
-      if (!id) throw new Error("没有消息号");
+      const id = normalizeMid(a.messageId) || String(ctx.message_id ?? "");
+      if (!id) throw new Error("要传 messageId（聊天记录里那条消息的号）");
+      const known = MSGS.get(String(id));
+      if (!known || known.key !== ctx.key) throw new Error(`当前会话找不到消息 ${id}。${midHint(ctx)}`);
       const d = await act("get_msg", { message_id: Number(id) || id }, 15000);
       const segs = imageSegs(d?.message).slice(0, 4);
-      if (!segs.length) return { files: [] };
-      fs.mkdirSync(TMP_DIR, { recursive: true });
-      const files = [];
-      for (let i = 0; i < segs.length; i++) {
+      if (!segs.length) return { files: [], text: `消息 ${id} 没有可查看的图片` };
+      const files = [], failed = [];
+      for (const seg of segs) {
         try {
-          const buf = await fetchImageOf(segs[i]);
-          const f = path.join(TMP_DIR, `${Date.now().toString(36)}-${i}.img`);
-          fs.writeFileSync(f, buf);
-          files.push({ path: f, mime: mimeOf(buf), bytes: buf.length });
-        } catch (e) { say("一张图没拿到：" + e.message); }
+          const buf = await fetchImageOf(seg);
+          files.push({ path: tmpImage(buf, "see"), mime: mimeOf(buf), bytes: buf.length });
+        } catch (e) { failed.push(e.message); say("一张图没拿到：" + e.message); }
       }
-      return { files };
+      if (!files.length) throw new Error(`图片获取失败：${failed.join("；")}`);
+      return {
+        files,
+        text: `消息 ${id} 的图片内容${failed.length ? `（另有 ${failed.length} 张获取失败）` : ""}。先判断它想表达的情绪/态度：无语、嘲讽、卖萌、赞同、挑衅、摆烂、委屈…再针对态度回话，不要复述画面。`,
+      };
     }
     case "list_stickers": {
-      const ix = loadStickers();
-      await refreshFaces(ix);
-      writeJsonAtomic(STICKERS, ix);
-      if (!ix.items.length) return { text: "表情库还是空的。看到喜欢的图可以用 collect_sticker 收进来。" };
-      return { text: ix.items.slice(0, 40).map(stickerText).join("\n") };
+      const out = formatStickerList(await syncFaces(false), String(a.query ?? ""), a.limit);
+      return { ...out, text: JSON.stringify(out) };
     }
     case "get_sticker_image": {
-      const ix = loadStickers();
-      const it = ix.items.find((x) => x.id === String(a.id));
-      if (!it) throw new Error("没有这张表情：" + a.id);
-      const buf = await stickerBytes(it);
-      fs.mkdirSync(TMP_DIR, { recursive: true });
-      const f = path.join(TMP_DIR, `${Date.now().toString(36)}-${it.id}.img`);
-      fs.writeFileSync(f, buf);
-      return { file: f, mime: mimeOf(buf) };
+      const it = findSticker(await syncFaces(false), a.stickerId);
+      if (!it) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      if (!it.url) throw new Error("该表情没有图片地址");
+      const buf = await download(it.url);
+      return {
+        file: tmpImage(buf, "sticker"), mime: mimeOf(buf),
+        text: `表情 ${it.id}（你的备注：${sanitizeUserText(it.localNote || it.desc || "无")}）（先判断情绪/态度再回应）：`,
+      };
     }
     case "send_sticker": {
-      const ix = loadStickers();
-      const it = ix.items.find((x) => x.id === String(a.id));
-      if (!it) throw new Error("没有这张表情：" + a.id);
+      let it = findSticker(await syncFaces(false), a.stickerId);
+      if (!it) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      if (!it.url) throw new Error(`表情 ${it.id} 没有可发送的图片地址`);
+      const targetError = messageTargetError(ctx, a);
+      if (targetError) throw new Error(targetError);
+      let buf;
+      try { buf = await download(it.url); } catch (e) {
+        throw new Error(`这张表情的图片拿不到（${e.message}），换一张，或用 list_stickers 看看别的。`);
+      }
       if (r) r.usedSend = true;
-      const buf = await stickerBytes(it);
-      const segs = [];
-      if (ctx.type === "group" && a.replyToMessageId) segs.push({ type: "reply", data: { id: String(a.replyToMessageId) } });
-      if (ctx.type === "group" && a.atUserId) segs.push({ type: "at", data: { qq: String(a.atUserId) } });
-      segs.push({ type: "image", data: { file: "base64://" + buf.toString("base64") } });
-      await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
-        ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, 30000);
-      it.uses = (it.uses || 0) + 1;
-      writeJsonAtomic(STICKERS, ix);
-      return { ok: true };
+      const messageId = await sendSegs(ctx, segsOf(ctx, a, [{ type: "image", data: { file: "base64://" + buf.toString("base64") } }]), 30000);
+      const used = markStickerUsed(loadStickers(), it.id, "");
+      writeJsonAtomic(STICKER_FILE, used.entries);
+      return { sent: true, messageId, id: it.id, text: "表情已发送。" };
     }
     case "sticker_note": {
-      const ix = loadStickers();
-      const it = ix.items.find((x) => x.id === String(a.id));
-      if (!it) throw new Error("没有这张表情：" + a.id);
-      if (typeof a.note === "string") it.note = oneLine(a.note, 300);
-      if (typeof a.desc === "string") it.desc = oneLine(a.desc, 80);
-      if (Array.isArray(a.tags)) it.tags = a.tags.map((t) => oneLine(t, 20)).filter(Boolean).slice(0, 8);
-      writeJsonAtomic(STICKERS, ix);
-      return { text: "记下了：" + stickerText(it) };
+      const p = applyStickerNote(loadStickers(), a.stickerId, { note: a.note, tags: a.tags, usage: a.usage });
+      if (!p.entry) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      writeJsonAtomic(STICKER_FILE, p.entries);
+      return { updated: true, id: p.entry.id, localNote: p.entry.localNote, tags: p.entry.tags, text: "记下了。" };
     }
     case "collect_sticker": {
-      const id = a.messageId ?? ctx.message_id;
-      if (!id) throw new Error("没有消息号");
-      const d = await act("get_msg", { message_id: Number(id) || id }, 15000);
-      const segs = imageSegs(d?.message);
-      const seg = segs[Number(a.imageIndex) || 0];
-      if (!seg) throw new Error("这条消息里没有那张图");
-      const buf = await fetchImageOf(seg);
-      const ix = loadStickers();
-      const nid = nextStickerId(ix);
-      const file = saveSticker(ix, nid, buf);
-      ix.items.push({ id: nid, file, url: /^https?:\/\//.test(seg.url) ? seg.url : "", desc: oneLine(a.desc, 80), note: oneLine(a.note, 300), tags: Array.isArray(a.tags) ? a.tags.map((t) => oneLine(t, 20)).filter(Boolean).slice(0, 8) : [], uses: 0, addedAt: Date.now(), source: "collect" });
-      writeJsonAtomic(STICKERS, ix);
-      return { id: nid, text: "收进表情库了：" + stickerText(ix.items.at(-1)) };
+      const id = normalizeMid(a.messageId) || String(ctx.message_id ?? "");
+      if (!id) throw new Error("要传 messageId（聊天记录里那条消息的号）");
+      const known = MSGS.get(String(id));
+      if (!known || known.key !== ctx.key) throw new Error(`在当前会话找不到消息 ${id}。${midHint(ctx)}`);
+      const seg = (known.media || []).find((m) => m.kind === "image");
+      if (!seg) throw new Error("该消息没有可收藏的图片");
+      let buf;
+      try { buf = await fetchImageOf(seg); } catch (e) { throw new Error(`这张图取不到（${e.message}），没有收藏`); }
+      if (!buf?.length) throw new Error("这张图取不到，没有收藏");
+      // add_custom_face 要本地文件路径：先落一个临时的，进 QQ 收藏后本地不存图
+      fs.mkdirSync(TMP_DIR, { recursive: true });
+      const file = path.join(TMP_DIR, `collect-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.${extOf(buf)}`);
+      fs.writeFileSync(file, buf);
+      let res;
+      try { res = await act("add_custom_face", { file }, 60000); } catch (e) {
+        const msg = String(e.message || e);
+        const maybeFull = /full|limit|上限|超过|超出|500/i.test(msg);
+        throw new Error(`加进 QQ 收藏没成${maybeFull ? "（可能收藏满了）" : ""}：${msg}`);
+      } finally {
+        try { fs.rmSync(file, { force: true }); } catch {}
+      }
+      let emojiId = String(res?.emoji_id || res?.resId || res?.id || res?.data?.emoji_id
+        || (typeof res?.data === "string" || typeof res?.data === "number" ? res.data : "") || "").trim();
+      await syncFaces(true);
+      let list = loadStickers();
+      let hit = emojiId ? findSticker(list, emojiId) : null;
+      if (!hit) {
+        const md5 = crypto.createHash("md5").update(buf).digest("hex").toUpperCase();
+        hit = list.find((e) => e.md5 === md5) || null;
+      }
+      if (!hit) throw new Error("加进 QQ 收藏了，但没认出是哪一张；用 list_stickers 看看");
+      const note = String(a.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+      if (note) {
+        const p = applyStickerNote(list, hit.id, { note });
+        if (p.entry) { writeJsonAtomic(STICKER_FILE, p.entries); hit = p.entry; }
+      }
+      return { collected: true, id: hit.id, note: sanitizeUserText(hit.localNote || ""), kind: "QQ收藏表情", text: `收进 QQ 收藏了：${hit.id}（${sanitizeUserText(hit.desc || "无备注")}）` };
     }
     case "memory_append": {
       const text = oneLine(a.text, 500);
@@ -644,13 +791,14 @@ async function runTool(req, ctx, r) {
       const m = { id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text, at: Date.now() };
       ms.push(m); while (ms.length > 300) ms.shift();
       writeJsonAtomic(MEMORY_FILE, ms);
-      return { text: "记下了（" + m.id + "）：" + text };
+      return { saved: true, id: m.id, text: "记下了（" + m.id + "）：" + text };
     }
     case "memory_query": {
       const q = oneLine(a.query, 100);
       const ms = readJson(MEMORY_FILE, []) || [];
-      const hits = (q ? ms.filter((m) => m.text.includes(q)) : ms).slice(-(Number(a.limit) || 10));
-      return { text: hits.length ? hits.map((m) => `[${m.id}] ${m.text}`).join("\n") : "没有相关的记忆。" };
+      const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
+      const hits = (q ? ms.filter((m) => m.text.includes(q)) : ms).slice(-limit);
+      return { text: hits.length ? hits.map((m) => `[${m.id}] ${m.text}`).join("\n") : "没有相关的记忆；可以换一个更具体的关键词再试。" };
     }
     case "memory_remove": {
       const ms = readJson(MEMORY_FILE, []) || [];

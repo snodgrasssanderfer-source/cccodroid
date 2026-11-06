@@ -12,6 +12,18 @@ Bundled third-party components:
   - Shizuku-API 13.1.5 (MIT) — third_party/shizuku/LICENSE
   - xz-decompress 0.2.3 (MIT) — devkit/vendor/xz-decompress (build-time only)
 
+QQ chat tools adapted from third-party projects:
+  - qq-agent-plus (MIT) — https://github.com/sakurawwwxh/qq-agent-plus (upstream qq-agent)
+    Copyright (c) 2026 Kondius. The QQ tool names, parameters, descriptions and
+    behaviour in gateway/gw/xk-qq.mjs, gateway/gw/xk-qq-mcp.mjs and the pure
+    helpers in gateway/gw/xk-qq-port.mjs are adapted from its
+    src/tools/tools-core.js, src/onebot/stickers.js and src/core/util.js.
+    License text: ThirdPartyLicenses/qq-agent-plus.txt
+  - qq-bridge (PolyForm Noncommercial 1.0.0) — https://github.com/Derpyu520/qq-bridge
+    Copyright 2026 Derpyu520 and qq-bridge contributors. Consulted as a reference
+    only; no source code from it is copied into this repository. If any is copied
+    later, it must live in its own file carrying this notice, and be registered here.
+
 The developer toolkit (devkit) released alongside this project consists of
 unmodified Termux packages (path prefix rewritten in place), each distributed
 under its own license; see devkit.lock.json / SBOM.tsv in each devkit release.

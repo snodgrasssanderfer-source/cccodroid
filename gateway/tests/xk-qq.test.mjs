@@ -12,7 +12,7 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, REPLIES, STICKER_DIR, decodeFrames, drainQQRpc,
+  CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
@@ -26,7 +26,10 @@ const group = (uid, segs) => ({ post_type: "message", message_type: "group", gro
 const queued = [];
 const guard = (q) => { queued.push(q); return false; };
 START_GUARDS.unshift(guard);
-beforeEach(() => { resetQQ(); queued.length = 0; });
+beforeEach(() => {
+  resetQQ(); queued.length = 0;
+  fs.rmSync(STICKER_FILE, { force: true });   // 表情库每条测试都从空开始
+});
 
 /** 这一轮跑完：写一份会话记录，再走一遍结束钩子 */
 function finish(q, said = "收到", f = {}) {
@@ -360,60 +363,146 @@ test("send_message 一次发几条；这一轮自己发过了，最后的文字�
   } finally { stopQQ(); bot.close(); delete process.env.CCAPP_QQ_GAP_MS; }
 });
 
-test("send_poke 拍群里的人", async () => {
+test("拍一拍照原版：群聊必须给号，号码必须是群里出现过的人；私聊只拍对方", async () => {
   const bot = await connectedBot();
   try {
+    // 777 在群里说过话（进入成员表），12345 是触发的人
+    await handleEvent(cfg, group("777", [{ type: "text", data: { text: "路过一下" } }]));
     handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 看我" } }]), "小克 看我");
-    rpcReq("p1", queued[0], "send_poke", { targetUserId: "777" });
+    const q = queued.at(-1);
+    rpcReq("p0", q, "send_poke", {});
     await drainQQRpc();
-    assert.ok(rpcRes("p1").ok);
-    const act = bot.actions.find((a) => a.action === "group_poke");
-    assert.deepEqual(act.params, { group_id: 555, user_id: "777" });
+    assert.match(rpcRes("p0").error, /必须传 targetUserId/, "群聊不给号要报错");
+    rpcReq("p1", q, "send_poke", { targetUserId: "88888" });
+    await drainQQRpc();
+    assert.match(rpcRes("p1").error, /不是当前群中已出现的成员/, "没出现过的人不给拍");
+    rpcReq("p2", q, "send_poke", { targetUserId: "777" });
+    await drainQQRpc();
+    assert.ok(rpcRes("p2").ok, rpcRes("p2").error);
+    assert.deepEqual(bot.actions.find((a) => a.action === "group_poke").params, { group_id: 555, user_id: "777" });
+    // 私聊：不给号就拍对方
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    const pq = queued.at(-1);
+    rpcReq("p3", pq, "send_poke", {});
+    await drainQQRpc();
+    assert.ok(rpcRes("p3").ok, rpcRes("p3").error);
+    assert.deepEqual(bot.actions.find((a) => a.action === "friend_poke").params, { user_id: STRANGER });
   } finally { stopQQ(); bot.close(); }
 });
 
-test("看图、收表情、记笔记、发出去：表情库在 qq-clean 里，不碰 roles", async () => {
+test("send_message 照原版：字符串、字符串数组、对象数组都认；非法的 @ 只丢目标", async () => {
   const bot = await connectedBot();
-  bot.answer.get_msg = () => ({ message: [{ type: "image", data: { url: bot.img } }], sender: { card: "阿三" } });
-  bot.answer.fetch_custom_face = () => ({ data: [] });
   try {
-    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 这图好笑" } }]), "小克 这图好笑");
+    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
     const q = queued[0];
+    rpcReq("a1", q, "send_message", { messages: "一条" });
+    await drainQQRpc();
+    assert.equal(rpcRes("a1").result.sent, 1);
+    rpcReq("a2", q, "send_message", { messages: ["两", "条"] });
+    await drainQQRpc();
+    assert.equal(rpcRes("a2").result.sent, 2);
+    rpcReq("a3", q, "send_message", { messages: [{ text: "对象" }, { text: "数组" }] });
+    await drainQQRpc();
+    assert.equal(rpcRes("a3").result.sent, 2);
+    // @ 一个没在这个群说过话的号：不 @，但消息照发
+    rpcReq("a4", q, "send_message", { messages: "在", atUserId: "424242" });
+    await drainQQRpc();
+    const a4 = rpcRes("a4");
+    assert.ok(a4.ok, a4.error);
+    assert.equal(a4.result.sent, 1);
+    assert.match(a4.result.note, /不在当前会话成员里/);
+    const last = bot.actions.filter((a) => a.action === "send_group_msg").at(-1);
+    assert.ok(!last.params.message.some((s) => s.type === "at"), "没真 @ 出去");
+    // 群里出现过的人可以 @
+    await handleEvent(cfg, group("777", [{ type: "text", data: { text: "大家好" } }]));
+    rpcReq("a5", q, "send_message", { messages: "叫你", atUserId: "777" });
+    await drainQQRpc();
+    assert.ok(rpcRes("a5").ok, rpcRes("a5").error);
+    assert.deepEqual(bot.actions.filter((a) => a.action === "send_group_msg").at(-1).params.message[0], { type: "at", data: { qq: "777" } });
+    // 私聊里给 @：忽略，照发
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    const pq = queued.at(-1);
+    rpcReq("a6", pq, "send_message", { messages: "在", atUserId: "424242" });
+    await drainQQRpc();
+    assert.equal(rpcRes("a6").result.sent, 1);
+    assert.match(rpcRes("a6").result.note, /私聊不需要 @/);
+  } finally { stopQQ(); bot.close(); }
+});
+
+test("QQ 收藏返回 {data:[…]} 也认", async () => {
+  const bot = await connectedBot();
+  bot.answer.fetch_custom_face_detail = () => ({ data: [{ emoji_id: "d1", url: bot.img, desc: "包裹的" }] });
+  try {
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    const q = queued[0];
+    rpcReq("w1", q, "list_stickers", {});
+    await drainQQRpc();
+    const r = rpcRes("w1");
+    assert.ok(r.ok, r.error);
+    assert.equal(JSON.parse(r.result.text).stickers[0].id, "d1");
+  } finally { stopQQ(); bot.close(); }
+});
+
+test("表情：列表走 QQ 收藏，偷图用 add_custom_face，本地只留笔记", async () => {
+  const bot = await connectedBot();
+  const faces = [{ emoji_id: "e1", resId: "e1", url: bot.img, md5: "AAA", desc: "猫猫" }];
+  let addedPath = "";
+  bot.answer.fetch_custom_face_detail = () => faces.slice();
+  bot.answer.add_custom_face = (p) => {
+    addedPath = p.file;
+    assert.ok(fs.existsSync(p.file), "传给 NapCat 的是本地文件路径");
+    faces.push({ emoji_id: "e2", resId: "e2", url: bot.img, md5: "BBB", desc: "新收的" });
+    return { emoji_id: "e2" };
+  };
+  bot.answer.get_msg = () => ({ message: [{ type: "image", data: { url: bot.img } }], sender: { card: "阿三" } });
+  try {
+    const ev = group(STRANGER, [{ type: "at", data: { qq: BOT } }, { type: "text", data: { text: " 这图好笑" } }, { type: "image", data: { url: bot.img } }]);
+    ev.message_id = "gm-image-1";
+    await handleEvent(cfg, ev);
+    const q = queued[0];
+    // 列表：QQ 收藏同步进来（数组形状）
+    rpcReq("l0", q, "list_stickers", {});
+    await drainQQRpc();
+    const l0 = rpcRes("l0");
+    assert.ok(l0.ok, l0.error);
+    const parsed = JSON.parse(l0.result.text);
+    assert.equal(parsed.stickers[0].id, "e1");
+    assert.equal(parsed.stickers[0].desc, "猫猫");
     // 看图：以图返回
-    rpcReq("i1", q, "get_message_images", { messageId: "gm12345" });
+    rpcReq("i1", q, "get_message_images", { messageId: "gm-image-1" });
     await drainQQRpc();
     const im = rpcRes("i1");
     assert.ok(im.ok, im.error);
     assert.equal(im.result.files.length, 1);
     assert.ok(fs.readFileSync(im.result.files[0].path).length > 0);
-    // 收进表情库，带笔记和标签
-    rpcReq("s1", q, "collect_sticker", { messageId: "gm12345", note: "好笑的时候发", tags: ["笑"] });
+    // 偷图：进 QQ 收藏，本地记笔记
+    rpcReq("s1", q, "collect_sticker", { messageId: "gm-image-1", note: "好笑的时候发" });
     await drainQQRpc();
     const col = rpcRes("s1");
     assert.ok(col.ok, col.error);
-    const id = col.result.id;
-    assert.match(id, /^s\d+/);
-    const files = fs.readdirSync(STICKER_DIR).filter((f) => f.startsWith(id + "."));
-    assert.equal(files.length, 1);
-    assert.ok(path.join(STICKER_DIR, files[0]).startsWith(path.join(CFG.workspace, "qq-clean")), "表情库在 qq-clean 里");
-    assert.ok(!STICKER_DIR.startsWith(path.join(CFG.workspace, "roles")), "不在 roles 下面");
-    // 列表里能看到笔记
-    rpcReq("l1", q, "list_stickers", {});
+    assert.equal(col.result.id, "e2");
+    assert.ok(addedPath, "调用了 add_custom_face");
+    assert.ok(!addedPath.startsWith(path.join(CFG.workspace, "roles")), "临时文件不在 roles");
+    const store = JSON.parse(fs.readFileSync(STICKER_FILE, "utf8"));
+    assert.equal(store.find((x) => x.id === "e2").localNote, "好笑的时候发", "本地记了笔记");
+    assert.ok(!fs.readdirSync(CLEAN_DIR).some((f) => f.startsWith("e2.")), "本地不存表情文件");
+    assert.ok(STICKER_FILE.startsWith(path.join(CFG.workspace, "qq-clean")));
+    // 用备注名找得到、看得到、发得出去
+    rpcReq("g1", q, "get_sticker_image", { stickerId: "新收的" });
     await drainQQRpc();
-    const ls = rpcRes("l1");
-    assert.match(ls.result.text, new RegExp(id + ".*好笑的时候发.*笑"));
-    // 看这张图
-    rpcReq("g1", q, "get_sticker_image", { id });
+    assert.ok(rpcRes("g1").ok, rpcRes("g1").error);
+    rpcReq("e1", q, "send_sticker", { stickerId: "新收的" });
     await drainQQRpc();
-    assert.ok(rpcRes("g1").result.file.endsWith(".img"));
-    // 发出去：一条消息只能一张表情
-    rpcReq("e1", q, "send_sticker", { id });
-    await drainQQRpc();
-    assert.ok(rpcRes("e1").ok);
+    assert.ok(rpcRes("e1").ok, rpcRes("e1").error);
     const sent = bot.actions.filter((a) => a.action === "send_group_msg").at(-1);
     assert.equal(sent.params.message.length, 1);
     assert.equal(sent.params.message[0].type, "image");
     assert.match(sent.params.message[0].data.file, /^base64:\/\//);
+    assert.equal(JSON.parse(fs.readFileSync(STICKER_FILE, "utf8")).find((x) => x.id === "e2").useCount, 1, "用过一次记在本地");
+    // 记笔记/标签
+    rpcReq("n1", q, "sticker_note", { stickerId: "e1", note: "猫猫就是猫", tags: ["猫"], usage: "卖萌" });
+    await drainQQRpc();
+    assert.ok(rpcRes("n1").ok, rpcRes("n1").error);
   } finally { stopQQ(); bot.close(); }
 });
 
@@ -504,7 +593,7 @@ test("MCP 服务真起得来：工具清单齐，send_message 走一遍文件来
       assert.ok(names.includes(n), "少了工具：" + n);
     const r = await c.call("tools/call", { name: "send_message", arguments: { messages: [{ text: "在" }, { text: "说" }] } });
     assert.ok(!r.result.isError, r.result.content?.[0]?.text);
-    assert.match(r.result.content[0].text, /发出去了 2 条/);
+    assert.match(r.result.content[0].text, /已发送 2 条/);
     assert.equal(bot.actions.filter((a) => a.action === "send_group_msg").length, 2);
   } finally { clearInterval(timer); c.ch.kill(); stopQQ(); bot.close(); }
 });
@@ -525,7 +614,7 @@ test("一个群在下图，不耽误另一个群发消息", async () => {
   const bot = await connectedBot();
   bot.answer.get_msg = () => new Promise((ok) => setTimeout(() => ok({ message: [{ type: "image", data: { url: bot.img } }] }), 400));
   try {
-    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 看图" } }]), "小克 看图");
+    await handleEvent(cfg, group(STRANGER, [{ type: "at", data: { qq: BOT } }, { type: "text", data: { text: " 看图" } }]));
     const gq = queued[0];
     handleMessage(cfg, priv("33333", "你好"), "你好");
     const pq = queued[1];

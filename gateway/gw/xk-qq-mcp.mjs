@@ -1,6 +1,10 @@
 // QQ 聊天工具的 MCP 服务（stdio）：只给干净会话（QQ 聊天模式）挂，别处不挂。
 // 它碰不到网关那条 NapCat 的 WebSocket，所以借文件来回：把请求写进 qq-clean/.rpc/req/，
 // 网关（xk-qq.mjs）做完把结果写进 .rpc/res/。会话号码、群号全由网关那边从 NapCat 事件里取，这里不填。
+//
+// 工具的名称、参数、说明、出错口径照 qq-agent-plus（MIT）的 src/tools/tools-core.js 搬：
+// Copyright (c) 2026 Kondius —— 原项目 https://github.com/sakurawwwxh/qq-agent-plus
+// 许可与署名见仓库根 NOTICE、ThirdPartyLicenses/qq-agent-plus.txt。
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -42,44 +46,55 @@ async function rpc(tool, args, timeoutMs = 30000) {
   }
 }
 
+const midParam = { description: "聊天记录里那条消息的 #数字（可能为负）；不传就是当前这条" };
+const targetParams = {
+  replyToMessageId: { type: ["integer", "string"], description: "可选：要引用/回复的消息 id（聊天记录里的 #数字）" },
+  atUserId: { type: ["integer", "string"], description: "可选：要 @ 的群成员 QQ 号（和引用同时给时保留引用、忽略 @）" },
+};
+
 const TOOLS = [
-  { name: "send_message", description: "在当前的 QQ 会话里发消息。一次发几条就传几个元素：想分几条说就用它，别把几句话说成一条。每条之间会隔一两秒，像人打字。群里可以 @ 人、引用某条消息。",
+  { name: "send_message", description: "发送消息到当前聊天（只能发到本次会话对应的群/私聊）。messages 传字符串=发一条；传字符串数组=分多条发送（推荐）；也接受对象数组（每个元素带 text，可选 atUserId、replyToMessageId）。只有需要明确「我回的是哪条」时才传 replyToMessageId 引用；需要点名某人才传 atUserId。不要在字符串内部用空格分句。",
     inputSchema: { type: "object", required: ["messages"], properties: {
-      messages: { type: "array", maxItems: 10, description: "要发的消息，一个元素一条", items: { type: "object", required: ["text"], properties: {
-        text: { type: "string", description: "这一条的文字，一行，别加换行" },
-        atUserId: { type: "string", description: "群里要 @ 的 QQ 号，可不填" },
-        replyToMessageId: { type: "string", description: "要引用的消息号，可不填" } } } } } } },
-  { name: "send_poke", description: "拍一拍。群聊传对方的 QQ 号；私聊可以不传。",
-    inputSchema: { type: "object", properties: { targetUserId: { type: "string", description: "要拍的人的 QQ 号；私聊可不填" } } } },
-  { name: "get_message_images", description: "看某条消息里的图：以图片内容返回，你能直接看懂。不传消息号就看当前这条。拿不到就说看不到，别编。",
-    inputSchema: { type: "object", properties: { messageId: { type: "string", description: "消息号，可不填（默认当前这条）" } } } },
-  { name: "list_stickers", description: "看自己的 QQ 收藏表情库：每张有备注、你记的本地笔记、标签、用过几次。选表情之前先看。",
-    inputSchema: { type: "object", properties: {} } },
-  { name: "get_sticker_image", description: "看某张收藏表情长什么样（以图片内容返回）。没有备注、不确定含义的先用它看一眼。",
-    inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string", description: "表情号，list_stickers 里那个" } } } },
-  { name: "send_sticker", description: "单独发一张收藏表情。一条消息只能是一张表情，不能在同一气泡里带文字；想说的话先用 send_message 发，再单独发表情。",
-    inputSchema: { type: "object", required: ["id"], properties: {
-      id: { type: "string", description: "表情号" },
-      atUserId: { type: "string", description: "群里要 @ 的 QQ 号，可不填" },
-      replyToMessageId: { type: "string", description: "要引用的消息号，可不填" } } } },
-  { name: "sticker_note", description: "给收藏里的一张表情记笔记：它是什么意思、什么时候用；也可以补备注和标签。",
-    inputSchema: { type: "object", required: ["id"], properties: {
-      id: { type: "string", description: "表情号" },
-      note: { type: "string", description: "你自己的话：这表情什么意思、什么时候发" },
-      desc: { type: "string", description: "备注（QQ 那边的名字），可不填" },
-      tags: { type: "array", items: { type: "string" }, description: "标签，比如 怼人、笑、无语" } } } },
-  { name: "collect_sticker", description: "把某条消息里的一张图收进自己的本地表情库（只存你自己手机这边，不上传）。收藏前先看图确认，别频繁收。",
+      messages: { description: "要发送的内容：字符串=一条；数组=分多条", anyOf: [
+        { type: "string" },
+        { type: "array", maxItems: 10, items: { oneOf: [
+          { type: "string" },
+          { type: "object", required: ["text"], properties: {
+            text: { type: "string", description: "这一条的文字，别加换行" },
+            atUserId: { type: ["integer", "string"], description: "这一条要 @ 的 QQ 号，可不填" },
+            replyToMessageId: { type: ["integer", "string"], description: "这一条要引用的消息号，可不填" } } },
+        ] } },
+      ] },
+      ...targetParams } } },
+  { name: "send_poke", description: "拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时先看聊天记录里谁在说话；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传「未知」或 0 这类占位。适合用「戳一下」代替一句废话，或偶尔逗一下正在聊的人。别频繁。",
+    inputSchema: { type: "object", properties: { targetUserId: { type: ["integer", "string"], description: "要拍的群友 QQ 号（数字，群聊必填）" } } } },
+  { name: "get_message_images", description: "查看某条消息里的图片/表情（你能直接看懂）。聊天记录里出现 [图片] / [表情] 时可用。先判断它想表达的情绪/态度，再针对态度回话，不要复述画面。",
+    inputSchema: { type: "object", properties: { messageId: { type: ["integer", "string"], ...midParam } } } },
+  { name: "list_stickers", description: "查看/搜索你的 QQ 收藏表情（含备注和你的本地笔记）。选表情之前先看。",
     inputSchema: { type: "object", properties: {
-      messageId: { type: "string", description: "消息号，可不填（默认当前这条）" },
-      imageIndex: { type: "number", description: "这条消息里的第几张图，从 0 数，默认 0" },
-      note: { type: "string", description: "收的时候写一句：这图什么意思、想拿它干嘛" },
-      desc: { type: "string", description: "备注，可不填" },
-      tags: { type: "array", items: { type: "string" }, description: "标签，可不填" } } } },
-  { name: "memory_append", description: "记一条你自己的轻量记忆：进行中的话题、想说还没说的话、对某位群友的印象。只在以后真可能用得上时记，别每条都记。",
+      query: { type: "string", description: "可选搜索词，匹配备注/笔记/标签" },
+      limit: { type: "integer", description: "最多返回条数，默认 24" } } } },
+  { name: "get_sticker_image", description: "查看一个没有备注/不确定含义的表情的图片（你能直接看懂）。",
+    inputSchema: { type: "object", required: ["stickerId"], properties: { stickerId: { type: "string", description: "表情 id（也可以填备注名）" } } } },
+  { name: "send_sticker", description: "发送一个收藏表情（一条消息只能一张表情，不能附带文字；想说的话先用 send_message 单独发）。stickerId 直接填 list_stickers 里那行开头的备注名即可，也接受完整 id。",
+    inputSchema: { type: "object", required: ["stickerId"], properties: { stickerId: { type: "string", description: "表情 id 或备注名" }, ...targetParams } } },
+  { name: "sticker_note", description: "给一个表情记下你的理解（含义/用法/标签），下次能更准地选用。只写画面/用途这类识别信息，不要写「我是谁」这种自我设定（人设以角色设定为准，不靠备注）。",
+    inputSchema: { type: "object", required: ["stickerId"], properties: {
+      stickerId: { type: "string" },
+      note: { type: "string", description: "你的理解/含义" },
+      tags: { type: "array", items: { type: "string" }, description: "标签列表（可选）" },
+      usage: { type: "string", description: "适用场景（可选）" } } } },
+  { name: "collect_sticker", description: "收藏别人刚发的表情/图片到你的 QQ 收藏表情（偶尔用；凭群友的用法与你的判断，别瞎收）。需要备注一句简短说明。",
+    inputSchema: { type: "object", properties: {
+      messageId: { type: ["integer", "string"], ...midParam },
+      note: { type: "string", description: "一句简短备注（帮未来的你识别）" } } } },
+  { name: "memory_append", description: "记一条你自己的轻量记忆（下次运行会自动看到）：进行中的话题、想说还没说的话、对某位群友的印象。只记以后真可能用得上的，别每条都记。",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "一句话记清楚" } } } },
   { name: "memory_query", description: "查你自己的轻量记忆。不传关键词就看最近几条。",
-    inputSchema: { type: "object", properties: { query: { type: "string", description: "关键词，可不填" }, limit: { type: "number", description: "最多几条，默认 10" } } } },
-  { name: "memory_remove", description: "删掉一条自己的轻量记忆：过时了、不再重要了。",
+    inputSchema: { type: "object", properties: {
+      query: { type: "string", description: "可选：按关键词/短句找记忆" },
+      limit: { type: "integer", minimum: 1, maximum: 20, description: "返回条数，默认 8" } } } },
+  { name: "memory_remove", description: "删掉一条过时/不再准确的轻量记忆。",
     inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string", description: "记忆号，memory_query 里那个" } } } },
 ];
 
@@ -96,53 +111,57 @@ function imageBlocks(files) {
   return blocks;
 }
 
+const textOf = (r, fallback) => ({ content: [{ type: "text", text: r.text || fallback }] });
+
 async function call(name, a = {}) {
   if (name === "send_message") {
-    const r = await rpc("send_message", { messages: a.messages }, 60000);
-    return { content: [{ type: "text", text: `发出去了 ${r.sent || 0} 条。` }] };
+    const r = await rpc("send_message", { messages: a.messages, replyToMessageId: a.replyToMessageId, atUserId: a.atUserId }, 90000);
+    const bits = [`已发送 ${r.sent || 0} 条。`];
+    if (r.note) bits.push(r.note);
+    return { content: [{ type: "text", text: bits.join(" ") }] };
   }
   if (name === "send_poke") {
-    await rpc("send_poke", a);
-    return { content: [{ type: "text", text: "拍了。" }] };
+    const r = await rpc("send_poke", { targetUserId: a.targetUserId }, 30000);
+    return textOf(r, "拍了。");
   }
   if (name === "get_message_images") {
     const r = await rpc("get_message_images", { messageId: a.messageId }, 60000);
     const blocks = imageBlocks(r.files);
-    if (!blocks.length) return { content: [{ type: "text", text: "这条消息里没拿到图。" }] };
-    return { content: blocks };
+    if (!blocks.length) return { content: [{ type: "text", text: r.text || "这条消息里没拿到图。" }] };
+    return { content: [{ type: "text", text: r.text || "图片内容：" }, ...blocks] };
   }
   if (name === "list_stickers") {
-    const r = await rpc("list_stickers", {}, 30000);
-    return { content: [{ type: "text", text: r.text || "表情库还是空的。" }] };
+    const r = await rpc("list_stickers", { query: a.query, limit: a.limit }, 30000);
+    return textOf(r, "表情库还是空的。");
   }
   if (name === "get_sticker_image") {
-    const r = await rpc("get_sticker_image", { id: a.id }, 30000);
+    const r = await rpc("get_sticker_image", { stickerId: a.stickerId }, 60000);
     const blocks = imageBlocks([r]);
-    return blocks.length ? { content: blocks } : { content: [{ type: "text", text: "这张图的文件没读出来。" }] };
+    return blocks.length ? { content: [{ type: "text", text: r.text || "这张表情：" }, ...blocks] } : { content: [{ type: "text", text: "这张图的文件没读出来。" }] };
   }
   if (name === "send_sticker") {
-    await rpc("send_sticker", { id: a.id, atUserId: a.atUserId, replyToMessageId: a.replyToMessageId }, 60000);
-    return { content: [{ type: "text", text: "发出去了。" }] };
+    const r = await rpc("send_sticker", { stickerId: a.stickerId, replyToMessageId: a.replyToMessageId, atUserId: a.atUserId }, 90000);
+    return textOf(r, "表情已发送。");
   }
   if (name === "sticker_note") {
-    const r = await rpc("sticker_note", { id: a.id, note: a.note, desc: a.desc, tags: a.tags }, 20000);
-    return { content: [{ type: "text", text: r.text || "记下了。" }] };
+    const r = await rpc("sticker_note", { stickerId: a.stickerId, note: a.note, tags: a.tags, usage: a.usage }, 20000);
+    return textOf(r, "记下了。");
   }
   if (name === "collect_sticker") {
-    const r = await rpc("collect_sticker", a, 60000);
-    return { content: [{ type: "text", text: r.text || "收好了。" }] };
+    const r = await rpc("collect_sticker", { messageId: a.messageId, note: a.note }, 120000);
+    return textOf(r, "收好了。");
   }
   if (name === "memory_append") {
     const r = await rpc("memory_append", { text: a.text }, 20000);
-    return { content: [{ type: "text", text: r.text }] };
+    return textOf(r, "记下了。");
   }
   if (name === "memory_query") {
     const r = await rpc("memory_query", { query: a.query, limit: a.limit }, 20000);
-    return { content: [{ type: "text", text: r.text }] };
+    return textOf(r, "没有相关的记忆。");
   }
   if (name === "memory_remove") {
     const r = await rpc("memory_remove", { id: a.id }, 20000);
-    return { content: [{ type: "text", text: r.text }] };
+    return textOf(r, "删掉了。");
   }
   throw new Error("没有这个工具：" + name);
 }
