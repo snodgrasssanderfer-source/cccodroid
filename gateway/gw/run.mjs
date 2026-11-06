@@ -196,7 +196,15 @@ export async function startRun(item) {
     // 干净会话唯一允许挂的 MCP（QQ 聊天工具，见 xk-qq-mcp.mjs）：还是 strict，别的配置一律不读
     if (clean.mcpConfig) argv.push("--mcp-config", clean.mcpConfig);
   }
-  const devMcp = clean ? null : deviceMcpConfig();
+  // 群里接小克本人（#134 第三步）：群友叫起来的一轮用 --tools 白名单限住、只挂指定的 MCP；
+  // 主人自己说的一轮不限制，只额外挂 QQ 工具（项目 .mcp.json 的记忆照挂）
+  const qg = clean ? null : item.qqGuard;
+  if (qg) {
+    argv.push("--tools", qg.tools.join(","), "--strict-mcp-config");
+    if (qg.mcpConfig) argv.push("--mcp-config", qg.mcpConfig);
+  } else if (!clean && item.mcpConfig) argv.push("--mcp-config", item.mcpConfig);
+  // 群友叫起来的那一轮（qg）一个别的 MCP 都不挂：设备工具也是「真家伙」，不能给
+  const devMcp = clean || qg ? null : deviceMcpConfig();
   if (devMcp && !P.local && (await privCall({ op: "dev_status" }, 3000)).on) argv.push("--mcp-config", devMcp);
 
   // 告诉 claude 这台设备上有什么现成工具 —— 不说它就不会去用。
@@ -211,7 +219,9 @@ export async function startRun(item) {
   // 建档（脉络）：常驻规则 + 这一轮该不该先建档（见 archive.mjs）
   const xkRole = inXkRole(cwd);   // xk
   const arch = P.local || xkRole ? null : await archiveHint(run.sessionId).catch(() => null);
-  const appendPrompt = xkRole ? integrityHint() : [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n");
+  // 网关自己给的补充（QQ 群那轮的审核规矩，见 xk-qq.mjs）：只接在最后，别的照旧
+  const extraPrompt = String(item.appendSystemPrompt || "").trim();
+  const appendPrompt = [xkRole ? integrityHint() : [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n"), extraPrompt].filter(Boolean).join("\n\n");
   if (appendPrompt && !clean) argv.push("--append-system-prompt", appendPrompt);
   // 子代理（连孙代理）统一的联络规矩：用 agentId 发消息、summary 写事由、长内容落文件只发路径（见 agents.mjs）
   if (!P.local && !clean && !message.trim().startsWith("/")) argv.push("--append-subagent-system-prompt", SUBAGENT_HINT + "\n\n" + integrityHint());

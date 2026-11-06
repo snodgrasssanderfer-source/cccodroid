@@ -307,6 +307,20 @@ export function cleanOpt(c) {
   }
   return { tools, systemPrompt: c.systemPrompt, mcpConfig };
 }
+/** 额外挂的 MCP 配置（JSON 串）：和 clean.mcpConfig 一样，坏了一律当没有 */
+export function mcpConfigOpt(v) {
+  if (typeof v !== "string" || v.length > 4096) return null;
+  try { const j = JSON.parse(v); if (j && typeof j === "object" && j.mcpServers && typeof j.mcpServers === "object") return v; } catch {}
+  return null;
+}
+/** 群友叫起来的那一轮（#134 第三步）：内置工具白名单 + 只挂这几个 MCP。
+ *  只有网关自己能设（和 clean 一样在 internal 里） */
+export function qqGuardOpt(g) {
+  if (!g || typeof g !== "object") return null;
+  const tools = Array.isArray(g.tools) ? g.tools.map(String).filter((t) => /^[A-Za-z]+$/.test(t)) : [];
+  if (!tools.length) return null;
+  return { tools, mcpConfig: mcpConfigOpt(g.mcpConfig) };
+}
 export function enqueue(body) {
   const item = {
     id: newRunId(),
@@ -326,7 +340,8 @@ export function enqueue(body) {
     // 只有网关自己（定时任务）会带的：前端发来的 /api/chat 不许设这些
     ...(body.internal ? { cwd: body.cwd || null, effort: body.effort || null, provider: body.provider || null, sched: body.sched || null, unattended: !!body.unattended,
       allowedTools: body.allowedTools || null, disallowedTools: body.disallowedTools || null, timeoutMs: body.timeoutMs || 0,
-      clean: cleanOpt(body.clean) } : {}),
+      clean: cleanOpt(body.clean), qqGuard: qqGuardOpt(body.qqGuard), mcpConfig: mcpConfigOpt(body.mcpConfig),
+      appendSystemPrompt: typeof body.appendSystemPrompt === "string" ? body.appendSystemPrompt.slice(0, 4000) : null } : {}),
     ...(body.auto ? { auto: body.auto } : {}),
   };
   // 插话（"inject"，旧前端叫 "interrupt"）：不打断。消息直接写进正在跑的 claude 的 stdin，

@@ -40,6 +40,15 @@ export function roleOfSession(sid) {
   return f ? roleOfDir(peekSession(f.file).cwd) : null;
 }
 
+/** 角色目录里的记忆服务配置：QQ 群那轮（#134 第三步）只挂这一个 MCP，配置得和项目 .mcp.json 一致 */
+export function memoryMcpServer(id) {
+  const d = roleDir(id);
+  return { "xk-memory": {
+    type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true,
+    env: { XK_ROOM_FILE: path.join(xkHome(CFG.home), "room.jsonl") },
+  } };
+}
+
 const agentFile = (id) => path.join(roleDir(id), ".claude", "agents", id + ".md");
 export const postHistoryFile = (id) => path.join(roleDir(id), "persona", "post_history.md");
 
@@ -76,10 +85,7 @@ export function ensureRoles() {
     }, null, 1) + "\n");
     // alwaysLoad：不然记忆工具被收进 ToolSearch，每次想起旧事都要多一个来回
     // XK_ROOM_FILE：群消息文件的路径由网关给，记忆工具不自己拼（它拿不到 CFG，以前靠 HOME 猜，换环境就读到空群）
-    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": {
-      type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true,
-      env: { XK_ROOM_FILE: path.join(xkHome(CFG.home), "room.jsonl") },
-    } } }, null, 1) + "\n");
+    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: memoryMcpServer(r.id) }, null, 1) + "\n");
     write(path.join(d, "CLAUDE.md"), MECHANICS);
   }
 }
