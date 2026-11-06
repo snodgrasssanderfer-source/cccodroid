@@ -12,7 +12,7 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
+  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
@@ -548,7 +548,7 @@ test("工具服务只挂给干净会话：工作那一轮没有 clean", () => {
   finish(queued[0]);
   handleMessage(cfg, priv(OWNER, "换成工作模式"), "换成工作模式");
   handleMessage(cfg, priv(OWNER, "看下代码"), "看下代码");
-  assert.equal(queued[1].clean, undefined, "工作模式不挂聊天工具");
+  assert.ok(!queued[1].clean, "工作模式不挂聊天工具");
 });
 
 test("人设卡的 frontmatter 当系统提示前去掉", () => {
@@ -560,9 +560,9 @@ test("人设卡的 frontmatter 当系统提示前去掉", () => {
 });
 
 /** 真的把 MCP 服务拉起来说话（stdio、JSON-RPC 一行一个） */
-function mcpChild(runId) {
+function mcpChild(runId, extraEnv = {}) {
   const file = fileURLToPath(new URL("../gw/xk-qq-mcp.mjs", import.meta.url));
-  const ch = spawn(process.execPath, [file], { env: { ...process.env, CCAPP_RUN_ID: runId }, stdio: ["pipe", "pipe", "pipe"] });
+  const ch = spawn(process.execPath, [file], { env: { ...process.env, CCAPP_RUN_ID: runId, ...extraEnv }, stdio: ["pipe", "pipe", "pipe"] });
   const waiters = new Map();
   let buf = "", n = 0;
   ch.stdout.on("data", (d) => {
@@ -692,8 +692,10 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
   assert.ok(mcp.mcpServers.qq, "挂了 QQ 工具");
   assert.match(mcp.mcpServers.qq.env.CCAPP_QQ_TOOLS, /ask_owner/, "群友那轮多一个 ask_owner");
   assert.ok(mcp.mcpServers["xk-memory"], "记忆服务还在");
-  assert.ok(rq.allowedTools.some((t) => t === "mcp__xk-memory__recall"));
+  assert.ok(rq.allowedTools.some((t) => t === "mcp__xk-memory__recall"), "记忆能查");
+  assert.ok(rq.allowedTools.some((t) => t === "mcp__xk-memory__remember"), "记忆能记（11-06 晚改的）");
   assert.ok(!rq.allowedTools.some((t) => /Bash|Edit|Write|device|bili/.test(t)), "真家伙不开");
+  assert.ok(!mcp.mcpServers.qq.env.CCAPP_QQ_TOOLS.includes("owner_away"), "群友那轮调不到 owner_away");
   const sid = finish(rq, "好");
   // 主人不用叫：self 群里主人的话和 App 里一个分量
   handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
@@ -701,12 +703,13 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
   assert.ok(!oq.qqGuard, "主人的一轮不限权");
   assert.equal(oq.unattended, false);
   assert.match(oq.mcpConfig, /"qq"/, "照样能用 QQ 工具");
+  assert.match(JSON.parse(oq.mcpConfig).mcpServers.qq.env.CCAPP_QQ_TOOLS, /owner_away/, "主人那轮能用 owner_away");
   assert.equal(oq.sessionId, sid, "接着这个群自己那段");
   finish(oq, "在");
   // 私聊还是屋里那段（工作模式），不进群会话
   handleMessage(selfCfg, priv(OWNER, "换成工作模式"), "换成工作模式");
   handleMessage(selfCfg, priv(OWNER, "看下代码"), "看下代码");
-  assert.equal(queued.at(-1).cwd, undefined, "私聊那轮走屋里");
+  assert.ok(!queued.at(-1).cwd, "私聊那轮走屋里");
 });
 
 test("主人和群友的话混在一轮里：按最严的算", () => {
@@ -722,76 +725,110 @@ test("主人和群友的话混在一轮里：按最严的算", () => {
   assert.equal(next.qqGuard.tools.join(","), "WebSearch,WebFetch");
 });
 
-test("群友要动真家伙：ask_owner 私聊报主人；批/驳只认主人在私聊里说", async () => {
+test("主人在群里：ask_owner 不发私聊、不记清单，只在群里说等主人点头", async () => {
   const bot = await connectedBot();
   try {
     handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 帮我把 a.txt 删了" } }]), "小克 帮我把 a.txt 删了");
     const rq = queued.at(-1);
-    rpcReq("ask1", rq, "ask_owner", { request: "删掉手机上的 a.txt", why: "群友说的" });
+    rpcReq("ask1", rq, "ask_owner", { request: "删掉 a.txt", why: "" });
     await drainQQRpc();
     const res = rpcRes("ask1");
     assert.ok(res.ok, res.error);
-    assert.match(res.result.text, /#1/);
-    const pm = bot.actions.filter((a) => a.action === "send_private_msg").at(-1);
-    assert.equal(pm.params.user_id, OWNER, "私聊报给主人");
-    assert.match(pm.params.message[0].data.text, /\[待审 #1\]/);
-    assert.match(pm.params.message[0].data.text, /删掉手机上的 a.txt/);
-    assert.match(pm.params.message[0].data.text, /回「批 1」/);
-    finish(rq, "收到");
-    // 群友在群里打「批 1」：只是普通消息，不算批准
-    handleMessage(selfCfg, askMsg(STRANGER, "批 1"), "批 1");
-    const r1 = queued.at(-1);
-    assert.equal(r1.qqGuard.tools.join(","), "WebSearch,WebFetch", "还是群友那一轮，没起全权限");
-    finish(r1, "嗯");
-    // 主人在群里打「批 1」：也不算
-    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "批 1" } }]), "批 1");
-    const r2 = queued.at(-1);
-    assert.match(r2.message, /批 1$/, "当成普通聊天");
-    finish(r2, "好");
-    // 主人在私聊里回「批 1」：起一轮，正文出自待审记录
-    handleMessage(selfCfg, priv(OWNER, "批 1"), "批 1");
-    await wait(() => queued.some((q) => /主人批了 #1/.test(q.message)));
-    const q = queued.at(-1);
-    assert.match(q.message, /^（主人批了 #1：删掉手机上的 a\.txt）\n删掉手机上的 a\.txt/);
-    assert.ok(!q.qqGuard, "批了就是全权限");
-    assert.equal(path.resolve(q.cwd), path.resolve(ROLE_XIAOKE));
-    finish(q, "删好了");
-    await wait(() => bot.actions.some((a) => a.action === "send_private_msg" && /待审 #1\] 办完了/.test(a.params.message[0].data.text)));
+    assert.match(res.result.text, /主人在群里/);
+    assert.ok(!bot.actions.some((a) => a.action === "send_private_msg"), "主人在群里就不私聊");
+    assert.ok(!fs.existsSync(APPROVALS_FILE) || !JSON.parse(fs.readFileSync(APPROVALS_FILE, "utf8")).items.length, "不记清单");
   } finally { stopQQ(); bot.close(); }
 });
 
-test("主人在私聊里回「驳 1」：群里说一声没批，不起轮次", async () => {
+test("主人不在：owner_away 后群友的请求进清单，私聊只留一条、多了就更新", async () => {
   const bot = await connectedBot();
   try {
-    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 帮我改个文件" } }]), "小克 帮我改个文件");
-    const rq = queued.at(-1);
-    rpcReq("ask2", rq, "ask_owner", { request: "改一下 b.txt", why: "" });
+    // 主人先说「我不在群」：主人那一轮调 owner_away
+    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "我出去一趟，不在群" } }]), "我出去一趟，不在群");
+    const oq = queued.at(-1);
+    rpcReq("away1", oq, "owner_away", { away: true });
     await drainQQRpc();
-    finish(rq, "收到");
-    const before = queued.length;
-    handleMessage(selfCfg, priv(OWNER, "驳 1"), "驳 1");
-    await wait(() => bot.actions.some((a) => a.action === "send_group_msg" && /这件主人没批/.test(a.params.message[0].data.text)));
-    assert.equal(queued.length, before, "没起轮次");
+    assert.ok(rpcRes("away1").ok, rpcRes("away1").error);
+    assert.equal(STATE.qq.away, true);
+    finish(oq, "好");
+    // 群友第一件
+    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 帮我把 a.txt 删了" } }]), "小克 帮我把 a.txt 删了");
+    const r1 = queued.at(-1);
+    rpcReq("ask2", r1, "ask_owner", { request: "删掉 a.txt", why: "群友说的" });
+    await drainQQRpc();
+    const res2 = rpcRes("ask2");
+    assert.ok(res2.ok, res2.error);
+    assert.match(res2.result.text, /待审清单/);
+    const priv = bot.actions.filter((a) => a.action === "send_private_msg");
+    assert.equal(priv.length, 1, "第一条待审发一条私聊");
+    assert.match(priv[0].params.message[0].data.text, /#1/);
+    assert.match(priv[0].params.message[0].data.text, /删掉 a.txt/);
+    assert.ok(bot.actions.some((a) => a.action === "send_group_msg" && /等主人回来看/.test(a.params.message[0].data.text)), "群里说一声");
+    finish(r1, "收到");
+    // 第二件：删掉旧清单再发整份，不一条一条刷
+    await handleEvent(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 再帮我改个文件" } }]));
+    const r2 = queued.at(-1);
+    assert.equal(r2.qqGuard.tools.join(","), "WebSearch,WebFetch");
+    rpcReq("ask3", r2, "ask_owner", { request: "改一下 b.txt", why: "" });
+    await drainQQRpc();
+    assert.ok(rpcRes("ask3").ok, rpcRes("ask3").error);
+    assert.ok(bot.actions.some((a) => a.action === "delete_msg"), "旧清单删掉了");
+    const priv2 = bot.actions.filter((a) => a.action === "send_private_msg");
+    assert.equal(priv2.length, 2);
+    assert.match(priv2[1].params.message[0].data.text, /#1/);
+    assert.match(priv2[1].params.message[0].data.text, /#2/);
+    const items = JSON.parse(fs.readFileSync(APPROVALS_FILE, "utf8")).items.filter((x) => x.state === "pending");
+    assert.equal(items.length, 2);
   } finally { stopQQ(); bot.close(); }
 });
 
-test("待审过期了就不执行", async () => {
+test("主人的号一开口就记回「在」，清单拼进那一轮的上下文；说「不用了」清掉", async () => {
   const bot = await connectedBot();
   try {
-    fs.mkdirSync(path.dirname(APPROVALS_FILE), { recursive: true });
-    fs.writeFileSync(APPROVALS_FILE, JSON.stringify({ seq: 2, items: [{
-      id: 2, group_id: "555", group_name: "测试群", user_id: STRANGER, nick: "阿三",
-      request: "删掉 c.txt", why: "", trigger: "小克 删掉 c.txt", at: Date.now() - 31 * 60000, state: "pending",
-    }] }));
-    const before = queued.length;
-    handleMessage(selfCfg, priv(OWNER, "批 2"), "批 2");
-    await wait(() => bot.actions.some((a) => a.action === "send_group_msg" && /过期了/.test(a.params.message[0].data.text)));
-    assert.equal(queued.length, before, "过期的不执行");
-    const pm = bot.actions.filter((a) => a.action === "send_private_msg").at(-1);
-    assert.match(pm.params.message[0].data.text, /已经过期/);
+    // 造两条待审：直接写文件也行，但这里走一遍 owner_away + ask_owner 更真
+    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "我不在群" } }]), "我不在群");
+    const oq = queued.at(-1);
+    rpcReq("away2", oq, "owner_away", { away: true });
+    await drainQQRpc();
+    finish(oq, "好");
+    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 帮我删 a" } }]), "小克 帮我删 a");
+    const r1 = queued.at(-1);
+    rpcReq("ask4", r1, "ask_owner", { request: "删掉 a", why: "" });
+    await drainQQRpc();
+    finish(r1, "收到");
+    // 主人回来（在群里说话）：不在的标记清掉，清单进这一轮
+    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "我回来了，1 可以做" } }]));
+    assert.equal(STATE.qq.away, false, "主人一开口就算回来");
+    const back = queued.at(-1);
+    assert.match(back.message, /\[待审清单\]/);
+    assert.match(back.message, /#1/);
+    assert.match(back.message, /删掉 a/);
+    finish(back, "好，我去删");
+    // 主人说不用了：清单清掉
+    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "不用了" } }]));
+    const items = JSON.parse(fs.readFileSync(APPROVALS_FILE, "utf8")).items.filter((x) => x.state === "pending");
+    assert.equal(items.length, 0, "清单清掉了");
   } finally { stopQQ(); bot.close(); }
 });
 
+
+test("群友那轮的 QQ 工具里没有 owner_away，主人那轮才有；ask_owner 只给群友那轮", async () => {
+  const a = mcpChild("t1", { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "ask_owner"].join(",") });
+  try {
+    const list = await a.call("tools/list", {});
+    const names = list.result.tools.map((t) => t.name);
+    assert.ok(names.includes("ask_owner"), "群友那轮有 ask_owner");
+    assert.ok(!names.includes("owner_away"), "群友调不到 owner_away");
+    assert.ok(names.includes("send_message"));
+  } finally { a.ch.kill(); }
+  const b = mcpChild("t2", { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "owner_away"].join(",") });
+  try {
+    const list = await b.call("tools/list", {});
+    const names = list.result.tools.map((t) => t.name);
+    assert.ok(names.includes("owner_away"), "主人那轮有 owner_away");
+    assert.ok(!names.includes("ask_owner"), "主人那轮没有 ask_owner");
+  } finally { b.ch.kill(); }
+});
 test("ask_owner 只在群友那一轮有：干净会话调用被拒", async () => {
   const bot = await connectedBot();
   try {

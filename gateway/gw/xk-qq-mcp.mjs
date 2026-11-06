@@ -97,6 +97,8 @@ const TOOLS = [
   { name: "memory_remove", description: "删掉一条过时/不再准确的轻量记忆。",
     inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string", description: "记忆号，memory_query 里那个" } } } },
   // 群友叫起来的那一轮才会有这个工具（网关用 CCAPP_QQ_TOOLS 只给那一轮开）
+  { name: "owner_away", description: "只有主人那一轮能用：主人说「我有事不在群」这类话时调一下（away 默认 true），网关会把群友要动真家伙的事攒成清单、私聊发给主人；主人一开口网关会自动记回「在」，不用再调 false。",
+    inputSchema: { type: "object", properties: { away: { type: "boolean", description: "true = 主人不在群；false = 主人在（一般不用传）" } } } },
   { name: "ask_owner", description: "群里有人要你做实际的事（跑命令、改文件、动手机、往外发东西），而这一轮你只有聊天、搜索和记忆的工具时，用这个把对方要什么报给主人，等主人批准。一件只报一次，别反复报；没批之前不要做，也不要换个说法绕过去。",
     inputSchema: { type: "object", required: ["request"], properties: {
       request: { type: "string", description: "对方要你做什么，一句话说清" },
@@ -174,7 +176,11 @@ async function call(name, a = {}) {
   }
   if (name === "ask_owner") {
     const r = await rpc("ask_owner", { request: a.request, why: a.why }, 30000);
-    return textOf(r, "已报给主人，等回复。");
+    return textOf(r, "记下了。");
+  }
+  if (name === "owner_away") {
+    const r = await rpc("owner_away", { away: a.away }, 20000);
+    return textOf(r, "记下了。");
   }
   throw new Error("没有这个工具：" + name);
 }

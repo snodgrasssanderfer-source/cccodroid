@@ -40,13 +40,22 @@ export const QQ_MCP_NAME = "qq";
 export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "memory_append", "memory_query", "memory_remove"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
-/** 群里接小克本人（#134 第三步）：full 只额外加 QQ 工具，项目 .mcp.json 的记忆照挂；
- *  restricted 走 strict，只挂 QQ 工具（多一个 ask_owner）和记忆服务（只放 recall） */
-export function selfMcpConfig(restricted) {
+/** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list） */
+const qqMcpConfigTools = (tools) => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: {
+  type: "stdio", command: process.execPath, args: [QQ_MCP], env: { CCAPP_QQ_TOOLS: tools.join(",") },
+} } });
+/** 群里接小克本人（#134 第三步）：
+ *  "restricted" 群友叫起来的一轮：strict，只挂 QQ 工具（多 ask_owner）和记忆服务（recall + remember）；
+ *  "owner" 主人那一轮：只额外加 QQ 工具（多 owner_away），项目 .mcp.json 的记忆照挂 */
+export function selfMcpConfig(mode) {
   const qq = { type: "stdio", command: process.execPath, args: [QQ_MCP] };
-  if (restricted) qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "ask_owner"].join(",") };
   const servers = { [QQ_MCP_NAME]: qq };
-  if (restricted) Object.assign(servers, memoryMcpServer("xiaoke"));
+  if (mode === "restricted") {
+    qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "ask_owner"].join(",") };
+    Object.assign(servers, memoryMcpServer("xiaoke"));
+  } else if (mode === "owner") {
+    qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "owner_away"].join(",") };
+  }
   return JSON.stringify({ mcpServers: servers });
 }
 // MCP 和网关不在一个进程里：借文件来回（和留言板、群一个路子）。MCP 写 req/，网关做完把结果写 res/
@@ -55,24 +64,23 @@ const REQ_DIR = path.join(RPC_DIR, "req"), RES_DIR = path.join(RPC_DIR, "res"), 
 // 表情：QQ 收藏表情是源（fetch_custom_face_detail / add_custom_face）；本地只留备注、笔记、标签、用过几次
 export const STICKER_FILE = path.join(CLEAN_DIR, "stickers.json");
 export const MEMORY_FILE = path.join(CLEAN_DIR, "memory.json");
-// 群友要小克动真家伙时的待审记录：只在手机上，不进仓库（#134 第三步）
+// 群友要小克动真家伙时的待审清单：只在手机上，不进仓库（#134 第三步；主人不在时攒着，回来看）
 export const APPROVALS_FILE = path.join(CFG.home, ".config", "xiaoke", "qq-approvals.json");
-const APPROVAL_TTL = 30 * 60000;   // 待审放 30 分钟，过期作废
 
 const RECONNECT_MAX = 30000;
 const retryBase = () => Number(process.env.CCAPP_QQ_RETRY_MS) || 1000;
 const WORK_ON = ["换成工作模型", "换成工作模式"], WORK_OFF = ["回到聊天模式"];
 const SELF_ON = ["回来"], CLEAN_ON = ["换成聊天模式"];
 const MODE_TEXT = { work: "已切到工作模式", chat: "已回到聊天模式", self: "回来了，这个群我本人接" };
-// 群友叫起来的那一轮：只给搜索、读网页、QQ 工具、记忆查询（#134 第三步）
+// 群友叫起来的那一轮：只给搜索、读网页、QQ 工具、记忆（recall + remember）（#134 第三步）
 const SELF_DENY = [
-  "mcp__xk-memory__remember", "mcp__xk-memory__forget", "mcp__xk-memory__board_write", "mcp__xk-memory__board_read",
+  "mcp__xk-memory__forget", "mcp__xk-memory__board_write", "mcp__xk-memory__board_read",
   "mcp__xk-memory__room_say", "mcp__xk-memory__room_read", "mcp__xk-memory__context_next", "mcp__xk-memory__room_mode",
   "mcp__device", "mcp__bili",
 ];
-const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆查询。"
-  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事，先调 ask_owner 把对方要什么报给主人，等主人批了再做；"
-  + "没批就先别做，也别反复报同一件。";
+const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。"
+  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主人在群里时，就在群里说一句「这个得主人点头」，等主人回话；"
+  + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
 
 STATE.qq ||= { modes: {}, sessions: {} };   // 会话 → 模式（chat / work）；会话 → 干净会话的 Claude 会话号
 const BUSY = new Map();      // 会话 → { at, cid }：正在跑一轮
@@ -372,14 +380,21 @@ export async function handleEvent(cfg, ev) {
   if (ev.message_id) remember(ev.message_id, { key, nick, text: p.text, media }, MSGS, 500);
   const quote = p.reply ? await quoteOf(cfg, p.reply) : null;
   const line = incomingLine(ev, p.text, quote);
-  // 切模式、审核回话的暗号不走「叫到她」那套判断：只认发送者是不是主人
+  const isOwner = String(ev.user_id) === String(cfg.owner);
+  // 主人一开口就当他回来了（不在群的标记清掉）；待审清单拼进这一轮的上下文
+  let pending = "";
+  if (isOwner) {
+    if (STATE.qq.away) { STATE.qq.away = false; saveState(); }
+    if (/不用了|都不做/.test(p.text) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
+    pending = pendingNote();
+  }
+  // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
   const bare = p.text.replace(/\s+/g, "");
-  const cmd = String(ev.user_id) === String(cfg.owner)
-    && ([...WORK_ON, ...WORK_OFF, ...SELF_ON, ...CLEAN_ON].includes(bare) || /^(批|驳)\s*#?\d{1,9}$/.test(String(p.text).trim()));
+  const cmd = isOwner && [...WORK_ON, ...WORK_OFF, ...SELF_ON, ...CLEAN_ON].includes(bare);
   if (!cmd && !addressed(ev, cfg)) return historyPush(ev, line);
   // 叫到她了：把没叫她的那些一起递进去（工作模式不掺，和以前一样只递那句话）
   const ctx = modeOf(convKey(ev), cfg) !== "work" ? historyTake(ev) : "";
-  handleMessage(cfg, ev, p.text, { line: ctx + line });
+  handleMessage(cfg, ev, p.text, { line: ctx + line, pending });
 }
 
 /** 说一句话回去；太长按段落拆成几条。群里引用对方那条（拍一拍的回复没有消息可引） */
@@ -431,14 +446,6 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   const key = convKey(ev);
   const owner = String(ev.user_id) === String(cfg.owner);
   const bare = String(text).replace(/\s+/g, "");
-  // 审核回话：只认主人号在和机器人的私聊里回「批 N」「驳 N」；群里、别人打这几个字都不算
-  if (owner && ev.message_type === "private") {
-    const am = String(text).trim().match(/^(批|驳)\s*#?(\d{1,9})$/);
-    if (am) {
-      handleApprovalReply(cfg, am[1] === "批", Number(am[2])).catch((e) => say("处理审核回话出错：" + e.message));
-      return;
-    }
-  }
   // 切模式：只认发送者的号，不看内容是谁写的；别人的同一句话当普通消息
   if (owner && ev.message_type === "group" && CLEAN_ON.includes(bare)) { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
   if (owner && ev.message_type === "group" && SELF_ON.includes(bare)) { setMode(key, "self"); return reply(cfg, ev, MODE_TEXT.self); }
@@ -447,12 +454,12 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   if (!addressed(ev, cfg)) return;
   const kind = modeOf(key, cfg);
   if (kind === "work" && !owner) { say("工作模式：不是主人的消息，不递给两边"); return; }
-  deliver(cfg, ev, key, kind, text, extra.line);
+  deliver(cfg, ev, key, kind, text, extra.line, null, extra.pending || "");
 }
 
-function deliver(cfg, ev, key, kind, text, line = "", all = null) {
+function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "") {
   const b = BUSY.get(key);
-  if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
+  if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line, pending: pendingNote }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
   if (b) BUSY.delete(key);   // 记录里已经没有那一轮了（收尾事件丢了）：按实际放开
   const at = Date.now(), cid = "xk-qq-" + (++CID);
   let sid = null, head = "";
@@ -471,12 +478,14 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null) {
     BUSY.set(key, { at, cid });
     try {
       const item = enqueue({
-        message: line || incomingLine(ev, text), sessionId: STATE.qq.sessions[selfKey(key)] || null, cwd: roleDir("xiaoke"), cid,
+        message: (pendingNote ? pendingNote + "\n" : "") + (line || incomingLine(ev, text)),
+        sessionId: STATE.qq.sessions[selfKey(key)] || null, cwd: roleDir("xiaoke"), cid,
         internal: true, auto: "xk-qq", unattended: r.restricted,
-        allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...(r.restricted ? ["mcp__xk-memory__recall", ...CLEAN_TOOLS] : [])],
+        allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
+          ...(r.restricted ? ["mcp__xk-memory__recall", "mcp__xk-memory__remember", ...CLEAN_TOOLS] : [])],
         ...(r.restricted
-          ? { disallowedTools: SELF_DENY, qqGuard: { tools: CLEAN_TOOLS, mcpConfig: selfMcpConfig(true) }, appendSystemPrompt: SELF_NOTE }
-          : { mcpConfig: selfMcpConfig(false) }),
+          ? { disallowedTools: SELF_DENY, qqGuard: { tools: CLEAN_TOOLS, mcpConfig: selfMcpConfig("restricted") }, appendSystemPrompt: SELF_NOTE }
+          : { mcpConfig: selfMcpConfig("owner"), allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), "mcp__qq__owner_away"] }),
       });
       RUNSQQ.set(item.id, r);
       writeRunCtx(item.id, r);
@@ -492,8 +501,13 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null) {
   try {
     let item;
     if (kind === "work") {
-      item = enqueue({ message: head, sessionId: sid, projectId: sid ? null : projectOf("xiaoke"), cid });
+      r.owner = true;
+      item = enqueue({
+        message: (pendingNote ? pendingNote + "\n" : "") + head, sessionId: sid, projectId: sid ? null : projectOf("xiaoke"), cid,
+        internal: true, mcpConfig: qqMcpConfigTools(["owner_away"]), allowedTools: ["mcp__qq__owner_away"],
+      });
       markRun("xiaoke", item.id, { channel: ev.message_type === "group" ? "qq-group" : "qq-private", sessionId: sid });
+      writeRunCtx(item.id, r);
       // 她那段正有一轮在跑：消息插进那一轮，认那一轮的结束（和 xk-room 一样）
       if (item.injected) { const cur = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (cur) RUNSQQ.set(cur.id, r); }
     } else {
@@ -532,7 +546,7 @@ function writeRunCtx(runId, r) {
       runId: String(runId), key: r.key, type: r.ev.message_type === "group" ? "group" : "private",
       group_id: r.ev.group_id ?? null, user_id: r.ev.user_id ?? null,
       group_name: r.ev.group_name ?? null, message_id: r.ev.message_id ?? null, at: r.at,
-      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted,
+      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted, owner: !!r.owner,
     });
   } catch (e) { say("写这一轮的会话记录失败：" + e.message); }
 }
@@ -666,15 +680,16 @@ function messageTargetError(ctx, { replyToMessageId, atUserId } = {}) {
   return "";
 }
 
-// ── 审核：群友要她动真家伙，先报主人（#134 第三步） ──
+// ── 审核：主人不在群时，群友要她动真家伙的事攒成清单（#134 第三步） ──
 const loadApprovals = () => {
   const j = readJson(APPROVALS_FILE, { seq: 0, items: [] });
   return j && typeof j === "object" && Array.isArray(j.items) ? j : { seq: 0, items: [] };
 };
 const saveApprovals = (a) => writeJson(APPROVALS_FILE, a);
+const pendingItems = () => loadApprovals().items.filter((x) => x.state === "pending");
 function addApproval(rec) {
   const a = loadApprovals();
-  // 同一件还挂着没回话：不重复记、也不重复打扰主人
+  // 同一件还挂着没回话：不重复记
   const hit = a.items.find((x) => x.state === "pending" && x.group_id === rec.group_id && x.user_id === rec.user_id && x.request === rec.request);
   if (hit) return { ...hit, existing: true };
   a.seq = Number(a.seq || 0) + 1;
@@ -684,64 +699,42 @@ function addApproval(rec) {
   saveApprovals(a);
   return item;
 }
-const approvalOf = (id) => (loadApprovals().items || []).find((x) => Number(x.id) === Number(id) && x.state === "pending") || null;
-function settleApproval(id, state) {
-  const a = loadApprovals();
-  const it = a.items.find((x) => Number(x.id) === Number(id));
-  if (it) { it.state = state; it.decidedAt = Date.now(); saveApprovals(a); }
+function digestText(items) {
+  const lines = items.slice(-20).map((x) => `#${x.id} 群「${x.group_name}」${x.nick}(QQ ${x.user_id})：${x.request}${x.why ? `（原因：${x.why}）` : ""} 原话：「${x.trigger}」`);
+  return `[待审清单] 主人不在群的时候，群友想让我做的事：\n${lines.join("\n")}\n回来以后说哪几件可以做（「1 和 3 可以」「都行」都算）；说「不用了」「都不做」就清掉。[/待审清单]`;
 }
+const pendingNote = () => {
+  const items = pendingItems();
+  return items.length ? digestText(items) : "";
+};
 async function privateSay(cfg, text) {
   return act("send_private_msg", { user_id: String(cfg.owner), message: [{ type: "text", data: { text: oneLine(text, 1500) } }] }, 15000);
 }
 async function groupSay(cfg, groupId, text) {
   return act("send_group_msg", { group_id: String(groupId), message: [{ type: "text", data: { text: oneLine(text, 1500) } }] }, 15000);
 }
-async function waitIdle(key, ms) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const b = BUSY.get(key);
-    if (!b || !RUNSQQ.get(b.cid)) return;
-    await sleep(1000);
+/** 待审清单只留一条私聊：第一条发一次，之后删掉旧的再发整份（NapCat 没编辑，就删了重发） */
+async function sendDigest(cfg) {
+  const a = loadApprovals();
+  const items = a.items.filter((x) => x.state === "pending");
+  if (!items.length) {
+    if (a.digestMessageId) { try { await act("delete_msg", { message_id: a.digestMessageId }, 10000); } catch {} }
+    a.digestMessageId = null; saveApprovals(a);
+    return;
   }
+  if (a.digestMessageId) { try { await act("delete_msg", { message_id: a.digestMessageId }, 10000); } catch {} }
+  const d = await privateSay(cfg, digestText(items));
+  const b = loadApprovals();
+  b.digestMessageId = d?.message_id ?? null;
+  saveApprovals(b);
 }
-/** 主人在私聊里回「批 N」「驳 N」 */
-async function handleApprovalReply(cfg, approve, id) {
-  const rec = approvalOf(id);
-  if (!rec) return privateSay(cfg, `没有 #${id} 这条待审（可能已经办过，或编号不对）`);
-  if (Date.now() - rec.at > APPROVAL_TTL) {
-    settleApproval(rec.id, "expired");
-    await groupSay(cfg, rec.group_id, `这件主人没批（#${rec.id} 过期了）`);
-    return privateSay(cfg, `#${rec.id} 已经过期了（待审只放 30 分钟），这件不执行`);
-  }
-  if (!approve) {
-    settleApproval(rec.id, "rejected");
-    await groupSay(cfg, rec.group_id, "这件主人没批");
-    return privateSay(cfg, `#${rec.id} 回绝了，已在群里说了一声`);
-  }
-  const key = "g:" + rec.group_id;
-  await waitIdle(key, 120000);
-  settleApproval(rec.id, "approved");
-  const at = Date.now(), cid = "xk-qq-" + (++CID);
-  const evg = { message_type: "group", group_id: rec.group_id, group_name: rec.group_name, user_id: String(cfg.owner), message_id: null };
-  const r = { key, cfg, ev: evg, kind: "self", at, cid, approval: rec, owner: true, restricted: false, nick: rec.nick, trigger: rec.request };
-  RUNSQQ.set(cid, r);
-  BUSY.set(key, { at, cid });
-  try {
-    const item = enqueue({
-      // 正文用待审记录里的 request 原样写，不从群友后来的消息里取
-      message: `（主人批了 #${rec.id}：${oneLine(rec.request, 200)}）\n${rec.request}`,
-      sessionId: STATE.qq.sessions[selfKey(key)] || null, cwd: roleDir("xiaoke"), cid,
-      internal: true, auto: "xk-qq",
-      allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
-      mcpConfig: selfMcpConfig(false),
-    });
-    RUNSQQ.set(item.id, r);
-    writeRunCtx(item.id, r);
-    markRun("xiaoke", item.id, { channel: "qq-group", sessionId: item.sessionId || null });
-  } catch (e) {
-    r.done = true; RUNSQQ.delete(cid); BUSY.delete(key);
-    await privateSay(cfg, `#${rec.id} 批了，但这一轮没起来：${e.message}`);
-  }
+/** 主人说「不用了」「都不做」：全清掉 */
+function clearApprovals() {
+  const a = loadApprovals();
+  for (const x of a.items) if (x.state === "pending") { x.state = "cleared"; x.clearedAt = Date.now(); }
+  if (a.digestMessageId) act("delete_msg", { message_id: a.digestMessageId }, 10000).catch(() => {});
+  a.digestMessageId = null;
+  saveApprovals(a);
 }
 
 // ── 工具：网关这边做（要 NapCat、要真实文件） ──
@@ -964,6 +957,10 @@ async function runTool(req, ctx, r) {
     case "ask_owner": {
       // 只有群友叫起来的那一轮才有这个工具；主人自己说的话不用问
       if (!ctx.restricted) throw new Error("这一轮不用问主人，直接做");
+      // 主人在群里：不用私聊、不用报审，在群里说一句请他点头就行
+      if (!STATE.qq.away) {
+        return { pending: false, text: "主人在群里，不用私聊报审。在群里说一句「这个得主人点头」，等主人回话；别自己先做。" };
+      }
       const request = oneLine(a.request, 500);
       if (!request) throw new Error("request 不能为空：写清对方要你做什么");
       if (!ctx.group_id) throw new Error("ask_owner 只在群里用");
@@ -973,16 +970,27 @@ async function runTool(req, ctx, r) {
         user_id: String(ctx.user_id || ""), nick: oneLine(ctx.nick || "", 40),
         request, why, trigger: oneLine(ctx.trigger || "", 300),
       });
-      if (rec.existing) return { pending: true, id: rec.id, text: `#${rec.id} 已经报过了，等主人回复；别再报，也别自己先做。` };
-      const line = `[待审 #${rec.id}] 群「${rec.group_name}」里 ${rec.nick}(QQ ${rec.user_id}) 想让我：${request}`
-        + `${why ? `（原因：${why}）` : ""} 原话：「${rec.trigger}」 回「批 ${rec.id}」执行，「驳 ${rec.id}」不做`;
+      if (rec.existing) return { pending: true, id: rec.id, text: `#${rec.id} 已经在清单里了，等主人回来看；别再报，也别自己先做。` };
       if (!r?.cfg?.owner) throw new Error("这一轮找不到主人的号，没法私聊；先别做");
       try {
-        await privateSay(r.cfg, line);
+        await sendDigest(r.cfg);
       } catch (e) {
-        throw new Error(`待审 #${rec.id} 记下了，但私聊没发出去（${e.message}）；先别做，等主人问起`);
+        throw new Error(`待审 #${rec.id} 记下了，但私聊清单没发出去（${e.message}）；先别做，等主人问起`);
       }
-      return { pending: true, id: rec.id, text: `已报给主人（#${rec.id}），等回复。别再重复报同一件，也别自己先做。` };
+      try { await groupSay(r.cfg, ctx.group_id, "记下了，等主人回来看。"); } catch { /* 群里说一声失败不挡事 */ }
+      return { pending: true, id: rec.id, text: `记进待审清单了（#${rec.id}），清单已私聊给主人。别再重复报同一件，也别自己先做。` };
+    }
+    case "owner_away": {
+      // 只有主人那一轮才看得到这个工具（网关按轮给）
+      if (!ctx.owner) throw new Error("只有主人那一轮能用");
+      const away = a.away !== false;
+      STATE.qq.away = away; saveState();
+      return {
+        away,
+        text: away
+          ? "记下了：主人不在群。群友要动真家伙的事会攒成清单，私聊发给主人。"
+          : "记下了：主人在。",
+      };
     }
     default: throw new Error("没有这个工具：" + req.tool);
   }
@@ -1153,7 +1161,8 @@ END_HOOKS.push((run, f = {}) => {
     PENDING.delete(r.key);
     const last = pend[pend.length - 1];
     const lines = pend.map((x) => x.line || x.text).join("\n");
-    deliver(last.cfg, last.ev, r.key, r.kind, pend.map((x) => x.text).join("\n"), lines, pend.map((x) => x.ev));
+    const note = pend.map((x) => x.pending).filter(Boolean).join("\n\n");
+    deliver(last.cfg, last.ev, r.key, r.kind, pend.map((x) => x.text).join("\n"), lines, pend.map((x) => x.ev), note);
   }
 });
 
