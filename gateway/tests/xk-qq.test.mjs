@@ -13,7 +13,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
+  drainQQSay, ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -707,6 +707,8 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
   assert.equal(oq.unattended, false);
   assert.match(oq.mcpConfig, /"qq"/, "照样能用 QQ 工具");
   assert.match(JSON.parse(oq.mcpConfig).mcpServers.qq.env.CCAPP_QQ_TOOLS, /owner_away/, "主人那轮能用 owner_away");
+  assert.match(JSON.parse(oq.mcpConfig).mcpServers.qq.env.CCAPP_QQ_TOOLS, /ask_home/, "主人那轮能问屋里");
+  assert.ok(!mcp.mcpServers.qq.env.CCAPP_QQ_TOOLS.includes("ask_home"), "群友那轮调不到 ask_home");
   assert.equal(oq.sessionId, sid, "接着这个群自己那段");
   finish(oq, "在");
   // 私聊还是屋里那段（工作模式），不进群会话
@@ -910,4 +912,52 @@ test("群里那段叠上口吻文件；私聊、工作模式、干净会话都�
     assert.ok(!String(queued.at(-1).appendSystemPrompt || "").includes("叫主管"));
     finish(queued.at(-1), "在。");
   } finally { delete process.env.CCAPP_QQ_STYLE_FILE; }
+});
+
+// ── 群聊记忆、问屋里、屋里往群里发话（#134 第三步补的三条）──
+
+test("ask_home：主管轮问屋里，另起一轮只读的，答完交回群里那一轮", async () => {
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  const q = queued.at(-1);
+  const id = "askhome-" + Date.now().toString(36);
+  const reqDir = path.join(CLEAN_DIR, ".rpc", "req");
+  fs.mkdirSync(reqDir, { recursive: true });
+  fs.writeFileSync(path.join(reqDir, id + ".json"), JSON.stringify({ id, runId: q.id, tool: "ask_home", args: { question: "屋里知道这事吗" } }));
+  const job = drainQQRpc();
+  await wait(() => queued.length === 2, 1000);
+  const ask = queued.at(-1);
+  assert.equal(path.resolve(ask.cwd), path.resolve(ROLE_XIAOKE), "用屋里那段的人设");
+  assert.deepEqual(ask.qqGuard.tools, ["mcp__xk-memory__recall", "mcp__xk-memory__board_read"], "只留 recall 和 board_read");
+  assert.ok(!/Bash|Edit|Write|device/.test(JSON.stringify(ask.qqGuard)), "不给真家伙");
+  assert.match(ask.message, /群里的你在问，主管在场/);
+  finish(ask, "屋里说：知道，周三。");
+  await job;
+  const res = JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".rpc", "res", id + ".json"), "utf8"));
+  assert.equal(res.ok, true);
+  assert.match(res.result.answer, /周三/);
+  finish(q, "好");
+});
+
+test("屋里往群里发话：群名对得上就发、记进那个群的最近消息；群名不对报「没有这个群」", async () => {
+  const bot = await connectedBot();
+  try {
+    const cfg2 = { ...cfg, groups: { "555": "self" }, groupNames: { "测试群": "555" } };
+    const dir = path.join(CFG.workspace, "roles", "xiaoke", ".xk", "qq-say");
+    fs.mkdirSync(path.join(dir, "req"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "res"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "req", "a.json"), JSON.stringify({ id: "a", target: "测试群", text: "开场白第一行\n第二行", at: 1 }));
+    fs.writeFileSync(path.join(dir, "req", "b.json"), JSON.stringify({ id: "b", target: "没配过的群", text: "在吗", at: 1 }));
+    await drainQQSay(cfg2);
+    const sent = bot.actions.filter((a) => a.action === "send_group_msg");
+    assert.equal(sent.length, 1, "发出去了");
+    assert.match(sent[0].params.message[0].data.text, /第一行\n第二行/, "换行保留");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "res", "a.json"), "utf8")).ok, true);
+    const b = JSON.parse(fs.readFileSync(path.join(dir, "res", "b.json"), "utf8"));
+    assert.equal(b.ok, false, "查不到的群不猜");
+    assert.match(b.error, /没有这个群/);
+    // 下次群里叫到她：上下文里知道自己已经露过面
+    await handleEvent(cfg2, group(STRANGER, [{ type: "text", data: { text: "小克 在吗" } }]));
+    assert.match(queued.at(-1).message, /在屋里发的/, "群里那段知道这是自己发的话");
+    finish(queued.at(-1), "在。");
+  } finally { stopQQ(); bot.close(); process.env.CCAPP_QQ_GAP_MS = "0"; }
 });

@@ -6,8 +6,30 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { digest, idsIn, injectFor, injectReset, load, remember, remove, search, update } from "../gw/xk-memstore.mjs";
+import { digest, idsIn, injectFor, injectReset, isQqGroupRun, load, memDirFor, qqMemDir, remember, remove, search, update } from "../gw/xk-memstore.mjs";
 
+const HOOK = fileURLToPath(new URL("../gw/xk-hook.mjs", import.meta.url));
+/** 跑一次 hook，返回它的额外上下文（JSON 里的 additionalContext） */
+function hook(ev, d, run, input = {}) {
+  const r = spawnSync(process.execPath, [HOOK, ev, d], {
+    input: JSON.stringify({ session_id: "s1", source: "start", ...input }),
+    encoding: "utf8", env: { ...process.env, CCAPP_RUN_ID: run },
+  });
+  if (r.status !== 0) throw new Error(r.stderr);
+  try { return JSON.parse(r.stdout).hookSpecificOutput.additionalContext || ""; } catch { return ""; }
+}
+/** 跑一次记忆 MCP（一行一个 JSON 请求），返回 id → 回复 */
+function mcp(d, run, msgs) {
+  const init = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+  ];
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), d], {
+    input: [...init, ...msgs].map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8",
+    env: { ...process.env, CCAPP_RUN_ID: run },
+  });
+  return Object.fromEntries(r.stdout.trim().split("\n").map((l) => JSON.parse(l)).map((m) => [m.id, m]));
+}
 const tmp = (n) => { const d = path.join(process.env.CCAPP_TMP, n); fs.mkdirSync(d, { recursive: true }); return d; };
 
 test("记住、变了标成已过去、按关键词和时间找回", () => {
@@ -53,7 +75,8 @@ test("MCP 服务：工具清单、记住、回想、出错带原因", () => {
   const r = spawnSync(process.execPath, [fileURLToPath(new URL("../gw/xk-memory-mcp.mjs", import.meta.url)), d],
     { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", encoding: "utf8", env: { ...process.env, CCAPP_RUN_ID: "r1" } });
   const out = Object.fromEntries(r.stdout.trim().split("\n").map((l) => JSON.parse(l)).map((m) => [m.id, m]));
-  assert.deepEqual(out[2].result.tools.map((t) => t.name), ["remember", "recall", "forget", "board_write", "board_read", "room_say", "room_mode", "room_read", "context_next"]);
+  // 屋里那段：除记忆和群之外，多一个只读的 recall_qq 和往 QQ 群发话的 qq_say（#134）
+  assert.deepEqual(out[2].result.tools.map((t) => t.name), ["remember", "recall", "forget", "board_write", "board_read", "room_say", "room_mode", "room_read", "recall_qq", "qq_say", "context_next"]);
   assert.match(out[3].result.content[0].text, /记下了/);
   assert.match(out[4].result.content[0].text, /热可可/);
   assert.equal(out[5].result.isError, true);
@@ -105,4 +128,52 @@ test("room_read：群文件路径由网关给；没给就说清楚，不拿 HOME
   const file = path.join(d, "room.jsonl");
   fs.writeFileSync(file, JSON.stringify({ n: 0, from: "owner", text: "在吗", at: Date.parse("2026-11-06T10:00:00") }) + "\n");
   assert.match(call({ ...process.env, XK_ROOM_FILE: file }).content[0].text, /主人：在吗/);
+});
+
+// ── 群聊记忆和屋里分开（#134 第三步补的一条）──
+test("群里那段的记忆库和屋里分开：自动附的只有群聊库", () => {
+  const d = tmp("mem-qq1");
+  fs.mkdirSync(path.join(d, ".xk", "runs"), { recursive: true });
+  fs.writeFileSync(path.join(d, ".xk", "runs", "g1.json"), JSON.stringify({ kind: "self", channel: "qq-group" }));
+  remember(d, { text: "主人的私事：下周三去看牙", kind: "fact", date: "2026-11-01" });
+  remember(qqMemDir(d), { text: "群里在聊猫", kind: "event", date: "2026-11-01" });
+  assert.equal(isQqGroupRun(d, "g1"), true);
+  assert.equal(memDirFor(d, "g1"), qqMemDir(d), "群里那段用群聊库");
+  assert.equal(memDirFor(d, "没这一轮"), d, "认不出就是屋里的");
+  const out = hook("start", d, "g1");
+  assert.match(out, /群里在聊猫/);
+  assert.doesNotMatch(out, /看牙/, "屋里的事一个字都不带到群里");
+  // 屋里那段照旧
+  const home = hook("start", d, "app1");
+  assert.match(home, /看牙/);
+  assert.doesNotMatch(home, /群里在聊猫/, "屋里不自动带群聊记忆（要用 recall_qq 自己查）");
+});
+
+test("群里那段的 MCP：remember 进群聊库、recall 查不到屋里，工具清单里没有 recall_qq / qq_say", () => {
+  const d = tmp("mem-qq2");
+  fs.mkdirSync(path.join(d, ".xk", "runs"), { recursive: true });
+  fs.writeFileSync(path.join(d, ".xk", "runs", "g2.json"), JSON.stringify({ kind: "self" }));
+  remember(d, { text: "主人的私事：下周三去看牙", kind: "fact", date: "2026-11-01" });
+  const out = mcp(d, "g2", [
+    { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "remember", arguments: { text: "群里在聊猫", kind: "event", date: "2026-11-01" } } },
+    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "recall", arguments: { query: "看牙" } } },
+  ]);
+  const names = out[2].result.tools.map((t) => t.name);
+  assert.ok(!names.includes("recall_qq"), "群里那段不用 recall_qq");
+  assert.ok(!names.includes("qq_say"), "群里那段不能往别的群发话");
+  assert.match(out[3].result.content[0].text, /记下了/);
+  assert.ok(load(qqMemDir(d)).some((m) => /猫/.test(m.text)), "写进群聊库");
+  assert.ok(!load(d).some((m) => /猫/.test(m.text)), "没写进屋里的库");
+  assert.doesNotMatch(out[4].result.content[0].text, /看牙/, "查不到屋里的");
+  assert.match(out[4].result.content[0].text, /没有找到/);
+});
+
+test("屋里那段能 recall_qq 读群聊库", () => {
+  const d = tmp("mem-qq3");
+  remember(qqMemDir(d), { text: "阿三在群里说要减肥", kind: "event", date: "2026-11-01" });
+  const out = mcp(d, "app1", [
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "recall_qq", arguments: { query: "减肥" } } },
+  ]);
+  assert.match(out[2].result.content[0].text, /减肥/);
 });

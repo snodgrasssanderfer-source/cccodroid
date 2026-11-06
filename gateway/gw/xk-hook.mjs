@@ -4,7 +4,7 @@
 // 失败就非零退出、原因写 stderr：Claude Code 会把 hook 出错显示出来，这一轮照常进行。
 import fs from "node:fs";
 import path from "node:path";
-import { digest, idsIn, injectFor, injectReset } from "./xk-memstore.mjs";
+import { digest, idsIn, injectFor, injectReset, memDirFor } from "./xk-memstore.mjs";
 import { unreadText } from "./xk-board.mjs";
 
 const [ev, dir] = process.argv.slice(2);
@@ -13,14 +13,18 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
   try {
     const input = raw ? JSON.parse(raw) : {};
     const parts = [];
+    const run0 = process.env.CCAPP_RUN_ID;
+    // 群里那段（QQ 群 self）只碰群聊库：自动附的记忆、当场 remember 都走这里，屋里的私事不会漏到群里
+    const mem = memDirFor(dir, run0);
+    const inGroup = mem !== dir;
     if (ev === "start") {
-      const d = digest(dir);
+      const d = digest(mem);
       // 已带清单：新开、清空、压缩后都重来（压缩把以前带的连同对话一起摘没了）；resume 是同一段接着跑，接着记
-      injectReset(dir, input.session_id, idsIn(d), input.source !== "resume");
+      injectReset(mem, input.session_id, idsIn(d), input.source !== "resume");
       if (d) parts.push("你记得的要点（自动带上的，不全；需要时用 recall 查）：\n" + d);
     } else if (ev === "prompt") {
       // 同一段会话里带过的不再带，最多 4 条、每条截短（#125 省额度）
-      const hits = injectFor(dir, input.session_id, input.prompt || "");
+      const hits = injectFor(mem, input.session_id, input.prompt || "");
       if (hits) parts.push("可能和这条消息有关的记忆（自动按关键词挑的，可能不准；这段对话里带过的不再重复）：\n" + hits);
       // 接班 / 交回说明按这一轮的 run 号放（xk-handover.mjs 在起进程之前写好），用完就删，只出现在接手后的第一条
       const run = process.env.CCAPP_RUN_ID;
@@ -37,8 +41,9 @@ process.stdin.on("data", (c) => (raw += c)).on("end", () => {
           fs.rmSync(ask);
         }
       } catch {}
-      // 留言板上给她的新便条：读一次就记成已读，之后想再看用 board_read
-      const board = unreadText(path.dirname(dir), path.basename(dir), run);
+      // 留言板上给她的新便条：读一次就记成已读，之后想再看用 board_read。
+      // 群里那段不递：群里没有留言板工具，主人的便条不该出现在群里那段的上下文里
+      const board = inGroup ? "" : unreadText(path.dirname(dir), path.basename(dir), run);
       if (board) parts.push(board);
       // 这一轮实际用的模型：人设里写着「系统写了就照实说」，这里就是系统写的那句（run.mjs 起 claude 时设的环境变量）
       const model = process.env.ANTHROPIC_MODEL, prov = process.env.CCAPP_PROVIDER;
