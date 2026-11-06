@@ -51,20 +51,43 @@ export const PACE = { quietMs: 2000, maxMs: 8000, calledMs: 1000, followMs: 5 * 
 // 上限：一批主人的话，第一波最多两个人开口；之后主人不开口，她们之间点名交办的最多再接六句、没点名自己插话的最多三句，两样分开算，
 // 免得派活被闲聊吃掉（主人 11-03 定的）。到了上限群里说一声，不然看着像谁不理人。插话和接话都用她平时的模型（#64）
 export const CAP = { wave: 2, chain: 3, named: 6 };
-export const GOAL_REST = "【歇】";
-const GOAL_SELF = 30;   // 目标模式里一个人自己接着干的上限（一批里），防空转烧额度
 
 // ── 群的四种模式（#108，主人 11-04 定的）：主人在群页的二级弹窗里切，带一段补充说明 ──
 // 平时就是上面这套；计划：能查能读能讨论、不动手，小克收成一份计划等主人点头；目标：点名接话不设上限，做到完为止；
-// 直播：一人操作一人旁观、同一时刻一个人出声（发言牌随 #107 分期接上，现在先靠规矩）。连说、一波、插话间隔照旧管秩序
+// 直播（11-05 改）：只有主人指定的那一位玩、出声，其他人不说话；她说完自动接着打，句末写【停】或主人开口就停
 export const MODES = {
   normal: { name: "平时", rules: "" },
   plan: { name: "计划", rules: "这一轮只商量不动手：可以查资料、读代码和文档、上网看、讨论；不改文件、不装东西、不重启网关、不往外发消息。商量完由小克把计划收成一份（目标、谁做哪块、怎么算做完）贴在群里，等主人点头再开工。" },
   goal: { name: "目标", rules: "围着这个目标一直干到完成：谁做完一块就在群里报一句结果（第一段只写结果）；点名接话不设上限，但别几个人抢着说同一件事。小克判断目标达成后，在群里报总结果，再用 room_mode 切回平时。说完系统会叫你接着干；你那份做完了、要等别人或主人拿主意，就在这句末尾写「【歇】」，有人点你名再起来。" },
-  live: { name: "直播", rules: "在直播：同一时刻只一个人出声，一人操作、一人旁观解说；台词短，先说后做，别抢别人的话。" },
+  live: { name: "直播", rules: "在直播：只有主人指定的那一位玩、出声，其他人不说话；台词短，先说后做。" },
 };
 STATE.room.mode ||= { kind: "normal", prompt: "", since: 0, rounds: 0 };
-const named = () => (STATE.room.mode.kind === "goal" ? Infinity : CAP.named);
+const named = () => (STATE.room.mode.kind === "goal" || STATE.room.mode.kind === "live" ? Infinity : CAP.named);
+// 直播（主人 11-04 晚定的）：哈基米操作；解说不定死，每次她说完，从其余醒着的人里随机挑一位接，解说完再交回她。主人一开口就打断这一串
+export const LIVE_PLAYER = "hachimi";
+// 主人开直播时那句说明里写了「小克操作」「哈基米解说」就照它来；没写操作的默认哈基米，没写解说的就其余几位随机
+const LIVE_NAMES = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" };
+// 说明栏没填的话，开直播之后主人在群里说的也算；越新的越作数（11-05 主人定）
+function liveCast(word) {
+  const m = STATE.room.mode, owner = messages().filter((x) => x.from === "owner" && x.at >= (m.since || 0)).map((x) => x.text);
+  for (const t of [String(m.prompt || ""), ...owner].reverse()) {
+    const hit = Object.keys(LIVE_NAMES).filter((id) => new RegExp(LIVE_NAMES[id] + "[^，,。；;、\\s]{0,3}" + word).test(String(t || "")) && roleById(id));
+    if (hit.length) return hit;
+  }
+  return [];
+}
+// 11-05 主人改：直播只一个人玩，谁玩由主人指定（说明栏或开直播后的话写「某某玩/操作」，或直接点名/@ 她），其他人不出声
+function liveOwnerCalled() {
+  const m = STATE.room.mode;
+  const last = messages().filter((x) => x.from === "owner" && x.at >= (m.since || 0)).reverse().find((x) => (x.to || []).length || called(x.text).length);
+  return last ? [...(last.to || []), ...called(last.text)] : [];
+}
+const livePlayer = () => { const p = [...liveCast("(操作|打|上场|玩)"), ...liveOwnerCalled(), LIVE_PLAYER].find((id) => !asleep(id)); return p || ROLES.map((r) => r.id).find((id) => !asleep(id)) || null; };
+export const LIVE_STOP = "【停】";
+export const GOAL_REST = "【歇】";
+const GOAL_SELF = 30;   // 目标模式里一个人自己接着干的上限（一批里），防空转烧额度
+// 11-05 主人加回：写了「某某解说」才有解说，不随机派；玩的说完一步 → 解说接一句 → 交回玩的
+const liveCommentator = () => { const p = livePlayer(); return liveCast("解说").find((id) => id !== p && !asleep(id)) || null; };
 /** 切模式：群里说一声，推给界面 */
 export function setMode(kind, prompt = "", by = "owner") {
   if (!MODES[kind]) throw httpError(400, "没有这个模式：" + kind);
@@ -117,7 +140,9 @@ function feed(id, kind, caller, cont = false) {
     : (caller ? `${nameOf(caller)}在群里叫你了，接她的话；交给你的事能做就做。` : "轮到你在群里接话了，直接说你要说的。") +
       "要是在汇报干了什么活，第一段一两句只写结果，过程和细节空一行放后面（群页会把后面折起来，主人点开才看）。";
   const md = STATE.room.mode, m = MODES[md.kind];
-  const mode = md.kind === "normal" ? "" : `\n（现在是${m.name}模式${md.prompt ? "，主人说：" + md.prompt : ""}。${m.rules}）`;
+  let rules = m.rules;
+  if (md.kind === "live") rules += id === livePlayer() ? `这一场你负责玩，主人看着${liveCommentator() ? "，" + nameOf(liveCommentator()) + "在旁边解说（系统会派她，别点名叫她）" : "，其他人不出声"}：每次先用一两句说要怎么打，再动手，动完报结果。说完系统会让你接着打下一步；打完了、出了问题要主人拿主意、或者该停了，就在这句末尾写「${LIVE_STOP}」，等主人开口。` : id === liveCommentator() ? `这一场${nameOf(livePlayer())}玩，你是旁观解说：轮到你时短评一两句，不碰游戏，不点名叫人。` : `这一场${nameOf(livePlayer())}玩，你不出声。`;
+  const mode = md.kind === "normal" ? "" : `\n（现在是${m.name}模式${md.prompt ? "，主人说：" + md.prompt : ""}。${rules}）`;
   return { upTo: all.length - 1, fresh: lines.length > 0 || cont, text: `${FEED_HEAD}主人把你们三个叫到一个群里了，大家都听得到。下面是群里你上次说话之后的新消息）${mode}\n${lines.join("\n")}\n\n（${ask}）` };
 }
 
@@ -232,7 +257,17 @@ async function afterSaid(who, text, round) {
   const r = ROUNDS.get(round);
   // 主人又开口了：旧的那批不再往下接（目标模式里只认主人开口；她们私聊里 room_say 进来的不打断别人接着干）
   if (!r || (STATE.room.mode.kind === "goal" ? round < OWNER_ROUND : round !== ROUND)) return;
+  const live = STATE.room.mode.kind === "live";
   const named = called(text, who).filter((id) => !asleep(id));
+  // 直播：操作的那位每句都爱喊「解说小鱼」，按点名走就永远是同一个人解说；所以她说完不看点名，照样随机挑（主人 11-05 定的不定死）
+  if (live) {
+    // 直播（11-05 改）：只玩的那位出声；她说完接着派她打下一步，句末写了【停】或主人开口就停。点名一概不理
+    const p = livePlayer();
+    const c = liveCommentator(), go = String(text || "").trim() && !String(text || "").includes(LIVE_STOP) && r.pending <= 0;
+    if (who === p && go) speak(c || p, "reply", round, who);
+    else if (who === c && r.pending <= 0) speak(p, "reply", round, who);
+    return;
+  }
   if (named.length) callNamed(r, round, named, who);
   if (STATE.room.mode.kind === "goal") {
     if (String(text || "").includes(GOAL_REST)) return;
@@ -284,6 +319,7 @@ async function decide(b) {
     try { aside = (await judge("owner", null, ids)).aside; }
     catch (e) { log("聊天室：判断有没有人插话失败（这次就不插了）：" + e.message); }
   }
+  if (STATE.room.mode.kind === "live") { const p = livePlayer(); ids = p ? [p] : []; aside = null; }   // 直播：只有玩的那位出声
   const goal = STATE.room.mode.kind === "goal";
   if (goal) { const n = [...new Set([...b.to, ...b.texts.flatMap((x) => called(x))])].filter((id) => !asleep(id)); ids = n.length ? n : ROLES.map((x) => x.id).filter((id) => !asleep(id)); aside = null; }   // 11-06：目标模式点了名叫点名的，没点名醒着的全叫
   else ids = ids.slice(0, CAP.wave);
