@@ -6,6 +6,7 @@ import path from "node:path";
 import http from "node:http";
 import https from "node:https";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { CFG, LIVE, log } from "./config.mjs";
 import { END_HOOKS, enqueue } from "./queue.mjs";
 import { markRun } from "./xk-memory.mjs";
@@ -13,6 +14,13 @@ import { RUNS } from "./runs.mjs";
 import { STATE, projectOf, saveState } from "./xk-core.mjs";
 import { roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
+// 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
+import {
+  normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
+  mergeStickerLibrary, applyStickerNote, markStickerUsed, sanitizeUserText,
+} from "./xk-qq-port.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // 和 state.json 放一起（.config/xiaoke）；只在手机上，不进仓库
 export const CONFIG_FILE = path.join(CFG.home, ".config", "xiaoke", "qq.json");
@@ -25,6 +33,18 @@ export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit
 // 人设卡：主人改好的琉璃川椿卡放这里。不能叫 CLAUDE.md（那会被当成项目说明，叠在 Claude Code 默认的编程助手提示下面）；
 // 它整个当系统提示（--system-prompt），Claude Code 默认那套一个字都不带
 export const CARD_FILE = path.join(CLEAN_DIR, "card.md");
+// 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
+export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
+export const QQ_MCP_NAME = "qq";
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "memory_append", "memory_query", "memory_remove"];
+/** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
+export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
+// MCP 和网关不在一个进程里：借文件来回（和留言板、群一个路子）。MCP 写 req/，网关做完把结果写 res/
+export const RPC_DIR = path.join(CLEAN_DIR, ".rpc");
+const REQ_DIR = path.join(RPC_DIR, "req"), RES_DIR = path.join(RPC_DIR, "res"), RUN_DIR = path.join(RPC_DIR, "runs"), TMP_DIR = path.join(RPC_DIR, "tmp");
+// 表情：QQ 收藏表情是源（fetch_custom_face_detail / add_custom_face）；本地只留备注、笔记、标签、用过几次
+export const STICKER_FILE = path.join(CLEAN_DIR, "stickers.json");
+export const MEMORY_FILE = path.join(CLEAN_DIR, "memory.json");
 
 const RECONNECT_MAX = 30000;
 const retryBase = () => Number(process.env.CCAPP_QQ_RETRY_MS) || 1000;
@@ -36,12 +56,23 @@ const BUSY = new Map();      // 会话 → { at, cid }：正在跑一轮
 const PENDING = new Map();   // 会话 → 跑着时攒下的几句（跑完一起递进去）
 const RUNSQQ = new Map();    // run 号 → { key, cfg, ev, kind, at, head }
 const SENT = new Set();      // 自己发出去的 message_id：群里「引用了机器人的话」要认它
-const ECHO = new Map();      // 发出去的 echo → 发的是什么动作（收回 message_id 记账）
+const WAITERS = new Map();   // 发出去的 echo → { action, resolve, reject, timer }
+const NICK = new Map();      // QQ 号 → 昵称（从收到的消息里记，拍一拍要用）
+const MSGS = new Map();      // message_id → { key, nick, text, media }：引用、看图、收藏都要还原
+const MEMBERS = new Map();   // 会话 → Map(QQ 号 → 昵称)：@ 和拍一拍只认这个会话里出现过的人
+const SENT_KEY = new Map();  // 会话 → Set(自己发出去的 message_id)：引用自己的话也算数
 export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；真发由 send 去做）
 /** 测试用：把模块里的会话状态清干净 */
 export function resetQQ() {
   STATE.qq = { modes: {}, sessions: {} };
-  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); ECHO.clear(); REPLIES.length = 0;
+  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); REPLIES.length = 0;
+  FACES_AT = 0; FACES_JOB = null;
+  REPLAY.clear(); LAST_SWEEP = 0;
+}
+function remember(id, o, map, cap) {
+  if (!id) return;
+  map.delete(id); map.set(String(id), o);
+  while (map.size > cap) map.delete(map.keys().next().value);
 }
 
 // ── 配置 ──
@@ -164,12 +195,31 @@ function armRetry(cfg, wait = nextDelay()) {
 export function stopQQ() { STOPPED = true; if (TIMER) clearTimeout(TIMER); TIMER = null; if (SOCK) { try { SOCK.destroy(); } catch {} } SOCK = null; status.connected = false; }
 export const qqStatus = () => ({ ...status });
 
+const newEcho = (action) => action + ":" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+/** 记下等回执的 echo；回执一直不来也不会无限涨（超过 1000 条丢最老的） */
+function track(echo, w) {
+  WAITERS.set(echo, w);
+  while (WAITERS.size > 1000) WAITERS.delete(WAITERS.keys().next().value);
+}
+/** 发一个动作，不等回执（回话、切模式提示这类） */
 function send(cfg, action, params) {
   if (!SOCK) return false;
-  const echo = action + ":" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  ECHO.set(echo, action);
+  const echo = newEcho(action);
+  track(echo, { action });
   try { SOCK.write(encodeFrame(JSON.stringify({ action, params, echo }))); return true; }
-  catch (e) { say("发不出去：" + e.message); return false; }
+  catch (e) { WAITERS.delete(echo); say("发不出去：" + e.message); return false; }
+}
+/** 发一个动作，等 NapCat 的回执（发消息要拿 message_id、看图要拿图片地址） */
+function act(action, params, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    if (!SOCK) return reject(new Error("没连上 NapCat，发不出去"));
+    const echo = newEcho(action);
+    const timer = setTimeout(() => { WAITERS.delete(echo); reject(new Error(`NapCat 没回话（${action}）`)); }, timeoutMs);
+    timer.unref?.();
+    track(echo, { action, resolve, reject, timer });
+    try { SOCK.write(encodeFrame(JSON.stringify({ action, params, echo }))); }
+    catch (e) { clearTimeout(timer); WAITERS.delete(echo); reject(e); }
+  });
 }
 
 // ── 一条 OneBot 事件 ──
@@ -195,27 +245,114 @@ export function shouldAnswer(ev, cfg) {
 const convKey = (ev) => (ev.message_type === "group" ? "g:" + ev.group_id : "p:" + ev.user_id);
 const convName = (ev) => (ev.message_type === "group" ? ev.group_name || String(ev.group_id) : String(ev.user_id));
 
+/** 压成一行：正文里的换行是伪造消息头的入口（有人自己写一行「主人(QQ …)：」），一律换成空格。
+ *  号码只认 NapCat 事件里的 user_id，正文里写什么都不算 */
+export function oneLine(s, max = 2000) {
+  return String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").replace(/ {2,}/g, " ").trim().slice(0, max);
+}
+const short = (s, n = 60) => { const t = oneLine(s, n + 1); return t.length > n ? t.slice(0, n) + "…" : t; };
+/** 昵称：群名片优先，其次昵称；都没有就用 QQ 号 */
+export function nickOf(ev) {
+  return oneLine(ev?.sender?.card || ev?.sender?.nickname || NICK.get(String(ev?.user_id ?? "")) || ("QQ" + (ev?.user_id ?? "?")), 40);
+}
+/** 递进干净会话的一行：`[群 <群名>] <昵称>(QQ <号>)：<正文>`
+ *  引用写成 `[引用 <谁>：<原文前 60 字>]`；号码只来自事件 */
+export function incomingLine(ev, text, quote = null) {
+  const who = `${nickOf(ev)}(QQ ${ev.user_id})`;
+  const head = ev.message_type === "group" ? `[群 ${oneLine(ev.group_name || ev.group_id, 60)}] ${who}：` : `[私聊] ${who}：`;
+  const q = quote ? `[引用 ${short(quote.nick, 20)}：${short(quote.text)}] ` : "";
+  return head + q + oneLine(text);
+}
+/** 拍一拍：notice 里不一定带昵称，先用收消息时记下的 */
+export function pokeLine(ev, bot) {
+  const w = NICK.get(String(ev.user_id)) || ("QQ" + ev.user_id);
+  const t = String(ev.target_id) === String(bot) ? "你" : (NICK.get(String(ev.target_id)) || ("QQ" + ev.target_id));
+  return `[拍一拍] ${w} 拍了拍 ${t}`;
+}
+
+// 群里没叫到她的消息：先攒着（每群最近 30 条），下次真叫到她时一起当上下文递进去。
+// 真正的「自己插话」要起轮次花额度，等主人定频率（#134 第二步）
+const HISTORY = new Map();
+const HISTORY_MAX = 30;
+function historyPush(ev, line) {
+  if (ev.message_type !== "group") return;
+  const g = String(ev.group_id), a = HISTORY.get(g) || [];
+  a.push(line); while (a.length > HISTORY_MAX) a.shift();
+  HISTORY.set(g, a);
+}
+function historyTake(ev) {
+  if (ev.message_type !== "group") return "";
+  const g = String(ev.group_id), a = HISTORY.get(g);
+  if (!a?.length) return "";
+  HISTORY.delete(g);
+  return "[最近群里的消息]\n" + a.join("\n") + "\n[/最近群里的消息]\n";
+}
+/** 引用的是哪条：先查收到的消息（名片 + 正文），查不到再问 NapCat（get_msg） */
+async function quoteOf(cfg, id) {
+  const hit = MSGS.get(String(id));
+  if (hit) return hit;
+  try {
+    const d = await act("get_msg", { message_id: Number(id) || id }, 4000);
+    if (!d || !d.message) return { nick: "未知", text: "" };
+    return { nick: d.sender?.card || d.sender?.nickname || "未知", text: parseSegments(d.message, cfg.bot).text };
+  } catch { return { nick: "未知", text: "" }; }
+}
+
 function onOneBot(cfg, raw) {
   let ev;
   try { ev = JSON.parse(raw); } catch { return say("收到的东西不是 JSON"); }
-  if (ev.post_type === "message" && (ev.message_type === "private" || ev.message_type === "group")) {
-    const p = parseSegments(ev.message, cfg.bot);
-    if (!p.text) return;
-    handleMessage(cfg, ev, p.text);
+  // 自己发出去的动作回来了：认下 message_id（「引用了机器人的话」要靠它），等着的调用拿到结果
+  if (ev.echo && WAITERS.has(ev.echo)) {
+    const w = WAITERS.get(ev.echo); WAITERS.delete(ev.echo); if (w.timer) clearTimeout(w.timer);
+    if (ev.retcode !== 0) {
+      const why = `retcode ${ev.retcode}` + (ev.wording ? `：${ev.wording}` : "");
+      if (w.reject) w.reject(new Error(why)); else say(`发回话没成（${w.action}）：${why}`);
+    } else {
+      if (ev.data?.message_id != null) { SENT.add(String(ev.data.message_id)); if (SENT.size > 500) SENT.delete(SENT.values().next().value); }
+      w.resolve?.(ev.data || {});
+    }
     return;
   }
-  // 自己发出去的那句回来了：记下 message_id，「引用了机器人的话」以后认得出
-  if (ev.echo && ECHO.has(ev.echo)) {
-    const action = ECHO.get(ev.echo); ECHO.delete(ev.echo);
-    if (ev.retcode !== 0) say(`发回话没成（${action}）：retcode ${ev.retcode}`);
-    else if (ev.data?.message_id != null) {
-      SENT.add(String(ev.data.message_id));
-      if (SENT.size > 500) SENT.delete(SENT.values().next().value);
-    }
-  }
+  handleEvent(cfg, ev).catch((e) => say("处理消息出错：" + e.message));
 }
 
-/** 说一句话回去；太长按段落拆成几条。群里引用对方那条 */
+/** 一条事件（消息 / 拍一拍）：整理了再决定接不接 */
+export async function handleEvent(cfg, ev) {
+  if (ev.post_type === "notice" && ev.notice_type === "poke") {
+    const line = pokeLine(ev, cfg.bot);
+    // 拍的是她（或在私聊里）：当成叫她；@ 自己是用来说「这句是冲她来的」，原话在 line 里
+    const toMe = String(ev.target_id) === String(cfg.bot) || ev.group_id == null;
+    const fake = { ...ev, message_type: ev.group_id != null ? "group" : "private", message_id: null, sender: ev.sender,
+      message: toMe ? [{ type: "at", data: { qq: cfg.bot } }, { type: "text", data: { text: line } }] : [] };
+    if (toMe) handleMessage(cfg, fake, line, { line });
+    else historyPush(fake, line);   // 别人互相拍：不当成叫她
+    return;
+  }
+  if (ev.post_type !== "message" || (ev.message_type !== "private" && ev.message_type !== "group")) return;
+  const p = parseSegments(ev.message, cfg.bot);
+  if (!p.text) return;
+  const nick = nickOf(ev);
+  NICK.set(String(ev.user_id), nick);
+  const key = convKey(ev);
+  // 这个会话里出现过谁：@ 和拍一拍只认这里（原版护栏；号码只从事件里来）
+  const members = MEMBERS.get(key) || new Map();
+  members.set(String(ev.user_id), nick);
+  while (members.size > 200) members.delete(members.keys().next().value);
+  MEMBERS.set(key, members);
+  // 消息号、正文、图都记一份：引用、看图、收藏都靠它
+  const media = imageSegs(ev.message).slice(0, 4).map((s, i) => ({ kind: "image", index: i, url: s.url, file: s.file }));
+  if (ev.message_id) remember(ev.message_id, { key, nick, text: p.text, media }, MSGS, 500);
+  const quote = p.reply ? await quoteOf(cfg, p.reply) : null;
+  const line = incomingLine(ev, p.text, quote);
+  // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
+  const cmd = String(ev.user_id) === String(cfg.owner) && [...WORK_ON, ...WORK_OFF].includes(p.text.replace(/\s+/g, ""));
+  if (!cmd && !shouldAnswer(ev, cfg)) return historyPush(ev, line);
+  // 叫到她了：把没叫她的那些一起递进去（工作模式不掺，和以前一样只递那句话）
+  const ctx = modeOf(convKey(ev)) === "chat" ? historyTake(ev) : "";
+  handleMessage(cfg, ev, p.text, { line: ctx + line });
+}
+
+/** 说一句话回去；太长按段落拆成几条。群里引用对方那条（拍一拍的回复没有消息可引） */
 function reply(cfg, ev, text) {
   const parts = String(text || "").trim();
   if (!parts) return;
@@ -229,9 +366,9 @@ function reply(cfg, ev, text) {
   if (left) chunks.push(left);
   for (const c of chunks) {
     REPLIES.push({ key: convKey(ev), ev, text: c });
-    const msg = ev.message_type === "group"
-      ? [{ type: "reply", data: { id: String(ev.message_id) } }, { type: "text", data: { text: c } }]
-      : [{ type: "text", data: { text: c } }];
+    const msg = [];
+    if (ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
+    msg.push({ type: "text", data: { text: c } });
     const ok = ev.message_type === "group"
       ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
       : send(cfg, "send_private_msg", { user_id: ev.user_id, message: msg });
@@ -242,8 +379,8 @@ function reply(cfg, ev, text) {
 export const modeOf = (key) => STATE.qq.modes[key] || "chat";
 const setMode = (key, mode) => { STATE.qq.modes[key] = mode; saveState(); };
 
-/** 收一条消息（测试也直接喂这个） */
-export function handleMessage(cfg, ev, text) {
+/** 收一条消息（测试也直接喂这个）。extra.line：整理好的一行（带号码和昵称），聊天模式用 */
+export function handleMessage(cfg, ev, text, extra = {}) {
   const key = convKey(ev);
   const owner = String(ev.user_id) === String(cfg.owner);
   const bare = String(text).replace(/\s+/g, "");
@@ -253,12 +390,12 @@ export function handleMessage(cfg, ev, text) {
   if (!shouldAnswer(ev, cfg)) return;
   const kind = modeOf(key);
   if (kind === "work" && !owner) { say("工作模式：不是主人的消息，不递给两边"); return; }
-  deliver(cfg, ev, key, kind, text);
+  deliver(cfg, ev, key, kind, text, extra.line);
 }
 
-function deliver(cfg, ev, key, kind, text) {
+function deliver(cfg, ev, key, kind, text, line = "") {
   const b = BUSY.get(key);
-  if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
+  if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
   if (b) BUSY.delete(key);   // 记录里已经没有那一轮了（收尾事件丢了）：按实际放开
   const at = Date.now(), cid = "xk-qq-" + (++CID);
   let sid = null, head = "";
@@ -280,10 +417,16 @@ function deliver(cfg, ev, key, kind, text) {
     } else {
       const card = ensureClean();
       item = enqueue({
-        message: text, sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
+        message: line || incomingLine(ev, text), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
-        clean: { tools: CLEAN_TOOLS, systemPrompt: card },
+        // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
+        allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
+        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfig() },
       });
+      // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
+      r.cardHash = STATE.qq.cardHash;
+      // MCP 那边靠这个文件知道「这一轮是哪个会话、回话发给谁」
+      writeRunCtx(item.id, r);
     }
     RUNSQQ.set(item.id, r);
   } catch (e) {
@@ -298,25 +441,475 @@ function roleSid(id) {
   return sid && roleOfSession(sid)?.id === id ? sid : null;
 }
 
+// ── 聊天工具的 MCP（xk-qq-mcp.mjs）：MCP 是另一个进程，碰不到这条 WebSocket，借文件来回 ──
+const readJson = (f, def = null) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code === "ENOENT") return def; throw e; } };
+function writeJsonAtomic(f, v) {
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f + ".tmp", JSON.stringify(v));
+  fs.renameSync(f + ".tmp", f);
+}
+/** 这一轮是哪个会话、回话发给谁：MCP 靠它知道目标（号码只从这里来） */
+function writeRunCtx(runId, r) {
+  try {
+    writeJsonAtomic(path.join(RUN_DIR, String(runId) + ".json"), {
+      runId: String(runId), key: r.key, type: r.ev.message_type === "group" ? "group" : "private",
+      group_id: r.ev.group_id ?? null, user_id: r.ev.user_id ?? null,
+      group_name: r.ev.group_name ?? null, message_id: r.ev.message_id ?? null, at: r.at,
+    });
+  } catch (e) { say("写这一轮的会话记录失败：" + e.message); }
+}
+const runCtxOf = (runId) => readJson(path.join(RUN_DIR, String(runId || "") + ".json"), null);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const gapMs = () => Math.max(0, Number(process.env.CCAPP_QQ_GAP_MS) || (1000 + Math.floor(Math.random() * 2000)));
+
+/** 一段图片字节是什么格式 */
+function mimeOf(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8) return "image/jpeg";
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50) return "image/png";
+  if (buf.length > 4 && buf[0] === 0x47 && buf[1] === 0x49) return "image/gif";
+  if (buf.length > 12 && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return "application/octet-stream";
+}
+/** 下载一张图（不到 8MB，最多跟三次跳转）。失败就是失败，不编 */
+function download(url, ms = 15000, hop = 0) {
+  return new Promise((resolve, reject) => {
+    if (!/^https?:\/\//.test(String(url))) return reject(new Error("不是 http 地址"));
+    const mod = url.startsWith("https:") ? https : http;
+    const req = mod.get(url, { timeout: ms, headers: { "User-Agent": "xiaoke-qq" } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hop < 3) {
+        res.resume();
+        return download(new URL(res.headers.location, url).toString(), ms, hop + 1).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
+      const parts = []; let n = 0;
+      res.on("data", (d) => { n += d.length; if (n > 8 << 20) { req.destroy(new Error("图太大")); return; } parts.push(d); });
+      res.on("end", () => resolve(Buffer.concat(parts)));
+      res.on("error", reject);
+    });
+    req.on("timeout", () => req.destroy(new Error("下载超时")));
+    req.on("error", reject);
+  });
+}
+
+/** 一条消息里的图片段 */
+const imageSegs = (msg) => (Array.isArray(msg) ? msg : []).filter((s) => s?.type === "image").map((s) => ({ url: s.data?.url || "", file: s.data?.file || "" }));
+/** 取一条消息的图片字节：优先直链，没有就请 NapCat 去拿（get_image） */
+async function fetchImageOf(seg) {
+  if (/^https?:\/\//.test(seg.url || "")) return download(seg.url);
+  if (/^https?:\/\//.test(seg.file || "")) return download(seg.file);
+  const d = await act("get_image", { file: seg.file || seg.url }, 20000);
+  if (d?.base64) return Buffer.from(String(d.base64).replace(/^base64:\/\//, ""), "base64");
+  if (d?.file && /^https?:\/\//.test(d.file)) return download(d.file);
+  throw new Error("拿不到这张图");
+}
+
+const loadStickers = () => {
+  try {
+    const j = JSON.parse(fs.readFileSync(STICKER_FILE, "utf8"));
+    return Array.isArray(j) ? j.map(normalizeStickerEntry).filter(Boolean) : [];
+  } catch { return []; }
+};
+/** 刷新 QQ 收藏表情（fetch_custom_face_detail）。形状认数组、{data:[]}、{emojiInfoList:[]}；
+ *  拉不到就继续用本地那份，不把备注清掉 */
+let FACES_AT = 0, FACES_JOB = null;
+async function syncFaces(force = false) {
+  if (!force && FACES_AT && Date.now() - FACES_AT < 60000) return loadStickers();
+  if (FACES_JOB) { await FACES_JOB.catch(() => {}); if (!force) return loadStickers(); }
+  const job = (async () => {
+    const d = await act("fetch_custom_face_detail", { count: 500 }, 30000);
+    const list = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : (Array.isArray(d?.emojiInfoList) ? d.emojiInfoList : null));
+    if (!list) throw new Error("fetch_custom_face_detail 返回的不是数组");
+    writeJsonAtomic(STICKER_FILE, mergeStickerLibrary(loadStickers(), list));
+    FACES_AT = Date.now();
+  })();
+  FACES_JOB = job;
+  try { await job; } catch (e) { say("拉 QQ 收藏表情没成：" + e.message); } finally { if (FACES_JOB === job) FACES_JOB = null; }
+  return loadStickers();
+}
+/** 找不到表情时把有效的列出来，模型同一轮就能改对 */
+function stickerHint(ref) {
+  const items = formatStickerList(loadStickers(), "", 12).stickers;
+  if (!items.length) return `你给的是「${sanitizeUserText(ref)}」，表情库现在是空的：可以用 collect_sticker 先收几张。`;
+  return `你给的是「${sanitizeUserText(ref)}」。有效 id 例如：${items.map((st) => `${st.id}（${st.localNote || st.desc || "无备注"}）`).join("；")}；完整列表用 list_stickers 查。`;
+}
+/** 这个会话里出现过的人（原版护栏）：@、拍一拍只认这里 */
+function hasParticipant(ctx, uid) {
+  if (ctx.type === "private") return String(uid) === String(ctx.user_id);
+  return Boolean(MEMBERS.get(ctx.key)?.has(String(uid)));
+}
+function memberHint(ctx) {
+  const list = [...(MEMBERS.get(ctx.key) || new Map())].slice(-8);
+  if (!list.length) return "当前没有可用的成员列表，请先等群友发言后再试";
+  return "请从当前会话成员里选一个 QQ 号填进去：\n" + list.map(([uid, nick]) => `- ${sanitizeUserText(nick)}：${uid}`).join("\n");
+}
+function midInConv(ctx, id) {
+  const hit = MSGS.get(String(id));
+  if (hit && hit.key === ctx.key) return true;
+  return Boolean(SENT_KEY.get(ctx.key)?.has(String(id)));
+}
+function midHint(ctx) {
+  const ids = [...MSGS].filter(([, m]) => m.key === ctx.key).map(([id]) => id).slice(-8);
+  return ids.length ? `最近的消息号：${ids.join("、")}` : "当前没有可用的消息号，等有新消息再试";
+}
+/** send_message 的降级版目标解析：正文永远优先，非法引用/@ 只丢掉目标，不丢整条回复 */
+function resolveMessageTarget(ctx, { replyToMessageId, atUserId } = {}) {
+  const notes = [];
+  let reply = normalizeMid(replyToMessageId);
+  let at = normalizeMid(atUserId);
+  if (reply && at) { at = ""; notes.push("同时给了引用和 @，已保留引用、忽略 @"); }
+  if (reply && !midInConv(ctx, reply)) { reply = ""; notes.push("引用目标无效，已按普通消息发送"); }
+  if (at) {
+    if (ctx.type !== "group") { at = ""; notes.push("私聊不需要 @，已忽略"); }
+    else if (!/^\d{1,15}$/.test(at)) { at = ""; notes.push("@ 目标不是 QQ 号，已忽略"); }
+    else if (!hasParticipant(ctx, at)) {
+      const looksLikeMid = midInConv(ctx, at);
+      at = "";
+      notes.push(looksLikeMid ? "@ 目标像消息 id，已忽略；如需引用请用 replyToMessageId" : "@ 目标不在当前会话成员里，已忽略");
+    }
+  }
+  return { replyToMessageId: reply, atUserId: at, note: notes.join("；") };
+}
+/** 严格版（send_sticker 用）：引用和 @ 只能选一个，目标必须真的在这个会话里 */
+function messageTargetError(ctx, { replyToMessageId, atUserId } = {}) {
+  const reply = normalizeMid(replyToMessageId), at = normalizeMid(atUserId);
+  if (reply && at) return "replyToMessageId 和 atUserId 只能选择一个";
+  if (reply) {
+    if (!/^-?\d{1,15}$/.test(reply)) return `replyToMessageId 必须是聊天记录中的消息 id。${midHint(ctx)}`;
+    if (!midInConv(ctx, reply)) return `当前会话找不到要引用的消息 ${reply}。${midHint(ctx)}`;
+  }
+  if (at) {
+    if (ctx.type !== "group") return "私聊不需要 atUserId";
+    if (!/^\d{1,15}$/.test(at)) return `atUserId 必须是当前群成员的数字 QQ 号。${memberHint(ctx)}`;
+    if (!hasParticipant(ctx, at)) {
+      return `${at} 不是当前群中已出现的成员 QQ 号${midInConv(ctx, at) ? "，它是消息 id；如需引用请改用 replyToMessageId" : ""}。${memberHint(ctx)}`;
+    }
+  }
+  return "";
+}
+
+// ── 工具：网关这边做（要 NapCat、要真实文件） ──
+function segsOf(ctx, m, tail) {
+  const segs = [];
+  if (ctx.type === "group" && m.replyToMessageId) segs.push({ type: "reply", data: { id: String(m.replyToMessageId) } });
+  if (ctx.type === "group" && m.atUserId) segs.push({ type: "at", data: { qq: String(m.atUserId) } });
+  segs.push(...tail);
+  return segs;
+}
+async function sendSegs(ctx, segs, timeoutMs = 20000) {
+  const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
+    ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, timeoutMs);
+  const id = d?.message_id ?? null;
+  if (id != null) {
+    const set = SENT_KEY.get(ctx.key) || new Set();
+    set.add(String(id)); while (set.size > 200) set.delete(set.values().next().value);
+    SENT_KEY.set(ctx.key, set);
+  }
+  return id;
+}
+async function sendOne(ctx, m) {
+  const text = oneLine(m.text, 1500);
+  if (!text) return null;
+  return sendSegs(ctx, segsOf(ctx, m, [{ type: "text", data: { text } }]));
+}
+function extOf(buf) {
+  const m = mimeOf(buf);
+  return m === "image/png" ? "png" : m === "image/gif" ? "gif" : m === "image/webp" ? "webp" : "jpg";
+}
+function tmpImage(buf, tag = "img") {
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+  const f = path.join(TMP_DIR, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}-${tag}.${extOf(buf)}`);
+  fs.writeFileSync(f, buf);
+  return f;
+}
+/** 拍一拍的目标：数字 QQ 号优先；名字只在唯一对上一个成员时认（原版的做法） */
+function pokeTarget(ctx, raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) {
+    if (ctx.type === "group") return { error: `群聊拍一拍必须传 targetUserId（数字 QQ 号）。${memberHint(ctx)}` };
+    return { target: String(ctx.user_id) };
+  }
+  const name = text.replace(/^@+/, "");
+  const id = normalizeMid(name);
+  if (ctx.type === "private") {
+    if (!id || id !== String(ctx.user_id)) return { error: "私聊只能拍当前聊天对象，省略 targetUserId 即可" };
+    return { target: id };
+  }
+  if (/^\d{1,15}$/.test(id)) {
+    if (!hasParticipant(ctx, id)) {
+      return { error: `${id} 不是当前群中已出现的成员 QQ 号${midInConv(ctx, id) ? "，它是消息 id" : ""}。${memberHint(ctx)}` };
+    }
+    return { target: id };
+  }
+  if (/^\d+$/.test(name)) {
+    return { error: `targetUserId 必须是 1-15 位数字 QQ 号（收到：${JSON.stringify(raw)}）。${memberHint(ctx)}` };
+  }
+  const hits = [...(MEMBERS.get(ctx.key) || new Map())].filter(([, n]) => n === name || n.includes(name));
+  if (hits.length === 1) return { target: hits[0][0] };
+  if (hits.length > 1) {
+    return { error: `「${sanitizeUserText(name)}」对上了不止一个人：${hits.map(([u, n]) => `${sanitizeUserText(n)}（${u}）`).join("、")}。${memberHint(ctx)}` };
+  }
+  return { error: `找不到「${sanitizeUserText(name)}」。${memberHint(ctx)}` };
+}
+
+async function runTool(req, ctx, r) {
+  const a = req.args || {};
+  switch (req.tool) {
+    case "send_message": {
+      // 照原版：字符串 / 字符串数组 / 对象数组都认；正文永远优先，非法目标只丢掉目标
+      const list = normalizeMessageList(a.messages).slice(0, 10);
+      if (!list.length) throw new Error("消息内容为空");
+      if (r) r.usedSend = true;
+      const base = resolveMessageTarget(ctx, a);
+      let n = 0;
+      const ids = [], failed = [], notes = [];
+      for (let i = 0; i < list.length; i++) {
+        if (i) await sleep(gapMs());
+        const m = list[i];
+        const target = (m.atUserId || m.replyToMessageId) ? resolveMessageTarget(ctx, m) : base;
+        if (target.note) notes.push(target.note);
+        try {
+          const id = await sendOne(ctx, { text: m.text, ...target });
+          if (id != null) { n++; ids.push(id); }
+        } catch (e) {
+          failed.push(`第${i + 1}条「${String(m.text).slice(0, 15)}」：${e.message}`);
+        }
+      }
+      const note = [...new Set(notes)].join("；");
+      const tail = failed.length
+        ? `另有 ${failed.length} 条发送失败：${failed.join("；")}——已成功的不需要重发，只补发失败的那几条或减少条数`
+        : "";
+      return { sent: n, messageIds: ids, note: [note, tail].filter(Boolean).join("；") };
+    }
+    case "send_poke": {
+      const p = pokeTarget(ctx, a.targetUserId);
+      if (p.error) throw new Error(p.error);
+      if (ctx.type === "group") await act("group_poke", { group_id: ctx.group_id, user_id: p.target }, 15000);
+      else await act("friend_poke", { user_id: p.target }, 15000);
+      return { poked: true, ...(p.target ? { targetUserId: p.target } : {}), text: "拍了一下。" };
+    }
+    case "get_message_images": {
+      const id = normalizeMid(a.messageId) || String(ctx.message_id ?? "");
+      if (!id) throw new Error("要传 messageId（聊天记录里那条消息的号）");
+      const known = MSGS.get(String(id));
+      if (!known || known.key !== ctx.key) throw new Error(`当前会话找不到消息 ${id}。${midHint(ctx)}`);
+      const d = await act("get_msg", { message_id: Number(id) || id }, 15000);
+      const segs = imageSegs(d?.message).slice(0, 4);
+      if (!segs.length) return { files: [], text: `消息 ${id} 没有可查看的图片` };
+      const files = [], failed = [];
+      for (const seg of segs) {
+        try {
+          const buf = await fetchImageOf(seg);
+          files.push({ path: tmpImage(buf, "see"), mime: mimeOf(buf), bytes: buf.length });
+        } catch (e) { failed.push(e.message); say("一张图没拿到：" + e.message); }
+      }
+      if (!files.length) throw new Error(`图片获取失败：${failed.join("；")}`);
+      return {
+        files,
+        text: `消息 ${id} 的图片内容${failed.length ? `（另有 ${failed.length} 张获取失败）` : ""}。先判断它想表达的情绪/态度：无语、嘲讽、卖萌、赞同、挑衅、摆烂、委屈…再针对态度回话，不要复述画面。`,
+      };
+    }
+    case "list_stickers": {
+      const out = formatStickerList(await syncFaces(false), String(a.query ?? ""), a.limit);
+      return { ...out, text: JSON.stringify(out) };
+    }
+    case "get_sticker_image": {
+      const it = findSticker(await syncFaces(false), a.stickerId);
+      if (!it) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      if (!it.url) throw new Error("该表情没有图片地址");
+      const buf = await download(it.url);
+      return {
+        file: tmpImage(buf, "sticker"), mime: mimeOf(buf),
+        text: `表情 ${it.id}（你的备注：${sanitizeUserText(it.localNote || it.desc || "无")}）（先判断情绪/态度再回应）：`,
+      };
+    }
+    case "send_sticker": {
+      let it = findSticker(await syncFaces(false), a.stickerId);
+      if (!it) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      if (!it.url) throw new Error(`表情 ${it.id} 没有可发送的图片地址`);
+      const targetError = messageTargetError(ctx, a);
+      if (targetError) throw new Error(targetError);
+      let buf;
+      try { buf = await download(it.url); } catch (e) {
+        throw new Error(`这张表情的图片拿不到（${e.message}），换一张，或用 list_stickers 看看别的。`);
+      }
+      if (r) r.usedSend = true;
+      const messageId = await sendSegs(ctx, segsOf(ctx, a, [{ type: "image", data: { file: "base64://" + buf.toString("base64") } }]), 30000);
+      const used = markStickerUsed(loadStickers(), it.id, "");
+      writeJsonAtomic(STICKER_FILE, used.entries);
+      return { sent: true, messageId, id: it.id, text: "表情已发送。" };
+    }
+    case "sticker_note": {
+      const p = applyStickerNote(loadStickers(), a.stickerId, { note: a.note, tags: a.tags, usage: a.usage });
+      if (!p.entry) throw new Error(`找不到表情。${stickerHint(a.stickerId)}`);
+      writeJsonAtomic(STICKER_FILE, p.entries);
+      return { updated: true, id: p.entry.id, localNote: p.entry.localNote, tags: p.entry.tags, text: "记下了。" };
+    }
+    case "collect_sticker": {
+      const id = normalizeMid(a.messageId) || String(ctx.message_id ?? "");
+      if (!id) throw new Error("要传 messageId（聊天记录里那条消息的号）");
+      const known = MSGS.get(String(id));
+      if (!known || known.key !== ctx.key) throw new Error(`在当前会话找不到消息 ${id}。${midHint(ctx)}`);
+      const seg = (known.media || []).find((m) => m.kind === "image");
+      if (!seg) throw new Error("该消息没有可收藏的图片");
+      let buf;
+      try { buf = await fetchImageOf(seg); } catch (e) { throw new Error(`这张图取不到（${e.message}），没有收藏`); }
+      if (!buf?.length) throw new Error("这张图取不到，没有收藏");
+      // add_custom_face 照原版传图的地址；NapCat 在主人电脑上，手机这边的本地路径它读不到。
+      // 没有直链时传 base64://（NapCat 的 file 参数都认），不落临时文件
+      const file = /^https?:\/\//.test(seg.url || "") ? seg.url : "base64://" + buf.toString("base64");
+      let res;
+      try { res = await act("add_custom_face", { file }, 60000); } catch (e) {
+        const msg = String(e.message || e);
+        const maybeFull = /full|limit|上限|超过|超出|500/i.test(msg);
+        throw new Error(`加进 QQ 收藏没成${maybeFull ? "（可能收藏满了）" : ""}：${msg}`);
+      }
+      let emojiId = String(res?.emoji_id || res?.resId || res?.id || res?.data?.emoji_id
+        || (typeof res?.data === "string" || typeof res?.data === "number" ? res.data : "") || "").trim();
+      await syncFaces(true);
+      let list = loadStickers();
+      let hit = emojiId ? findSticker(list, emojiId) : null;
+      if (!hit) {
+        const md5 = crypto.createHash("md5").update(buf).digest("hex").toUpperCase();
+        hit = list.find((e) => e.md5 === md5) || null;
+      }
+      if (!hit) throw new Error("加进 QQ 收藏了，但没认出是哪一张；用 list_stickers 看看");
+      const note = String(a.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+      if (note) {
+        const p = applyStickerNote(list, hit.id, { note });
+        if (p.entry) { writeJsonAtomic(STICKER_FILE, p.entries); hit = p.entry; }
+      }
+      return { collected: true, id: hit.id, note: sanitizeUserText(hit.localNote || ""), kind: "QQ收藏表情", text: `收进 QQ 收藏了：${hit.id}（${sanitizeUserText(hit.desc || "无备注")}）` };
+    }
+    case "memory_append": {
+      const text = oneLine(a.text, 500);
+      if (!text) throw new Error("text 不能为空");
+      const ms = readJson(MEMORY_FILE, []) || [];
+      const m = { id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text, at: Date.now() };
+      ms.push(m); while (ms.length > 300) ms.shift();
+      writeJsonAtomic(MEMORY_FILE, ms);
+      return { saved: true, id: m.id, text: "记下了（" + m.id + "）：" + text };
+    }
+    case "memory_query": {
+      const q = oneLine(a.query, 100);
+      const ms = readJson(MEMORY_FILE, []) || [];
+      const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
+      const hits = (q ? ms.filter((m) => m.text.includes(q)) : ms).slice(-limit);
+      return { text: hits.length ? hits.map((m) => `[${m.id}] ${m.text}`).join("\n") : "没有相关的记忆；可以换一个更具体的关键词再试。" };
+    }
+    case "memory_remove": {
+      const ms = readJson(MEMORY_FILE, []) || [];
+      const i = ms.findIndex((m) => m.id === String(a.id));
+      if (i < 0) throw new Error("没有这条记忆：" + a.id);
+      const [gone] = ms.splice(i, 1);
+      writeJsonAtomic(MEMORY_FILE, ms);
+      return { text: "删掉了：" + gone.text };
+    }
+    default: throw new Error("没有这个工具：" + req.tool);
+  }
+}
+
+/** 重试去重：同一个 run 里，同一份发送参数在 10 分钟内又来一次，就回上次的结果，不再发一遍。
+ *  （MCP 那头 60 秒没等到回话，模型会重试同一句；网关这边可能其实已经发出去了） */
+const REPLAY = new Map();
+const REPLAY_MS = 10 * 60000;
+const SEND_TOOLS = new Set(["send_message", "send_sticker", "send_poke"]);
+const stable = (v) => (Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v);
+const replayKey = (req) => req.runId + "|" + req.tool + "|" + JSON.stringify(stable(req.args || {}));
+function replayGet(req) {
+  const k = replayKey(req), hit = REPLAY.get(k);
+  if (!hit) return null;
+  if (Date.now() - hit.at > REPLAY_MS) { REPLAY.delete(k); return null; }
+  return hit;
+}
+function replayPut(req, result) {
+  if (!SEND_TOOLS.has(req.tool)) return;
+  REPLAY.set(replayKey(req), { at: Date.now(), result });
+  while (REPLAY.size > 500) REPLAY.delete(REPLAY.keys().next().value);
+}
+
+/** 做完一个请求，把结果写回 res/。各请求互不等待：一个群在下图，不能把别的群发消息堵住 */
+async function handleReq(req) {
+  const out = { id: req.id, ok: true };
+  try {
+    // 超时重试来的时候，头一次往往还没做完：认正在做的那一份，等它的结果，不另起一遍
+    const hit = replayGet(req);
+    if (hit) { out.result = await hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out); }
+    const ctx = runCtxOf(req.runId);
+    if (!ctx) throw new Error("这一轮不在 QQ 会话里（没有会话记录）");
+    const r = RUNSQQ.get(String(req.runId)) || [...RUNSQQ.values()].find((x) => x.cid === req.runId) || null;
+    const job = runTool(req, ctx, r);
+    replayPut(req, job);
+    // 没做成的不留：下次重试应该真去做
+    out.result = await job.catch((e) => { REPLAY.delete(replayKey(req)); throw e; });
+  } catch (e) {
+    out.ok = false; out.error = String(e.message || e).slice(0, 300);
+  }
+  writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out);
+}
+
+let LAST_SWEEP = 0;
+/** 清掉没人取的旧文件：MCP 超时以后留下的结果、临时图、没跑完的会话记录（10 分钟；runs 留一小时） */
+export function sweepRpc(now = Date.now()) {
+  LAST_SWEEP = now;
+  const sweepDir = (d, ms) => {
+    let names = [];
+    try { names = fs.readdirSync(d); } catch { return; }
+    for (const n of names) {
+      const p = path.join(d, n);
+      try { if (fs.statSync(p).mtimeMs < now - ms) fs.rmSync(p, { force: true }); } catch {}
+    }
+  };
+  sweepDir(RES_DIR, 10 * 60000);
+  sweepDir(TMP_DIR, 10 * 60000);
+  sweepDir(REQ_DIR, 10 * 60000);
+  sweepDir(RUN_DIR, 60 * 60000);
+}
+/** 把 MCP 发过来的请求做完（测试也直接调）。每个请求各自跑；同一个请求不会做两遍 */
+export async function drainQQRpc() {
+  if (!LAST_SWEEP || Date.now() - LAST_SWEEP > 60000) sweepRpc();
+  let files = [];
+  try { files = fs.readdirSync(REQ_DIR).filter((f) => f.endsWith(".json")); } catch (e) { if (e.code !== "ENOENT") throw e; }
+  const tasks = [];
+  for (const f of files) {
+    const p = path.join(REQ_DIR, f);
+    let req = null;
+    // 取走和读完是同一个同步动作：并发的 drain 不会重复处理同一个文件
+    try { req = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
+    fs.rmSync(p, { force: true });
+    if (!req?.id || !req.tool) continue;
+    tasks.push(handleReq(req).catch((e) => say("处理聊天工具请求失败：" + e.message)));
+  }
+  await Promise.all(tasks);
+  return tasks.length;
+}
+
 // 聊天模式的干净会话：目录、项目级设置（兜底，真正管用的是 run 里的 --tools 白名单和 --strict-mcp-config）、人设卡。
 // 返回人设卡正文。卡改过了就把各会话的旧段落放掉：claude 第一轮就把系统提示记死了，续旧段落用的还是旧卡
 export function ensureClean() {
   const f = path.join(CLEAN_DIR, ".claude", "settings.json");
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const want = JSON.stringify({
-    permissions: { allow: CLEAN_TOOLS, deny: [...CLEAN_DENY, "mcp__device", "mcp__xk-memory", "mcp__bili"] },
+    permissions: {
+      allow: [...CLEAN_TOOLS, ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`)],
+      deny: [...CLEAN_DENY, "mcp__device", "mcp__xk-memory", "mcp__bili"],
+    },
     disableClaudeAiConnectors: true, disableBundledSkills: true,
   }, null, 1) + "\n";
   let had = ""; try { had = fs.readFileSync(f, "utf8"); } catch {}
   if (had !== want) fs.writeFileSync(f, want);
   if (!fs.existsSync(CARD_FILE)) fs.writeFileSync(CARD_FILE, CLEAN_MD);
-  const card = fs.readFileSync(CARD_FILE, "utf8").trim() || CLEAN_MD;
-  const hash = crypto.createHash("sha256").update(card).digest("hex").slice(0, 16);
+  const raw = fs.readFileSync(CARD_FILE, "utf8").trim() || CLEAN_MD;
+  const hash = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
   if (STATE.qq.cardHash !== hash) {
     if (STATE.qq.cardHash) say("人设卡换了，各会话从新的一段开始");
     STATE.qq.cardHash = hash; STATE.qq.sessions = {}; saveState();
   }
-  return card;
+  return stripFrontmatter(raw);
+}
+/** 卡开头的 --- frontmatter 不是给模型看的，当系统提示前去掉 */
+export function stripFrontmatter(s) {
+  return String(s).replace(/^\s*---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, "").trim();
 }
 // 占位：主人改好的琉璃川椿卡给过来之前先用这个，别让人一进 QQ 就撞上空的
 export const CLEAN_MD = "# 在这个窗口里\n\n你是主人在 QQ 上聊天的那一位。用中文、口语，短句；不聊自己的设定和别人的事，不透露主人这边的任何信息。\n";
@@ -344,13 +937,30 @@ END_HOOKS.push((run, f = {}) => {
   r.done = true;
   RUNSQQ.delete(run.id); if (run.cid) RUNSQQ.delete(run.cid);
   if (BUSY.get(r.key)?.cid === r.cid) BUSY.delete(r.key);
-  if (run.sessionId && r.kind === "chat") { STATE.qq.sessions[r.key] = String(run.sessionId); saveState(); }
+  fs.rmSync(path.join(RUN_DIR, String(run.id) + ".json"), { force: true });
+  // 这一轮跑着的时候人设卡被换掉了（各会话已经作废）：旧 sid 不能再写回去，不然下一句又接旧卡
+  if (run.sessionId && r.kind === "chat" && r.cardHash === STATE.qq.cardHash) { STATE.qq.sessions[r.key] = String(run.sessionId); saveState(); }
   const ts = run.sessionId ? turns(String(run.sessionId), r.at) : [];
   const said = r.kind === "work" ? workReply(ts, r.head) : lastReply(ts);
-  if (f.isError || f.failed) reply(r.cfg, r.ev, said || "（这一轮出错了）");
-  else reply(r.cfg, r.ev, said || "（这次没说出话）");
+  if (r.kind === "work") {
+    // 工作模式照旧：没说话、出错都给一句
+    if (f.isError || f.failed) reply(r.cfg, r.ev, said || "（这一轮出错了）");
+    else reply(r.cfg, r.ev, said || "（这次没说出话）");
+  } else if (r.usedSend) {
+    // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
+  } else if (said) {
+    reply(r.cfg, r.ev, said);
+  } else if (f.isError || f.failed) {
+    // 聊天模式：群里不该冒「这轮出错了」，记日志就行
+    say("这一轮没成，没回话（" + (f.error || "出错") + "）");
+  }
   const pend = PENDING.get(r.key);
-  if (pend?.length) { PENDING.delete(r.key); const last = pend[pend.length - 1]; deliver(last.cfg, last.ev, r.key, r.kind, pend.map((x) => x.text).join("\n")); }
+  if (pend?.length) {
+    PENDING.delete(r.key);
+    const last = pend[pend.length - 1];
+    const lines = pend.map((x) => x.line || x.text).join("\n");
+    deliver(last.cfg, last.ev, r.key, r.kind, pend.map((x) => x.text).join("\n"), lines);
+  }
 });
 
 // ── 启动 ──
@@ -369,4 +979,7 @@ if (LIVE) {
   };
   setTimeout(tick, 5000).unref();
   setInterval(tick, 60000).unref();
+  // 聊天工具来的请求：两百毫秒看一次，有就做；起手先清一遍没人取的旧文件
+  try { sweepRpc(); } catch {}
+  setInterval(() => { drainQQRpc().catch((e) => say("聊天工具出错：" + e.message)); }, 200).unref();
 }
