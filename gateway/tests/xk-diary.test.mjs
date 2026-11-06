@@ -7,7 +7,7 @@ import path from "node:path";
 import { PATHS } from "../gw/config.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
-import { DIARY_PROMPT, agyDiaryDue, appendInputs, saveDiaryPng, saveRoomPng } from "../gw/xk-diary.mjs";
+import { DIARY_PROMPT, agyDiaryDue, appendInputs, claudeDiaryDue, saveDiaryPng, saveRoomPng } from "../gw/xk-diary.mjs";
 
 function fakeSession(role, sid, at, user, reply) {
   const cwd = fs.realpathSync(roleDir(role));
@@ -84,4 +84,19 @@ test("提示词按「还没写的那几天」，哈基米过了 22:00 才写当�
   assert.deepEqual(agyDiaryDue(new Date("2026-11-01T22:10:00")).sort(), ["2026-10-31", "2026-11-01"]);
   fs.writeFileSync(path.join(roleDir("hachimi"), "diary/2026-10-31.md"), "写过了");
   assert.deepEqual(agyDiaryDue(new Date("2026-11-01T22:10:00")), ["2026-11-01"]);
+});
+
+test("重启吞掉那一轮之后：小克、小鱼有素材没日记的日子，第二天启动时补（11-06 大扫除）", () => {
+  const ins = path.join(roleDir("xiaoke"), "diary/inputs");
+  fs.mkdirSync(ins, { recursive: true });
+  fs.writeFileSync(path.join(ins, "2026-11-04.md"), "素材");
+  fs.writeFileSync(path.join(ins, "2026-11-05.md"), "素材");
+  // 11-04 那篇写了，11-05 被重启吞了
+  fs.writeFileSync(path.join(roleDir("xiaoke"), "diary/2026-11-04.md"), "写过了");
+  fs.rmSync(path.join(roleDir("xiaoke"), "diary/2026-11-05.md"), { force: true });
+  const at = (t) => claudeDiaryDue(new Date(t)).find((x) => x.role.id === "xiaoke").days;
+  assert.deepEqual(at("2026-11-05T23:30:00"), ["2026-11-05"], "当天的过了 23:00 才补，免得和 22:00 那一轮抢");
+  assert.deepEqual(at("2026-11-06T09:00:00"), ["2026-11-05"], "第二天随时补");
+  fs.writeFileSync(path.join(roleDir("xiaoke"), "diary/2026-11-05.md"), "补上了");
+  assert.ok(!claudeDiaryDue(new Date("2026-11-06T09:00:00")).some((x) => x.role.id === "xiaoke"), "补上就不管了");
 });

@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CFG } from "./config.mjs";
 import { findSessionFile, peekSession } from "./sessions.mjs";
-import { writeFileAtomic as write } from "./xk-shared.mjs";
+import { writeFileAtomic as write, xkHome } from "./xk-shared.mjs";
 
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
@@ -75,7 +75,11 @@ export function ensureRoles() {
       disableBundledSkills: true,
     }, null, 1) + "\n");
     // alwaysLoad：不然记忆工具被收进 ToolSearch，每次想起旧事都要多一个来回
-    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": { type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true } } }, null, 1) + "\n");
+    // XK_ROOM_FILE：群消息文件的路径由网关给，记忆工具不自己拼（它拿不到 CFG，以前靠 HOME 猜，换环境就读到空群）
+    write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: { "xk-memory": {
+      type: "stdio", command: process.execPath, args: [MEM_MCP, d], alwaysLoad: true,
+      env: { XK_ROOM_FILE: path.join(xkHome(CFG.home), "room.jsonl") },
+    } } }, null, 1) + "\n");
     write(path.join(d, "CLAUDE.md"), MECHANICS);
   }
 }

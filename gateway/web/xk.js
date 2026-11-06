@@ -228,6 +228,7 @@
     const cc = window.__cc; if (!cc) return;
     const sid = cc.view.sessionId || null;
     if (!force && sid === cur.sid) return;
+    if (sid !== cur.sid) resetRuns();   // 换会话了：上一段没等到 run_end 的记录一并清掉
     cur.sid = sid;
     if (!ROLES) await loadRoles();
     const r = await api("/api/xk/session-role" + (sid ? "?sid=" + encodeURIComponent(sid) : ""));
@@ -270,6 +271,13 @@
   }).observe(document.body, { childList: true, subtree: true });
   const PRAISE = /可爱|厉害|好看|真棒|聪明|喜欢你|好乖/;
   const runs = new Map();   // run 号 → { praise, said }
+  /** 换了会话、断线重连之后清掉上一段的运行记录：漏一条 run_end（断线、进程被杀），live 再也归不了零，
+   *  思考块就一直敞着、表情也停在上一轮（11-06 大扫除，小鱼查的） */
+  function resetRuns() {
+    runs.clear(); follow.clear(); live = 0;
+    document.querySelectorAll("#chat details.think[data-xk]").forEach((d) => { d.open = false; });
+    peek(null);
+  }
   function mine(ev) { const cc = window.__cc; return cc && ((ev.runId && cc.view.runIds && cc.view.runIds.has(ev.runId)) || (ev.sessionId && ev.sessionId === cc.view.sessionId)); }
   function onRun(ev) {
     if (ev.type === "run_start") {
@@ -300,7 +308,8 @@
     const OFF = {};
     for (const r of Object.keys(ROLE)) fetch(stateArt("offline", r)).then((x) => x.blob()).then((bl) => { OFF[r] = URL.createObjectURL(bl); }).catch(() => {});
     es.onerror = () => { if (!offT) offT = setTimeout(() => { offT = 0; if (es.readyState !== 1 && !offSaid) { offSaid = true; toast("连不上了", "小屋的网关没应答，正在重连", OFF[root.dataset.xkRole] || OFF.xiaoke, true); } }, 4000); };
-    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } };
+    // 连回来时也清一遍：断线那段里漏掉的 run_end 补不回来了
+    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } resetRuns(); };
     es.onmessage = (m) => {
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
@@ -430,9 +439,12 @@
   const noteWhen = (t) => { const d = new Date(t); return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
   let notes = [], boardAll = false;
   async function loadBoard() { notes = (await api("/api/xk/board")).notes || []; boardDot(); return notes; }
-  // 角色栏上的点：有我还没看过的、她们留的便条
+  // 角色栏上的点：有我还没看过的、她们留的便条。水位只跟着她们留的走——主人贴一张新的，
+  // 不该把她之前没看的红点压掉（11-06 大扫除，小鱼查的）
+  const roleNotes = () => notes.filter((n) => n.from !== "owner");
+  const boardWatermark = () => roleNotes().reduce((m, n) => Math.max(m, n.at), 0);
   function boardDot() {
-    const seen = LS.get("boardSeen", 0), on = notes.some((n) => n.from !== "owner" && n.at > seen);
+    const seen = LS.get("boardSeen", 0), on = roleNotes().some((n) => n.at > seen);
     tabsEl.querySelector('.xk-tab[data-i="1"]')?.classList.toggle("dot", on);
   }
   function boardHtml() {
@@ -447,7 +459,9 @@
     box.innerHTML = boardHtml();
     box.querySelectorAll(".xk-note").forEach((x) => x.onclick = () => noteSheet(notes.find((n) => n.id === x.dataset.id)));
     const all = $("#xk-b-all", box); if (all) all.onclick = () => { boardAll = !boardAll; SFX.play("tap"); paintBoard(); };
-    if (notes.length) { LS.set("boardSeen", notes[0].at); boardDot(); }
+    const w = boardWatermark();
+    if (w > LS.get("boardSeen", 0)) LS.set("boardSeen", w);
+    boardDot();
   }
   function noteSheet(n) {
     if (!n) return;

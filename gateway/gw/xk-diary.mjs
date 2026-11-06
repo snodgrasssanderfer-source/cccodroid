@@ -101,6 +101,34 @@ function pendingDays(id) {
   const ins = fs.existsSync(inputsDir(id)) ? fs.readdirSync(inputsDir(id)).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)) : [];
   return ins.map((f) => f.slice(0, 10)).filter((d) => !fs.existsSync(path.join(roleDir(id), "diary", d + ".md")));
 }
+// 小克、小鱼：日记本来靠上游定时任务（22:00）。任务「已经排上、还没跑完」时网关重启，那一轮会无声丢掉、也不补（#125，11-06 查的）。
+// 这里补一道网：启动时和之后每 30 分钟看一遍，有素材、没日记的日子就把任务再跑一次。今天的这篇晚一个小时再看，
+// 免得和 22:00 那一轮撞上（任务在跑时手动跑会被拒，一天又只补一次）
+const BACKFILL_AFTER = 23;
+function backfillDays(id, now = new Date()) {
+  const t = today(now);
+  return pendingDays(id).filter((d) => d < t || now.getHours() >= BACKFILL_AFTER);
+}
+/** 该补写的有谁、缺哪几天（小克、小鱼） */
+export function claudeDiaryDue(now = new Date()) {
+  return ROLES.filter((r) => r.engine === "claude").map((r) => ({ role: r, days: backfillDays(r.id, now) })).filter((x) => x.days.length);
+}
+async function claudeDiaryTick() {
+  STATE.diaryBackfill ||= {};   // 角色 → 上次补的日子：一天最多补一次
+  for (const { role, days } of claudeDiaryDue()) {
+    const task = STATE.diaryTasks?.[role.id];
+    if (!task || STATE.cooldown[role.id]) continue;   // 额度用完的：等 xk-handover 的冷却和 retryAfterQuota
+    if (STATE.diaryBackfill[role.id] === today()) continue;
+    STATE.diaryBackfill[role.id] = today();
+    saveState();
+    try {
+      await selfApi("POST", `/api/sched/${encodeURIComponent(task)}/run`, {});
+      log(`📔 ${role.name}有 ${days.length} 天日记没写（${days.join("、")}），补跑一次`);
+    } catch (e) {
+      publish({ type: "xk", op: "diary", error: true, text: `${role.name}的日记补跑没成：${e.message}` });
+    }
+  }
+}
 export function agyDiaryDue(now = new Date()) {
   const t = today(now), [h, m] = DIARY_TIME.split(":").map(Number);
   const after = now.getHours() * 60 + now.getMinutes() >= h * 60 + m;
@@ -122,6 +150,10 @@ if (LIVE) {
   for (const r of Object.keys(STATE.diaryRetry)) armRetry(r);
   setInterval(agyDiaryTick, 30 * 60000).unref();
   setTimeout(agyDiaryTick, 60000).unref();
+  // 补写：等定时任务建好再开始看；每半小时一遍，缺的日子照样补
+  const tickBackfill = () => claudeDiaryTick().catch((e) => log("⚠️ 日记补写没成：" + e.message));
+  setTimeout(tickBackfill, 15000).unref();
+  setInterval(tickBackfill, 30 * 60000).unref();
 }
 
 // ── 界面：导出成图片 ──

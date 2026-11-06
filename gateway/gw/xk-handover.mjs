@@ -42,12 +42,12 @@ export function roleReady(role) {
   return !!p && (p.login || !!keyOf(p));
 }
 
-/** 顺序里排在 from 后面的第一个能接的（转一圈，不回到自己） */
+/** 顺序里排在 from 后面的第一个能接的（转一圈，不回到自己）；from 不在顺序里（老状态文件、角色被删）就从排头转 */
 export function nextRole(from) {
-  const order = STATE.order;
-  const i = order.indexOf(from);
-  for (let k = 1; k < order.length; k++) {
-    const r = roleById(order[(i + k) % order.length]);
+  const order = STATE.order, i = order.indexOf(from);
+  const ring = i < 0 ? order : [...order.slice(i + 1), ...order.slice(0, i)];
+  for (const id of ring) {
+    const r = roleById(id);
     if (r && roleReady(r)) return r;
   }
   return null;

@@ -155,17 +155,27 @@ function sidOf(id) {
   return sid && roleOfSession(sid)?.id === id ? sid : null;
 }
 
-const TURNS = new Map();     // run 号 → { role, kind, upTo, sid, round, at }（哈基米、插进别人那轮的）
+const TURNS = new Map();     // run 号 → { role, kind, upTo, sid, round, at, cid }（哈基米、插进别人那轮的）
 const CIDS = new Map();      // 入队时带的 cid → 同上（Claude Code 那两位：结束时 run.cid 认得出）
 let CID = 0;
-const BUSY = new Set();      // 正在群里说话的人：一个人一次只跑一轮，后来的消息攒着下轮一起递
+const BUSY = new Map();      // 角色 → 那一轮开始的时刻：一个人一次只跑一轮，后来的消息攒着下轮一起递
 const AGAIN = new Map();     // 她跑着时又轮到她：跑完再来一轮（kind）
+/** 这个角色还有没有没收尾的那一轮（TURNS 和 CIDS 里各存一份，哪个认得就删哪个） */
+const pendingTurn = (id) => [...TURNS.values(), ...CIDS.values()].some((t) => t.role === id && !t.done);
+/** 测试用：现在还记着几笔没收尾的（CIDS 只增不减那种毛病看得见） */
+export const roomPending = () => ({ busy: [...BUSY.keys()], turns: TURNS.size, cids: CIDS.size });
 
 /** 让 id 在群里说一轮（kind：reply / aside） */
 export function speak(id, kind = "reply", round = null, caller = null, cont = false) {
   const role = roleById(id);
   if (!role || asleep(id)) return null;
-  if (BUSY.has(id)) { if (kind === "reply" || !AGAIN.has(id)) AGAIN.set(id, { kind, round, caller }); return null; }
+  if (BUSY.has(id) && pendingTurn(id)) { if (kind === "reply" || !AGAIN.has(id)) AGAIN.set(id, { kind, round, caller }); return null; }
+  if (BUSY.has(id)) {   // 说在跑，可这一轮的记录已经没了：按实际状态放开，别让她永远「在说…」（11-06 大扫除）
+    BUSY.delete(id);
+    publish({ type: "xk", op: "room_typing", role: id, on: false });
+  }
+  // 没跑到收尾的轮次（进程被杀、引擎没报结束）会把 cid 留下来，顺手清掉一小时前的
+  if (CIDS.size > 40) for (const [k, t] of CIDS) if (t.done || Date.now() - t.at > 3600e3) CIDS.delete(k);
   const { text, upTo, fresh } = feed(id, kind, caller, cont);
   if (!fresh) return null;   // 她跑着时攒下的已经在上一轮里看过了
   if (STATE.room.mode.kind === "goal") { STATE.room.mode.rounds++; publish({ type: "xk", op: "room_mode", mode: STATE.room.mode }); }   // 群页顶上「目标 · 已 N 轮」：额度主人自己盯
@@ -173,24 +183,34 @@ export function speak(id, kind = "reply", round = null, caller = null, cont = fa
   // #72：这一段占到 20% 了，就在群里起一轮时换新对话（带上上一段的交接）
   const ro = takeRollover(id, sid);
   if (ro) { sid = null; carry = carryText(ro.fromSid, id, id, ro.reason); }
-  BUSY.add(id);
-  publish({ type: "xk", op: "room_typing", role: id, on: true });
   // 先登记再入队：没配密钥这类错，上游在 enqueue 返回之前就同步结束了这一轮，晚登记就认不出来，她会一直「在说…」
-  const turn = { role: id, kind, upTo, sid, round, at: Date.now() }, cid = "xk-room-" + (++CID);
+  const cid = "xk-room-" + (++CID);
+  const turn = { role: id, kind, upTo, sid, round, at: Date.now(), cid };
   if (ROUNDS.has(round)) ROUNDS.get(round).pending++;
   CIDS.set(cid, turn);
+  BUSY.set(id, turn.at);
+  publish({ type: "xk", op: "room_typing", role: id, on: true });
   let item;
-  if (role.engine === "claude") {
-    // 不切型号（#64，主人 11-03）：插话也用她平时那个。在她那段里中途换模型，整段上下文要重读、缓存用不上，反而更贵，
-    // 界面上这段对话也会显示成换了模型。省钱的只有「判断谁接」那一下，它是单独的一次调用，不碰她的会话
-    item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid });
-    if (carry) writeCarry(id, item.id, carry);
-    // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
-    if (item.injected && CIDS.has(cid)) { const r = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (r) TURNS.set(r.id, turn); }
-  } else {
-    item = { id: "xr" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: text, sessionId: sid };
-    TURNS.set(item.id, turn);
-    ENGINE_RUN[role.engine](item, { carry });
+  try {
+    if (role.engine === "claude") {
+      // 不切型号（#64，主人 11-03）：插话也用她平时那个。在她那段里中途换模型，整段上下文要重读、缓存用不上，反而更贵，
+      // 界面上这段对话也会显示成换了模型。省钱的只有「判断谁接」那一下，它是单独的一次调用，不碰她的会话
+      item = enqueue({ message: text, sessionId: sid, projectId: sid ? null : projectOf(id), cid });
+      if (carry) writeCarry(id, item.id, carry);
+      // 她那段正有一轮在跑（比如主人刚在私聊里说完话）：消息会直接插进那一轮，不另起一轮，就认那一轮的结束
+      if (item.injected && CIDS.has(cid)) { const r = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (r) TURNS.set(r.id, turn); }
+    } else {
+      item = { id: "xr" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), message: text, sessionId: sid };
+      TURNS.set(item.id, turn);
+      ENGINE_RUN[role.engine](item, { carry });
+    }
+  } catch (e) {
+    // 起不来（入队/引擎抛错）：把这一轮的登记退回去，不然她一直是「在说…」、这批也算着一个人没说完
+    turn.done = true; CIDS.delete(cid); TURNS.delete(item?.id);
+    BUSY.delete(id);
+    const r = ROUNDS.get(round); if (r) r.pending--;
+    publish({ type: "xk", op: "room_typing", role: id, on: false });
+    throw e;
   }
   if (ro) publish({ type: "xk", op: "handover", runId: item.id, from: id, to: id, reason: ro.reason, fromSession: ro.fromSid, rollover: true });
   return item;
@@ -209,7 +229,8 @@ END_HOOKS.push((run, f = {}) => {
 END_HOOKS.push((run, f = {}) => {
   const t = TURNS.get(run.id) || (run.cid && CIDS.get(run.cid));
   if (!t || t.done) return;
-  t.done = true; TURNS.delete(run.id); if (run.cid) CIDS.delete(run.cid);
+  // 认得出 run 的 cid 就删它；插进别人那轮时 run.cid 是原来那一轮的号，自己这个要单独删（11-06 大扫除）
+  t.done = true; TURNS.delete(run.id); if (run.cid) CIDS.delete(run.cid); if (t.cid) CIDS.delete(t.cid);
   BUSY.delete(t.role);
   publish({ type: "xk", op: "room_typing", role: t.role, on: false });
   STATE.room.seen[t.role] = t.upTo;

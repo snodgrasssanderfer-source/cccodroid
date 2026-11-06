@@ -34,6 +34,13 @@ test("按顺序找下一个能接的，跳过冷却中和没就绪的", () => {
   assert.equal(roleReady({ id: "hachimi", engine: "agy" }), true, "过了重置时间自动解除");
   ENGINES.agy = () => false;
   assert.equal(nextRole("xiaoke"), null);
+  // 11-06 大扫除：from 不在顺序里（老状态文件、角色被删）从排头转一圈，以前 -1 会永远轮不到最后一位
+  ENGINES.agy = () => true;
+  STATE.order = ["hachimi", "deepseek", "xiaoke"];
+  STATE.cooldown = { hachimi: { until: Date.now() + 60000 } };
+  assert.equal(nextRole("nobody").id, "xiaoke", "轮到排最后那一位");
+  STATE.order = ["xiaoke", "hachimi", "deepseek"];
+  STATE.cooldown = {};
 });
 
 test("发消息：落到冷却中的角色就换人带上对话；接班会话里原角色恢复了就交回", async () => {
