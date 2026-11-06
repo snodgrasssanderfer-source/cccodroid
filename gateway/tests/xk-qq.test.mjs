@@ -350,6 +350,11 @@ test("拍一拍整理成一行；拍的是她就算叫她，别人互相拍不�
   assert.equal(queued.length, 1, "别人互相拍不起轮次");
 });
 
+test("拍一拍：NapCat 按 OneBot 11 发 notice_type notify + sub_type poke，也认", async () => {
+  await handleEvent(cfg, { post_type: "notice", notice_type: "notify", sub_type: "poke", user_id: OWNER, target_id: BOT, sender_id: OWNER });
+  assert.equal(queued.length, 1, "私聊拍她算叫她");
+});
+
 test("send_message 一次发几条；这一轮自己发过了，最后的文字不再另发", async () => {
   const bot = await connectedBot();
   try {
@@ -708,8 +713,11 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
   assert.equal(JSON.parse(fs.readFileSync(path.join(ROLE_XIAOKE, ".xk", "runs", rq.id + ".json"), "utf8")).kind, "self");
   assert.equal(memDirFor(ROLE_XIAOKE, rq.id), qqMemDir(ROLE_XIAOKE), "群里那段读写群聊库");
   const sid = finish(rq, "好");
-  // 主人不用叫：self 群里主人的话和 App 里一个分量
-  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  // 主人也得叫（11-06 定）：没 @、没点名、没引用的不接
+  const n0 = queued.length;
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "今晚吃啥" } }]), "今晚吃啥");
+  assert.equal(queued.length, n0, "主人和别人聊天不叫醒她");
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   const oq = queued.at(-1);
   assert.ok(!oq.qqGuard, "主人的一轮不限权");
   assert.equal(oq.unattended, false);
@@ -726,11 +734,11 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
 });
 
 test("主人和群友的话混在一轮里：按最严的算", () => {
-  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   const first = queued.at(-1);
   assert.ok(!first.qqGuard);
   handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 帮我个忙" } }]), "小克 帮我个忙");
-  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "我也说一句" } }]), "我也说一句");
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 我也说一句" } }]), "小克 我也说一句");
   assert.equal(queued.length, 1, "跑着的时候攒着");
   finish(first, "在");
   const next = queued.at(-1);
@@ -750,6 +758,14 @@ test("主人在群里：ask_owner 不发私聊、不记清单，只在群里说�
     assert.match(res.result.text, /主管在群里/);
     assert.ok(!bot.actions.some((a) => a.action === "send_private_msg"), "主人在群里就不私聊");
     assert.ok(!fs.existsSync(APPROVALS_FILE) || !JSON.parse(fs.readFileSync(APPROVALS_FILE, "utf8")).items.length, "不记清单");
+    finish(rq, "这个得主管点头。");
+    const n1 = queued.length;
+    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "可以" } }]));
+    assert.equal(queued.length, n1 + 1, "她刚请主人点头：主人下一句不用叫也递给她");
+    assert.ok(!queued.at(-1).qqGuard, "主人那轮不限权");
+    finish(queued.at(-1), "已执行。");
+    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "好的" } }]));
+    assert.equal(queued.length, n1 + 1, "只算一次");
   } finally { stopQQ(); bot.close(); }
 });
 
@@ -757,7 +773,7 @@ test("主人不在：owner_away 后群友的请求进清单，私聊只留一条
   const bot = await connectedBot();
   try {
     // 主人先说「我不在群」：主人那一轮调 owner_away
-    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "我出去一趟，不在群" } }]), "我出去一趟，不在群");
+    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 我出去一趟，不在群" } }]), "小克 我出去一趟，不在群");
     const oq = queued.at(-1);
     rpcReq("away1", oq, "owner_away", { away: true });
     await drainQQRpc();
@@ -799,7 +815,7 @@ test("主人的号一开口就记回「在」，清单拼进那一轮的上下�
   const bot = await connectedBot();
   try {
     // 造两条待审：直接写文件也行，但这里走一遍 owner_away + ask_owner 更真
-    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "我不在群" } }]), "我不在群");
+    handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 我不在群" } }]), "小克 我不在群");
     const oq = queued.at(-1);
     rpcReq("away2", oq, "owner_away", { away: true });
     await drainQQRpc();
@@ -810,7 +826,7 @@ test("主人的号一开口就记回「在」，清单拼进那一轮的上下�
     await drainQQRpc();
     finish(r1, "收到");
     // 主人回来（在群里说话）：不在的标记清掉，清单进这一轮
-    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "我回来了，1 可以做" } }]));
+    await handleEvent(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 我回来了，1 可以做" } }]));
     assert.equal(STATE.qq.away, false, "主人一开口就算回来");
     const back = queued.at(-1);
     assert.match(back.message, /\[待审清单\]/);
@@ -894,7 +910,7 @@ test("最后那段文字自动分段：短话切气泡，带换行的和超长�
 
 test("群里那轮没调 send_message：最后那段短话切成几个气泡", () => {
   const before = REPLIES.length;
-  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   finish(queued.at(-1), "来了。你有什么事？");
   assert.deepEqual(REPLIES.slice(before).map((x) => x.text), ["来了。", "你有什么事？"]);
 });
@@ -925,7 +941,7 @@ test("群里那段叠上口吻文件；私聊、工作模式、干净会话都�
 // ── 群聊记忆、问屋里、屋里往群里发话（#134 第三步补的三条）──
 
 test("ask_home：主管轮问屋里，另起一轮只读的，答完交回群里那一轮", async () => {
-  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   const q = queued.at(-1);
   const id = "askhome-" + Date.now().toString(36);
   const reqDir = path.join(CLEAN_DIR, ".rpc", "req");

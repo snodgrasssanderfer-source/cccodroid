@@ -79,8 +79,8 @@ const SELF_DENY = [
   "mcp__device", "mcp__bili",
 ];
 const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。"
-  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主管在群里时，就在群里说一句「这个得主管点头」，等主管回话；"
-  + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
+  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：先调 ask_owner 报上去，别自己先做，也别反复报同一件。"
+  + "主管在群里时它会让你在群里请主管点头（主管下一句话不用叫你也会递给你）；主管说过不在群时，网关会攒成清单私聊给他。";
 /** 群里那段的口吻（#134：主管、基金会文风）：小克写在手机上，文件不存在就什么都不加 */
 export const GROUP_STYLE_FILE = path.join(roleDir("xiaoke"), "qq-group-style.md");
 export function groupStyle() {
@@ -374,7 +374,7 @@ function onOneBot(cfg, raw) {
 
 /** 一条事件（消息 / 拍一拍）：整理了再决定接不接 */
 export async function handleEvent(cfg, ev) {
-  if (ev.post_type === "notice" && ev.notice_type === "poke") {
+  if (ev.post_type === "notice" && (ev.notice_type === "poke" || (ev.notice_type === "notify" && ev.sub_type === "poke"))) {
     const line = pokeLine(ev, cfg.bot);
     // 拍的是她（或在私聊里）：当成叫她；@ 自己是用来说「这句是冲她来的」，原话在 line 里
     const toMe = String(ev.target_id) === String(cfg.bot) || ev.group_id == null;
@@ -572,7 +572,16 @@ const QUIET = new Map();   // 群号 → { at }：上一条像问题的消息，
 /** 叫她了吗：@、引用、点名；self 群里主人的话（和 App 里一个分量）不用叫 */
 function addressed(ev, cfg) {
   if (shouldAnswer(ev, cfg)) return true;
-  return ev.message_type === "group" && modeOf(convKey(ev), cfg) === "self" && String(ev.user_id) === String(cfg.owner);
+  // 主人和群友一样，@、引用、点名才接（主人 11-06 定：他在群里和别人聊天时不插进来）。
+  // 例外：她刚在这个群请主人点头（ask_owner，主人在群），主人接下来那句不用叫她也算，十分钟内、用一次
+  if (ev.message_type !== "group" || String(ev.user_id) !== String(cfg.owner)) return false;
+  const gid = String(ev.group_id), at = STATE.qq.awaitOwner?.[gid];
+  return !!at && Date.now() - at <= 10 * 60000;
+}
+/** 主人那句点头递进去了：等他点头的标记用掉（handleEvent 和 handleMessage 都会问 addressed，只能在这里清） */
+function useAwait(ev) {
+  const gid = String(ev.group_id ?? "");
+  if (STATE.qq.awaitOwner?.[gid]) { delete STATE.qq.awaitOwner[gid]; saveState(); }
 }
 
 /** 收一条消息（测试也直接喂这个）。extra.line：整理好的一行（带号码和昵称），聊天模式用 */
@@ -586,6 +595,7 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   if (owner && WORK_ON.includes(bare)) { setMode(key, "work"); return reply(cfg, ev, MODE_TEXT.work); }
   if (owner && WORK_OFF.includes(bare)) { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
   if (!addressed(ev, cfg)) return;
+  if (owner && ev.message_type === "group") useAwait(ev);
   const kind = modeOf(key, cfg);
   if (kind === "work" && !owner) { say("工作模式：不是主人的消息，不递给两边"); return; }
   deliver(cfg, ev, key, kind, text, extra.line, null, extra.pending || "");
@@ -1149,7 +1159,8 @@ async function runTool(req, ctx, r) {
       if (!ctx.restricted) throw new Error("这一轮不用问主人，直接做");
       // 主人在群里：不用私聊、不用报审，在群里说一句请他点头就行
       if (!STATE.qq.away) {
-        return { pending: false, text: "主管在群里，不用私聊报审。在群里说一句「这个得主管点头」，等主管回话；别自己先做。" };
+        if (ctx.group_id) { STATE.qq.awaitOwner ||= {}; STATE.qq.awaitOwner[String(ctx.group_id)] = Date.now(); saveState(); }
+        return { pending: false, text: "主管在群里，不用私聊报审。在群里说一句请主管点头，等主管回话（他下一句不用叫你也会递给你）；别自己先做。" };
       }
       const request = oneLine(a.request, 500);
       if (!request) throw new Error("request 不能为空：写清对方要你做什么");
