@@ -110,9 +110,8 @@ html.xk-cover #xk-tabs { display: none; }
 .xk-day.on { background: var(--active-bg); }
 .xk-day.on b { color: var(--accent); }
 .xk-book { perspective: 1400px; }
-.xk-leaf { position: relative; background: var(--bg2); border-radius: 6px 16px 16px 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, .08), inset 10px 0 18px -14px rgba(0, 0, 0, .35); padding: 22px 22px 26px 26px; min-height: 360px; transform-origin: left center; }
-/* 每人一种纸纹（第 2 版美术）：小克是第 1 版的暖白纸 */
-.xk-leaf { background-size: 256px; background-image: url(/xk-art/deco/paper_light.webp); }
+/* 纸纹（第 2 版美术）：小克是第 1 版的暖白纸。background 简写要写在 background-image 前面，不然图被它冲掉 */
+.xk-leaf { position: relative; background: var(--bg2); border-radius: 6px 16px 16px 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, .08), inset 10px 0 18px -14px rgba(0, 0, 0, .35); padding: 22px 22px 26px 26px; min-height: 360px; transform-origin: left center; background-size: 256px; background-image: url(/xk-art/deco/paper_light.webp); }
 .xk-leaf[data-r="hachimi"] { background-image: url(/xk-art/diary/paper_hachimi_light.webp); }
 .xk-leaf[data-r="xiaoyu"] { background-image: url(/xk-art/diary/paper_xiaoyu_light.webp); }
 html[data-theme="dark"] .xk-leaf { background-image: url(/xk-art/deco/paper_dark.webp); }

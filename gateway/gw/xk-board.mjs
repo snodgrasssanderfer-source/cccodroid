@@ -1,11 +1,13 @@
 // 留言板（#7，主人 11-02 定的）：三人共用，主人也能看能贴。替班的人下班前留一张便条：主人交代了什么、办到哪、还差什么。
 // 只传便条，不碰谁的私人记忆。放在 roles/.board/：点开头，不会被当成哪个角色的目录。
 // hook、记忆工具（各自一个进程）和网关都会读写，所以一张便条一个文件、各人的已读各一个文件，不抢同一个文件。
-// 这个文件只用 fs / path，hook 和工具进程也能直接 import。
+// 这个文件只用 fs / path 和 xk-shared（也是纯数据、纯函数），hook 和工具进程也能直接 import。
 import fs from "node:fs";
 import path from "node:path";
+import { DISPLAY as WHO, writeJson } from "./xk-shared.mjs";
 
-export const WHO = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼", owner: "主人" };
+export { WHO };   // 老名字照旧导出（xk-board-gw 的 /api/xk/board 用它）；名单本身就一份，在 xk-shared.mjs
+
 const BY_NAME = Object.fromEntries(Object.entries(WHO).map(([id, n]) => [n, id]));
 /** 「小鱼」「deepseek」都认；空、「大家」「所有人」是给三个人的（null） */
 export function toId(x) {
@@ -19,7 +21,6 @@ export function toId(x) {
 const dirOf = (rolesDir) => path.join(rolesDir, ".board");
 const readOf = (rolesDir, role) => path.join(dirOf(rolesDir), "read-" + role + ".json");
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code === "ENOENT") return d; throw new Error(`读不了 ${f}：${e.message}`); } };
-const writeJson = (f, o) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + ".tmp", JSON.stringify(o)); fs.renameSync(f + ".tmp", f); };
 
 /** 全部便条，新的在前；每张带上谁读过了 */
 export function list(rolesDir) {

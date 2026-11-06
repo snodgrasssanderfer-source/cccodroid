@@ -6,12 +6,13 @@ import { NEXT, sendJson } from "./http.mjs";
 import { roleOfDir } from "./xk-roles.mjs";
 import { STATE, addRoute, httpError, json, saveState } from "./xk-core.mjs";
 import { sidOfAgyRun } from "./xk-agy.mjs";
+import { cooling } from "./xk-handover.mjs";
 
 STATE.overlay ||= { enabled: false, permitted: false };
 // hideCmd：字幕里只写「跑命令」，不带命令内容（录屏、投屏时别人看得到浮层；主人 11-03 定的：做成开关，默认照显示）
 
 // 浮层现在显示的：当前角色、状态（idle / busy / talk / sleep）、一行字
-export const OV = { role: STATE.active, state: "idle", line: "", runId: null };
+export const OV = { role: STATE.active, state: "idle", line: "" };
 const LIVE_RUNS = new Map();   // runId → { role, text }：主人自己的轮次（网关自己起的整理、日记、压缩不显示）
 
 const base = (p) => String(p || "").split("/").filter(Boolean).pop() || "";
@@ -36,7 +37,7 @@ export function lastLine(text, n = 60) {
   return cut(lines.pop() || "", n);
 }
 
-const asleep = (id) => { const c = STATE.cooldown[id]; return !!(c && !(c.until <= Date.now())); };
+const asleep = (id) => !!cooling(id);   // 冷却的规矩只在 xk-handover 里定（顺带清掉过期的）
 const restState = (id) => (asleep(id) ? "sleep" : "idle");
 function push() { publish({ type: "xk", op: "overlay", role: OV.role, state: OV.state, line: OV.line }); }
 
@@ -60,7 +61,7 @@ onPublish((ev) => {
   // 开跑时还没定在哪个目录跑（run.cwd 在 startRun 里 await 之后才有），所以到第一个有内容的事件再认人
   live.role ||= roleOfRun(ev.runId);
   if (!live.role) { if (ev.type === "run_end") LIVE_RUNS.delete(ev.runId); return; }
-  OV.role = live.role; OV.runId = ev.runId;
+  OV.role = live.role;
   if (think) { if (OV.state !== "busy" || OV.line !== "在想…") { OV.state = "busy"; OV.line = "在想…"; push(); } }
   else if (ev.type === "tool_use" && !ev.parent) { OV.state = "busy"; OV.line = stepLine(ev.name, ev.input); push(); }
   else if (ev.type === "delta") { live.text += ev.text || ""; OV.state = "talk"; OV.line = lastLine(live.text); pushSoon(); }

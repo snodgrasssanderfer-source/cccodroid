@@ -13,6 +13,8 @@ import { turns } from "./xk-transcript.mjs";
 import { ASK } from "./xk-memory.mjs";
 import { ENGINE_RUN, STATE, XK_HOME, addRoute, carryText, httpError, json, projectOf, saveState, writeCarry } from "./xk-core.mjs";
 import { takeRollover } from "./xk-rollover.mjs";
+import { displayName } from "./xk-shared.mjs";
+import { cooling } from "./xk-handover.mjs";
 
 const FILE = path.join(XK_HOME, "room.jsonl");
 STATE.room ||= { seen: {}, lastAside: {}, usage: {} };
@@ -38,8 +40,8 @@ function append(m) {
 /** 测试用：换个空群 */
 export function resetRoom() { MSGS = []; fs.rmSync(FILE, { force: true }); STATE.room = { seen: {}, lastAside: {}, usage: {}, mode: { kind: "normal", prompt: "", since: 0, rounds: 0 } }; ROUNDS.clear(); BATCH = null; BUSY.clear(); TURNS.clear(); CIDS.clear(); AGAIN.clear(); }
 
-const asleep = (id) => { const c = STATE.cooldown[id]; return !!(c && !(c.until <= Date.now())); };
-const nameOf = (id) => (id === "owner" ? "主人" : id === "deepseek" ? "小鱼" : roleById(id)?.name || id);
+const asleep = (id) => !!cooling(id);   // 冷却的规矩只在 xk-handover 里定（顺带清掉过期的）
+const nameOf = displayName;             // 名单在 xk-shared.mjs
 // 怎么叫她们：名字和常用叫法
 const CALLS = { xiaoke: /小克|克克|大小姐/, hachimi: /哈基米|基米|小猫|猫猫/, deepseek: /小鱼|鲸鱼|大肥鱼|deepseek/i };
 
@@ -66,12 +68,11 @@ const named = () => (STATE.room.mode.kind === "goal" || STATE.room.mode.kind ===
 // 直播（主人 11-04 晚定的）：哈基米操作；解说不定死，每次她说完，从其余醒着的人里随机挑一位接，解说完再交回她。主人一开口就打断这一串
 export const LIVE_PLAYER = "hachimi";
 // 主人开直播时那句说明里写了「小克操作」「哈基米解说」就照它来；没写操作的默认哈基米，没写解说的就其余几位随机
-const LIVE_NAMES = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" };
 // 说明栏没填的话，开直播之后主人在群里说的也算；越新的越作数（11-05 主人定）
 function liveCast(word) {
   const m = STATE.room.mode, owner = messages().filter((x) => x.from === "owner" && x.at >= (m.since || 0)).map((x) => x.text);
   for (const t of [String(m.prompt || ""), ...owner].reverse()) {
-    const hit = Object.keys(LIVE_NAMES).filter((id) => new RegExp(LIVE_NAMES[id] + "[^，,。；;、\\s]{0,3}" + word).test(String(t || "")) && roleById(id));
+    const hit = ROLES.filter((r) => new RegExp(displayName(r.id) + "[^，,。；;、\\s]{0,3}" + word).test(String(t || ""))).map((r) => r.id);
     if (hit.length) return hit;
   }
   return [];
@@ -147,8 +148,10 @@ function feed(id, kind, caller, cont = false) {
 }
 
 // 她当前那段会话：#23 记的「最近那段」，得还在、还是她的；没有就在她的项目里新开
+// JUST：这一轮刚跑完的会话号。收尾时接着派下一轮要先用它——xk.mjs 记「最近那段」的钩子排在这后面，这时还读不到
+const JUST = new Map();
 function sidOf(id) {
-  const sid = STATE.lastByRole?.[id];
+  const sid = JUST.get(id) || STATE.lastByRole?.[id];
   return sid && roleOfSession(sid)?.id === id ? sid : null;
 }
 
@@ -210,8 +213,6 @@ END_HOOKS.push((run, f = {}) => {
   BUSY.delete(t.role);
   publish({ type: "xk", op: "room_typing", role: t.role, on: false });
   STATE.room.seen[t.role] = t.upTo;
-  // 新开的那段这时才有会话号：下一轮接着它（xk.mjs 记「最近那段」的钩子排在后面，等不到它）
-  if (run.sessionId) STATE.lastByRole = { ...(STATE.lastByRole || {}), [t.role]: String(run.sessionId) };
   // 她说的话从她那段会话记录里取（普通轮次的结束事件里没有正文）；哈基米的 agy 也写同样格式的记录
   // 只取紧跟在群聊那条后面的回话：群里的话插进她正在跑的私聊那轮时（item.injected），同一轮里还有她回主人的私聊，那段不能贴进群
   const said = run.sessionId ? roomReply(turns(String(run.sessionId), t.at)) : "";
@@ -227,8 +228,13 @@ END_HOOKS.push((run, f = {}) => {
   saveState();
   const r = ROUNDS.get(t.round);
   if (r) r.pending--;
-  if (AGAIN.has(t.role)) { const a = AGAIN.get(t.role); AGAIN.delete(t.role); speak(t.role, a.kind, a.round, a.caller); return; }
-  if (spoke) afterSaid(t.role, said, t.round).catch((e) => log("聊天室接话出错：" + e.message));
+  // 这一轮里接着派的下一轮（跑着时又轮到她、点了名、目标模式接着干）要用这一轮的会话号：
+  // STATE.lastByRole 只由 xk.mjs 那个钩子写，它排在这次收尾的后面，这会儿还读不到（11-06 大扫除）
+  if (run.sessionId) JUST.set(t.role, String(run.sessionId));
+  try {
+    if (AGAIN.has(t.role)) { const a = AGAIN.get(t.role); AGAIN.delete(t.role); speak(t.role, a.kind, a.round, a.caller); return; }
+    if (spoke) afterSaid(t.role, said, t.round).catch((e) => log("聊天室接话出错：" + e.message));
+  } finally { JUST.delete(t.role); }
 });
 
 export const FEED_HEAD = "（群聊：";

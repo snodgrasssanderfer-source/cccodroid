@@ -2,22 +2,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { channelName, writeFileAtomic } from "./xk-shared.mjs";
 
 export const KINDS = ["fact", "event", "plan", "opinion"];
 const KIND_ZH = { fact: "事实", event: "事件", plan: "计划", opinion: "看法" };
-const CHANNEL_ZH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
 
 const file = (dir) => path.join(dir, "memory", "memories.json");
 export function load(dir) {
   try { return JSON.parse(fs.readFileSync(file(dir), "utf8")); }
   catch (e) { if (e.code === "ENOENT") return []; throw new Error(`记忆文件读不了（${file(dir)}）：${e.message}`); }
 }
-function save(dir, list) {
-  const f = file(dir);
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f + ".tmp", JSON.stringify(list, null, 1));
-  fs.renameSync(f + ".tmp", f);
-}
+function save(dir, list) { writeFileAtomic(file(dir), JSON.stringify(list, null, 1)); }
 // 锁：MCP 服务（她当场记）、空闲整理、界面编辑可能同时写。mkdir 是原子的；持锁的进程被杀会留下锁，过 30 秒当作没人
 function locked(dir, fn) {
   const lock = path.join(dir, "memory", ".lock");
@@ -149,10 +144,7 @@ function injLoad(dir) { try { return JSON.parse(fs.readFileSync(injFile(dir), "u
 function injSave(dir, all) {
   const keys = Object.keys(all);
   for (const k of keys.slice(0, Math.max(0, keys.length - INJECT.keep))) delete all[k];
-  const f = injFile(dir);
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f + ".tmp", JSON.stringify(all));
-  fs.renameSync(f + ".tmp", f);
+  writeFileAtomic(injFile(dir), JSON.stringify(all));
 }
 /** 会话开头（含压缩后、resume）：fresh 为真就清空重来；ids 是这次已经带进去的（开头要点里那几条） */
 export function injectReset(dir, sid, ids = [], fresh = true) {
@@ -204,5 +196,5 @@ export function digest(dir, max = 1500, now = Date.now()) {
 
 export function line(m) {
   const tail = m.past ? `（已过去${m.until ? "，" + m.until + " 起" : ""}）` : m.until ? `（到 ${m.until}）` : "";
-  return `- [${m.id}] ${m.date} ${KIND_ZH[m.kind] || m.kind}·${m.who}·${CHANNEL_ZH[m.channel] || m.channel}：${m.text}${tail}`;
+  return `- [${m.id}] ${m.date} ${KIND_ZH[m.kind] || m.kind}·${m.who}·${channelName(m.channel)}：${m.text}${tail}`;
 }

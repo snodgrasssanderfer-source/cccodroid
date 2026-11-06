@@ -11,9 +11,8 @@ import { ROLES, roleById, roleDir, roleOfDir } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { today } from "./xk-memstore.mjs";
 import { ENGINE_RUN, INTERNAL, STATE, addRoute, httpError, projectOf, saveState, selfApi } from "./xk-core.mjs";
+import { channelName, displayName } from "./xk-shared.mjs";
 
-const CH = { app: "App", "qq-private": "QQ 私聊", "qq-group": "QQ 群" };
-const NICK = { xiaoke: "小克", hachimi: "哈基米", deepseek: "小鱼" };   // 界面上的叫法，和角色名（DeepSeek）不一样，导出文件用这个
 const DIARY_TIME = "22:00";
 STATE.diaryTasks ||= {};   // 角色 → 上游定时任务号
 STATE.diaryRetry ||= {};   // 角色 → 额度恢复后补写的时刻
@@ -40,7 +39,7 @@ export function appendInputs(run, f = {}) {
   fs.mkdirSync(inputsDir(role.id), { recursive: true });
   // 群里那一轮：run.text 是整段群消息（「（群聊：」开头，三个人的话都在里面），不是主人说的一句。
   // 只摘主人在群里说的那几句，标成「群里」；他没开口（她们之间接话、目标模式接着干）就不写「主人：」那行（11-06 大扫除，小鱼查的）
-  let ask = String(run.text || "").trim(), where = CH[channel] || channel;
+  let ask = String(run.text || "").trim(), where = channelName(channel);
   if (ask.startsWith("（群聊：")) {
     where = "群里";
     ask = ask.split("\n").filter((l) => l.startsWith("主人：")).map((l) => l.slice(3).trim()).join(" / ");
@@ -150,7 +149,7 @@ export function saveDiaryPng(roleId, date, buf) {
   const role = roleById(roleId);
   if (!role) throw httpError(404, "没有这个角色");
   if (!fs.existsSync(path.join(roleDir(role.id), "diary", date + ".md"))) throw httpError(404, "这天没有日记");
-  return saveExportPng(`diary-${role.id}-${date}`, `${NICK[role.id] || role.name}的日记 ${date}.png`, buf, /^diary-.*\.png$/);
+  return saveExportPng(`diary-${role.id}-${date}`, `${displayName(role.id)}的日记 ${date}.png`, buf, /^diary-.*\.png$/);
 }
 // 群聊长截图：前端把选中的气泡画成一张长图传上来，这里只落盘
 export function saveRoomPng(buf) {
