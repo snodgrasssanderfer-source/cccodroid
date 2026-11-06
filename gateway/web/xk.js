@@ -274,6 +274,28 @@
       for (const d of t) if (!d.dataset.xk) { d.dataset.xk = "1"; d.open = true; }
     }
   }).observe(document.body, { childList: true, subtree: true });
+  // 干活过程收起来（主人 11-06 定的）：一轮跑完，最后一段正文之前的东西（工具组、思考、夹在工具中间的碎话）
+  // 收进一个折叠块，只露最后那段。跑着的时候不动（气泡里还有 .live-tail）；历史页翻出来的同样处理。
+  // 没动过工具的回复、最后停在工具或报错上的回复，原样不动
+  function foldWork(b) {
+    // 还在跑的、还不能折的都不打记号，下次变动再看（刚起的气泡只有三个点，那时连 .live-tail 都还没有）
+    if (b.dataset.xkf || b.querySelector(":scope > .live-tail")) return;
+    const kids = [...b.children];
+    const lastTxt = kids.length && kids[kids.length - 1].classList.contains("txt") ? kids[kids.length - 1] : null;
+    if (!lastTxt || b.querySelector(":scope > .err-box")) return;
+    const before = kids.slice(0, -1);
+    const steps = before.reduce((n, el) => n + el.querySelectorAll(".tool").length, 0);
+    if (!steps) return;
+    b.dataset.xkf = "1";
+    const d = document.createElement("details");
+    d.className = "xk-work";
+    d.innerHTML = `<summary><span class="chev">▶</span>干活过程<span class="n">${steps} 步</span></summary>`;
+    d.append(...before);
+    b.prepend(d);
+  }
+  let foldQ = 0;
+  const foldAll = () => { foldQ = 0; document.querySelectorAll("#chat .msg.bot:not(.welcome) > .bubble:not([data-xkf])").forEach(foldWork); };
+  new MutationObserver(() => { if (!foldQ) foldQ = requestAnimationFrame(foldAll); }).observe($("#chat") || document.body, { childList: true, subtree: true });
   const PRAISE = /可爱|厉害|好看|真棒|聪明|喜欢你|好乖/;
   const runs = new Map();   // run 号 → { praise, said }
   function mine(ev) { const cc = window.__cc; return cc && ((ev.runId && cc.view.runIds && cc.view.runIds.has(ev.runId)) || (ev.sessionId && ev.sessionId === cc.view.sessionId)); }

@@ -386,3 +386,12 @@ html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-du
 .xk-padsas b { display: block; font-size: 40px; letter-spacing: .22em; font-variant-numeric: tabular-nums; color: var(--accent); margin: 6px 0 10px; }
 .xk-padsas div { display: flex; gap: 10px; justify-content: center; }
 .xk-padsas .xk-mini.on { background: var(--accent); color: var(--on-accent); }
+/* 干活过程（11-06）：一轮跑完，最后一段正文之前的东西收在这里 */
+.xk-work{margin:4px 0 8px}
+.xk-work>summary{list-style:none;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12.5px;color:var(--fg3);
+  background:var(--tool-bg);border:1px solid var(--tool-line);border-radius:10px;cursor:pointer;user-select:none}
+.xk-work>summary::-webkit-details-marker{display:none}
+.xk-work>summary .chev{font-size:10px;transition:transform .15s}
+.xk-work[open]>summary .chev{transform:rotate(90deg)}
+.xk-work>summary .n{margin-inline-start:auto}
+.xk-work[open]{padding-bottom:4px;border-bottom:1px dashed var(--tool-line)}
