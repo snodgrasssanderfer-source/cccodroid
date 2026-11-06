@@ -33,6 +33,22 @@ test("每轮结束：问答按日期、渠道追加到这个角色的素材", ()
   assert.equal(fs.readFileSync(f, "utf8").match(/##/g).length, 1);
 });
 
+test("群里那一轮：只记主人在群里说的话，标成群里；主人没开口就不写主人那行（11-06）", () => {
+  ensureRoles();
+  const at = Date.parse("2026-11-02T10:05:00");
+  const feed = "（群聊：主人把你们三个叫到一个群里了）\n小鱼：查完了\n主人：辛苦了\n主人：接着查\n\n（轮到你在群里接话了）";
+  fakeSession("deepseek", "sg1", at, feed, "好");
+  appendInputs({ id: "rg", text: feed, sessionId: "sg1", cwd: roleDir("deepseek"), startedAt: at });
+  const f = path.join(roleDir("deepseek"), "diary/inputs/2026-11-02.md");
+  const t = fs.readFileSync(f, "utf8");
+  assert.match(t, /## 10:05 · 群里\n主人：辛苦了 \/ 接着查\nDeepSeek：好/);
+  assert.doesNotMatch(t, /小鱼：查完了/);
+  const feed2 = "（群聊：主人把你们三个叫到一个群里了）\n小克：小鱼你来\n\n（小克在群里叫你了）";
+  fakeSession("deepseek", "sg2", at + 60000, feed2, "收到");
+  appendInputs({ id: "rg2", text: feed2, sessionId: "sg2", cwd: roleDir("deepseek"), startedAt: at + 60000 });
+  assert.match(fs.readFileSync(f, "utf8"), /## 10:06 · 群里\nDeepSeek：收到/);
+});
+
 test("导出日记图片：只收真 PNG、只导真有的那篇，落进导出目录", () => {
   ensureRoles();
   const dir = path.join(roleDir("deepseek"), "diary");

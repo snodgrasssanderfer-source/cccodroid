@@ -139,3 +139,10 @@ test("下班补一张：还有额度就补跑一轮让她自己写；这一班�
     assert.equal(ran.length, 1);
   } finally { ENGINE_RUN.agy = keep; }
 });
+
+test("一次超过 5 张：只递 5 张、只记 5 张已读，剩下的下一轮接着递（11-06）", () => {
+  for (let i = 0; i < 7; i++) post(ROLES_DIR, { from: "owner", text: "第" + i + "张" });
+  assert.equal(takeUnread(ROLES_DIR, "xiaoke").length, 5);
+  assert.equal(takeUnread(ROLES_DIR, "xiaoke").length, 2, "剩下两张下一轮递");
+  assert.deepEqual(takeUnread(ROLES_DIR, "xiaoke"), []);
+});

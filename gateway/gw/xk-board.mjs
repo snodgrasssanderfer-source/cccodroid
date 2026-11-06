@@ -66,8 +66,9 @@ export function takeUnread(rolesDir, role, n = 5) {
   if (!all.length) return [];
   const f = readOf(rolesDir, role), seen = readJson(f, []);
   const live = new Set(list(rolesDir).map((x) => x.id));
-  writeJson(f, [...seen.filter((id) => live.has(id)), ...all.map((x) => x.id)]);   // 删掉的便条顺手从已读里清掉
-  return all.slice(0, n);
+  const out = all.slice(0, n);   // 只把递出去的记成已读：一次超过 n 张，剩下的下一轮接着递（11-06 大扫除，小鱼查的）
+  writeJson(f, [...seen.filter((id) => live.has(id)), ...out.map((x) => x.id)]);   // 删掉的便条顺手从已读里清掉
+  return out;
 }
 
 const when = (t) => new Date(t).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
