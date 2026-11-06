@@ -13,10 +13,13 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ,
+  ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
+import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
 
+// 发言节奏：所有停顿都关成 0（脚本会清掉 CCAPP_*，这里自己设；不设的话每条要等 0.6–5 秒）
+process.env.CCAPP_QQ_GAP_MS = "0";
 const BOT = "10001", OWNER = "90001", STRANGER = "12345";
 const cfg = { enabled: true, ws: "ws://127.0.0.1:1", token: "s3cret-token", bot: BOT, owner: OWNER, names: ["小克"] };
 const priv = (uid, text) => ({ post_type: "message", message_type: "private", user_id: uid, message_id: "m" + uid, message: [{ type: "text", data: { text } }] });
@@ -35,7 +38,7 @@ beforeEach(() => {
 /** 这一轮跑完：写一份会话记录，再走一遍结束钩子 */
 function finish(q, said = "收到", f = {}) {
   const dir = path.join(CFG.home, ".claude", "projects", projectSlug(q.cwd || CFG.workspace));
-  const sid = q.sessionId || "qq-" + (queued.indexOf(q) + 1) + "-0000-4000-8000-000000000000";
+  const sid = q.sessionId || "qq-" + (queued.indexOf(q) + 1) + "-" + Math.random().toString(16).slice(2, 10) + "-4000-8000-000000000000";
   const at = new Date().toISOString();
   fs.mkdirSync(dir, { recursive: true });
   fs.appendFileSync(path.join(dir, sid + ".jsonl"), [
@@ -361,7 +364,7 @@ test("send_message 一次发几条；这一轮自己发过了，最后的文字�
     const before = REPLIES.length;
     finish(q, "这行不该再发");
     assert.equal(REPLIES.length, before, "自己发过了，最后的文字不再另发");
-  } finally { stopQQ(); bot.close(); delete process.env.CCAPP_QQ_GAP_MS; }
+  } finally { stopQQ(); bot.close(); process.env.CCAPP_QQ_GAP_MS = "0"; }
 });
 
 test("拍一拍照原版：群聊必须给号，号码必须是群里出现过的人；私聊只拍对方", async () => {
@@ -734,7 +737,7 @@ test("主人在群里：ask_owner 不发私聊、不记清单，只在群里说�
     await drainQQRpc();
     const res = rpcRes("ask1");
     assert.ok(res.ok, res.error);
-    assert.match(res.result.text, /主人在群里/);
+    assert.match(res.result.text, /主管在群里/);
     assert.ok(!bot.actions.some((a) => a.action === "send_private_msg"), "主人在群里就不私聊");
     assert.ok(!fs.existsSync(APPROVALS_FILE) || !JSON.parse(fs.readFileSync(APPROVALS_FILE, "utf8")).items.length, "不记清单");
   } finally { stopQQ(); bot.close(); }
@@ -857,4 +860,54 @@ test("qq.json 的 groups 只认数字群号和 self/clean，写错的当没写",
     groups: { "555": "self", "666": "clean", "abc": "self", "777": "boss" } }));
   assert.deepEqual(loadConfig().groups, { "555": "self", "666": "clean" });
   fs.rmSync(CONFIG_FILE, { force: true });
+});
+
+// ── 发言节奏像人 + 群里的口吻（#134 第三步补的两条）──
+
+test("发言节奏：首条前按字数停、条间隔按字数算、都有上下限", () => {
+  assert.ok(gapForChars(20, () => 0.5) > gapForChars(0, () => 0.5), "字数多隔得久");
+  assert.ok(gapForChars(200, () => 0.5) >= gapForChars(20, () => 0.5), "再长也不会变短");
+  assert.equal(gapForChars(10 ** 6, () => 1), 5000, "封顶 5 秒");
+  assert.equal(gapForChars(0, () => 0), 600, "最少 0.6 秒");
+  assert.ok(leadDelayFor("", () => 0) >= 500 && leadDelayFor("", () => 1) <= 1800, "首条前 500–1800ms");
+  assert.ok(leadDelayFor("十一", () => 0) > leadDelayFor("", () => 0), "每个字再加 12ms");
+  assert.equal(leadDelayFor("字".repeat(5000), () => 1), 8000, "封顶 8 秒");
+});
+
+test("最后那段文字自动分段：短话切气泡，带换行的和超长的整段发", () => {
+  assert.deepEqual(splitBubbles("来了。你有什么事？好~"), ["来了。", "你有什么事？", "好~"]);
+  assert.deepEqual(splitBubbles("第一行\n第二行。"), ["第一行\n第二行。"], "带换行的不切（档案、代码要整段）");
+  const long = "啊".repeat(151);
+  assert.deepEqual(splitBubbles(long), [long], "超过 150 字照旧整段");
+  assert.deepEqual(splitBubbles("就一句"), ["就一句"]);
+});
+
+test("群里那轮没调 send_message：最后那段短话切成几个气泡", () => {
+  const before = REPLIES.length;
+  handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
+  finish(queued.at(-1), "来了。你有什么事？");
+  assert.deepEqual(REPLIES.slice(before).map((x) => x.text), ["来了。", "你有什么事？"]);
+});
+
+test("群里那段叠上口吻文件；私聊、工作模式、干净会话都不带；文件不在也不报错", () => {
+  const f = path.join(CFG.home, "qq-style-test.md");
+  fs.writeFileSync(f, "在群里叫主管，说话像基金会终端。");
+  process.env.CCAPP_QQ_STYLE_FILE = f;
+  try {
+    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
+    assert.match(queued.at(-1).appendSystemPrompt, /叫主管/, "群里那轮带上口吻");
+    finish(queued.at(-1), "在。");
+    // 私聊切工作模式：屋里那段不带
+    handleMessage(selfCfg, priv(OWNER, "换成工作模式"), "换成工作模式");
+    handleMessage(selfCfg, priv(OWNER, "看下代码"), "看下代码");
+    assert.ok(!String(queued.at(-1).appendSystemPrompt || "").includes("叫主管"), "屋里那段不带");
+    // 干净会话不带
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    assert.ok(!String(queued.at(-1).appendSystemPrompt || "").includes("叫主管"), "干净会话不带");
+    // 文件不在：什么都不加，也不报错
+    process.env.CCAPP_QQ_STYLE_FILE = path.join(CFG.home, "没有这个文件.md");
+    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 还在吗" } }]), "小克 还在吗");
+    assert.ok(!String(queued.at(-1).appendSystemPrompt || "").includes("叫主管"));
+    finish(queued.at(-1), "在。");
+  } finally { delete process.env.CCAPP_QQ_STYLE_FILE; }
 });

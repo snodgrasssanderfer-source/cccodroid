@@ -18,7 +18,7 @@ import { writeJson } from "./xk-shared.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
-  mergeStickerLibrary, applyStickerNote, markStickerUsed, sanitizeUserText,
+  mergeStickerLibrary, applyStickerNote, markStickerUsed, sanitizeUserText, leadDelayFor, gapForChars,
 } from "./xk-qq-port.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -78,8 +78,16 @@ const SELF_DENY = [
   "mcp__xk-memory__room_say", "mcp__xk-memory__room_read", "mcp__xk-memory__context_next", "mcp__xk-memory__room_mode",
   "mcp__device", "mcp__bili",
 ];
-const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。"
-  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主人在群里时，就在群里说一句「这个得主人点头」，等主人回话；"
+const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。";
+/** 群里那段的口吻（#134：主管、基金会文风）：小克写在手机上，文件不存在就什么都不加 */
+export const GROUP_STYLE_FILE = path.join(roleDir("xiaoke"), "qq-group-style.md");
+export function groupStyle() {
+  try {
+    const t = fs.readFileSync(process.env.CCAPP_QQ_STYLE_FILE || GROUP_STYLE_FILE, "utf8").trim();
+    return t ? "\n\n" + t : "";
+  } catch { return ""; }
+}
+  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主管在群里时，就在群里说一句「这个得主管点头」，等主管回话；"
   + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
 
 STATE.qq ||= { modes: {}, sessions: {} };   // 会话 → 模式（chat / work）；会话 → 干净会话的 Claude 会话号
@@ -397,8 +405,27 @@ export async function handleEvent(cfg, ev) {
   handleMessage(cfg, ev, p.text, { line: ctx + line, pending });
 }
 
-/** 说一句话回去；太长按段落拆成几条。群里引用对方那条（拍一拍的回复没有消息可引） */
-function reply(cfg, ev, text) {
+/** 一段 ≤150 字、没有换行的回话切成几个气泡（照句末标点）；带换行的整段发，长的照旧拆段 */
+export function splitBubbles(text) {
+  const t = String(text || "").trim();
+  if (!t) return [];
+  if (t.length > 150 || t.includes("\n")) return [t];
+  const parts = (t.match(/[^。？！!?~…]+[。？！!?~…]*/g) || []).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 1 ? parts : [t];
+}
+
+/** 私聊里先亮一下「正在输入」（qq-agent-plus 的 #signalTyping；NapCat 动作名 set_input_status，真机核过再定） */
+async function signalTyping(cfg, ev) {
+  if (ev.message_type !== "private" || !cfg) return;
+  try { await act("set_input_status", { user_id: ev.user_id, event_type: 1 }, 3000); } catch { /* 显示不出来不挡发消息 */ }
+}
+
+// 说的话按顺序慢慢发：首条前停一下、条间按字数隔开（#134 第三步「发言节奏像人」）
+let SEND_CHAIN = Promise.resolve();
+const chainSend = (fn) => { SEND_CHAIN = SEND_CHAIN.then(fn).catch((e) => say("发消息失败：" + e.message)); };
+
+/** 说一段回去；太长按段落拆成几条，短话按句末切成几个气泡。群里引用对方那条（拍一拍的回复没有消息可引） */
+function reply(cfg, ev, text, { split = false } = {}) {
   const parts = String(text || "").trim();
   if (!parts) return;
   const chunks = [];
@@ -409,16 +436,22 @@ function reply(cfg, ev, text) {
     left = left.slice(cut > 200 ? cut : 800).replace(/^\n+/, "");
   }
   if (left) chunks.push(left);
-  for (const c of chunks) {
+  const bubbles = chunks.flatMap((c) => (split ? splitBubbles(c) : [c]));
+  bubbles.forEach((c, i) => {
     REPLIES.push({ key: convKey(ev), ev, text: c });
-    const msg = [];
-    if (ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
-    msg.push({ type: "text", data: { text: c } });
-    const ok = ev.message_type === "group"
-      ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
-      : send(cfg, "send_private_msg", { user_id: ev.user_id, message: msg });
-    if (!ok) say("没发出去：连接断了");
-  }
+    const wait = i === 0 ? leadMs(c) : gapMs(bubbles[i - 1]);
+    chainSend(async () => {
+      if (wait) await sleep(wait);
+      await signalTyping(cfg, ev);
+      const msg = [];
+      if (ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
+      msg.push({ type: "text", data: { text: c } });
+      const ok = ev.message_type === "group"
+        ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
+        : send(cfg, "send_private_msg", { user_id: ev.user_id, message: msg });
+      if (!ok) say("没发出去：连接断了");
+    });
+  });
 }
 
 /** 这个会话接谁：self = 小克本人（群里），chat = 干净会话，work = 屋里那段。
@@ -484,8 +517,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
         allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
           ...(r.restricted ? ["mcp__xk-memory__recall", "mcp__xk-memory__remember", ...CLEAN_TOOLS] : [])],
         ...(r.restricted
-          ? { disallowedTools: SELF_DENY, qqGuard: { tools: CLEAN_TOOLS, mcpConfig: selfMcpConfig("restricted") }, appendSystemPrompt: SELF_NOTE }
-          : { mcpConfig: selfMcpConfig("owner"), allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), "mcp__qq__owner_away"] }),
+          ? { disallowedTools: SELF_DENY, qqGuard: { tools: CLEAN_TOOLS, mcpConfig: selfMcpConfig("restricted") }, appendSystemPrompt: SELF_NOTE + groupStyle() }
+          : { mcpConfig: selfMcpConfig("owner"), allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), "mcp__qq__owner_away"], appendSystemPrompt: groupStyle() }),
       });
       RUNSQQ.set(item.id, r);
       writeRunCtx(item.id, r);
@@ -553,7 +586,10 @@ function writeRunCtx(runId, r) {
 const runCtxOf = (runId) => readJson(path.join(RUN_DIR, String(runId || "") + ".json"), null);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const gapMs = () => Math.max(0, Number(process.env.CCAPP_QQ_GAP_MS) || (1000 + Math.floor(Math.random() * 2000)));
+/** 测试开关：CCAPP_QQ_GAP_MS 设了（包括 0）就所有停顿都用这个数，不再随机、不再按字数算 */
+const fixedGap = () => { const v = process.env.CCAPP_QQ_GAP_MS; return v === undefined || v === "" ? null : Math.max(0, Number(v) || 0); };
+const gapMs = (prevText = "") => fixedGap() ?? gapForChars([...String(prevText)].length);
+const leadMs = (text = "") => fixedGap() ?? leadDelayFor(text);
 
 /** 一段图片字节是什么格式 */
 function mimeOf(buf) {
@@ -813,7 +849,9 @@ async function runTool(req, ctx, r) {
       let n = 0;
       const ids = [], failed = [], notes = [];
       for (let i = 0; i < list.length; i++) {
-        if (i) await sleep(gapMs());
+        // 首条前停一下（按第一条字数），之后按上一条字数隔开
+        await sleep(i ? gapMs(list[i - 1].text) : leadMs(list[0].text));
+        if (i === 0) await signalTyping(r?.cfg, { message_type: ctx.type, user_id: ctx.user_id });
         const m = list[i];
         const target = (m.atUserId || m.replyToMessageId) ? resolveMessageTarget(ctx, m) : base;
         if (target.note) notes.push(target.note);
@@ -959,7 +997,7 @@ async function runTool(req, ctx, r) {
       if (!ctx.restricted) throw new Error("这一轮不用问主人，直接做");
       // 主人在群里：不用私聊、不用报审，在群里说一句请他点头就行
       if (!STATE.qq.away) {
-        return { pending: false, text: "主人在群里，不用私聊报审。在群里说一句「这个得主人点头」，等主人回话；别自己先做。" };
+        return { pending: false, text: "主管在群里，不用私聊报审。在群里说一句「这个得主管点头」，等主管回话；别自己先做。" };
       }
       const request = oneLine(a.request, 500);
       if (!request) throw new Error("request 不能为空：写清对方要你做什么");
@@ -1139,7 +1177,7 @@ END_HOOKS.push((run, f = {}) => {
     else reply(r.cfg, r.ev, said || "（这次没说出话）");
   } else if (r.kind === "self") {
     // 群里接本人：自己发过了就不再另发；没说话只记日志
-    if (!r.usedSend && said) reply(r.cfg, r.ev, said);
+    if (!r.usedSend && said) reply(r.cfg, r.ev, said, { split: true });
     else if (!r.usedSend && (f.isError || f.failed)) say("群里这一轮没成，没回话（" + (f.error || "出错") + "）");
     // 主人批过的那件：办完/没办成都私聊回一句
     if (r.approval) {
@@ -1151,7 +1189,7 @@ END_HOOKS.push((run, f = {}) => {
   } else if (r.usedSend) {
     // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
   } else if (said) {
-    reply(r.cfg, r.ev, said);
+    reply(r.cfg, r.ev, said, { split: true });
   } else if (f.isError || f.failed) {
     // 聊天模式：群里不该冒「这轮出错了」，记日志就行
     say("这一轮没成，没回话（" + (f.error || "出错") + "）");
