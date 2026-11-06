@@ -13,10 +13,11 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  drainQQSay, ensureClean, handleEvent, handleMessage, loadConfig, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
+  drainQQSay, ensureClean, handleEvent, handleMessage, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
+import { ASK } from "../gw/xk-memory.mjs";
 
 // 发言节奏：所有停顿都关成 0（脚本会清掉 CCAPP_*，这里自己设；不设的话每条要等 0.6–5 秒）
 process.env.CCAPP_QQ_GAP_MS = "0";
@@ -960,4 +961,79 @@ test("屋里往群里发话：群名对得上就发、记进那个群的最近�
     assert.match(queued.at(-1).message, /在屋里发的/, "群里那段知道这是自己发的话");
     finish(queued.at(-1), "在。");
   } finally { stopQQ(); bot.close(); process.env.CCAPP_QQ_GAP_MS = "0"; }
+});
+
+// ── 发文件、主动插话（#134 第三步补的两条）──
+
+test("send_file：只发发件箱里的，20MB 以上、路径在外、软链接一律拒", async () => {
+  const bot = await connectedBot();
+  try {
+    const box = path.join(ROLE_XIAOKE, "qq-out");
+    fs.mkdirSync(box, { recursive: true });
+    fs.writeFileSync(path.join(box, "游戏.html"), "<h1>hi</h1>");
+    fs.writeFileSync(path.join(CFG.workspace, "外面.txt"), "不要发");
+    fs.symlinkSync(path.join(box, "游戏.html"), path.join(box, "链内.txt"));
+    fs.writeFileSync(path.join(box, "大.bin"), "");
+    fs.truncateSync(path.join(box, "大.bin"), 20 * 1024 * 1024 + 1);
+    handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 发个文件" } }]), "小克 发个文件");
+    const q = queued.at(-1);
+    const reqDir = path.join(CLEAN_DIR, ".rpc", "req");
+    fs.mkdirSync(reqDir, { recursive: true });
+    const send = (id, p) => fs.writeFileSync(path.join(reqDir, `${id}.json`), JSON.stringify({ id, runId: q.id, tool: "send_file", args: { path: p } }));
+    send("f1", "游戏.html");
+    send("f2", "../外面.txt");
+    send("f3", path.join(CFG.workspace, "外面.txt"));
+    send("f4", "链内.txt");
+    send("f5", "大.bin");
+    await drainQQRpc();
+    const res = (id) => JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".rpc", "res", id + ".json"), "utf8"));
+    assert.equal(res("f1").ok, true, res("f1").error);
+    assert.match(res("f1").result.name, /游戏\.html/);
+    const up = bot.actions.filter((a) => a.action === "upload_group_file");
+    assert.equal(up.length, 1, "只发出去一条");
+    for (const id of ["f2", "f3", "f4", "f5"]) assert.equal(res(id).ok, false, id + " 不该发出去");
+    assert.match(res("f2").error, /发件箱/);
+    assert.match(res("f4").error, /软链接/);
+    assert.match(res("f5").error, /20MB/);
+    finish(q, "");
+  } finally { stopQQ(); bot.close(); process.env.CCAPP_QQ_GAP_MS = "0"; }
+});
+
+test("主动插话：筛子和限流，小模型答否就不起轮", async () => {
+  const T = Date.parse("2026-11-06T12:00:00");
+  const before = queued.length;
+  // 无关话题：筛子没过
+  assert.equal(await maybeInterject(selfCfg, group(STRANGER, [{ type: "text", data: { text: "今天天气不错" } }]), "x", T, () => 0), false);
+  assert.equal(queued.length, before);
+  // 关键词命中、骰子过了，但小模型答否
+  const orig = ASK.claude;
+  ASK.claude = async () => ({ text: "否" });
+  try {
+    assert.equal(await maybeInterject(selfCfg, group(STRANGER, [{ type: "text", data: { text: "这段代码怎么跑" } }]), "x", T, () => 0), false);
+    assert.equal(queued.length, before);
+  } finally { ASK.claude = orig; }
+  // 夜里、冷却、每日上限
+  assert.match(interjectBlock(selfCfg, "555", Date.parse("2026-11-06T03:00:00")), /夜里/);
+  STATE.qq.interject["555"] = { at: T, day: "2026-11-6", count: 1 };
+  assert.match(interjectBlock(selfCfg, "555", T + 10 * 60000), /冷却/);
+  STATE.qq.interject["555"] = { at: T - 3600000, day: "2026-11-6", count: 6 };
+  assert.match(interjectBlock(selfCfg, "555", T), /上限/);
+});
+
+test("主动插话：小模型答是就起一轮，工具按群友那轮限住；她没说话群里不冒", async () => {
+  const T = Date.parse("2026-11-06T12:00:00");
+  const orig = ASK.claude;
+  ASK.claude = async () => ({ text: "是" });
+  try {
+    const ok = await maybeInterject(selfCfg, group(STRANGER, [{ type: "text", data: { text: "这段代码怎么跑" } }]), "x", T, () => 0);
+    assert.equal(ok, true);
+    const q = queued.at(-1);
+    assert.ok(q.qqGuard, "插话那一轮限权");
+    assert.equal(q.qqGuard.tools.join(","), "WebSearch,WebFetch");
+    assert.ok(q.unattended);
+    assert.match(q.message, /没人叫你，你自己决定插一句；不想插就什么都不发/);
+    const before = REPLIES.length;
+    finish(q, "");
+    assert.equal(REPLIES.length, before, "她一句话没说，群里什么都不冒");
+  } finally { ASK.claude = orig; }
 });

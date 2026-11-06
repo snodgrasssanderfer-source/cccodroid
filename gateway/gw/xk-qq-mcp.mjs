@@ -66,6 +66,10 @@ const TOOLS = [
         ] } },
       ] },
       ...targetParams } } },
+  { name: "send_file", description: "把发件箱（roles/xiaoke/qq-out/）里的文件发到当前聊天。path 写文件名或发件箱里的相对路径，只能发那里的；最大 20MB。群用 upload_group_file，私聊用 upload_private_file。",
+    inputSchema: { type: "object", required: ["path"], properties: {
+      path: { type: "string", description: "发件箱里的文件名或相对路径" },
+      name: { type: "string", description: "发出去显示的文件名，可不填（默认用文件名）" } } } },
   { name: "send_poke", description: "拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时先看聊天记录里谁在说话；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传「未知」或 0 这类占位。适合用「戳一下」代替一句废话，或偶尔逗一下正在聊的人。别频繁。",
     inputSchema: { type: "object", properties: { targetUserId: { type: ["integer", "string"], description: "要拍的群友 QQ 号（数字，群聊必填）" } } } },
   { name: "get_message_images", description: "查看某条消息里的图片/表情（你能直接看懂）。聊天记录里出现 [图片] / [表情] 时可用。先判断它想表达的情绪/态度，再针对态度回话，不要复述画面。",
@@ -134,6 +138,10 @@ async function call(name, a = {}) {
     const bits = [`已发送 ${r.sent || 0} 条。`];
     if (r.note) bits.push(r.note);
     return { content: [{ type: "text", text: bits.join(" ") }] };
+  }
+  if (name === "send_file") {
+    const r = await rpc("send_file", { path: a.path, name: a.name }, 180000);
+    return textOf(r, "发出去了。");
   }
   if (name === "send_poke") {
     const r = await rpc("send_poke", { targetUserId: a.targetUserId }, 30000);
