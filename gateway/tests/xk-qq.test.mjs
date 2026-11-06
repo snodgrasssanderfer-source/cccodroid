@@ -18,6 +18,7 @@ import {
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
 import { ASK } from "../gw/xk-memory.mjs";
+import { memDirFor, qqMemDir } from "../gw/xk-memstore.mjs";
 
 // 发言节奏：所有停顿都关成 0（脚本会清掉 CCAPP_*，这里自己设；不设的话每条要等 0.6–5 秒）
 process.env.CCAPP_QQ_GAP_MS = "0";
@@ -700,6 +701,12 @@ test("群里接小克本人：群友叫的一轮限权，主人的一轮全开�
   assert.ok(rq.allowedTools.some((t) => t === "mcp__xk-memory__remember"), "记忆能记（11-06 晚改的）");
   assert.ok(!rq.allowedTools.some((t) => /Bash|Edit|Write|device|bili/.test(t)), "真家伙不开");
   assert.ok(!mcp.mcpServers.qq.env.CCAPP_QQ_TOOLS.includes("owner_away"), "群友那轮调不到 owner_away");
+  // 审核那两句真进了提示（曾经被函数声明隔开，成了一句空表达式）
+  assert.match(rq.appendSystemPrompt, /ask_owner/, "群友那轮知道要走 ask_owner");
+  assert.match(rq.appendSystemPrompt, /主管点头/);
+  // 群聊库靠 .xk/runs/<run>.json 的 kind 认：网关真写了，记忆工具和 hook 才会换库
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROLE_XIAOKE, ".xk", "runs", rq.id + ".json"), "utf8")).kind, "self");
+  assert.equal(memDirFor(ROLE_XIAOKE, rq.id), qqMemDir(ROLE_XIAOKE), "群里那段读写群聊库");
   const sid = finish(rq, "好");
   // 主人不用叫：self 群里主人的话和 App 里一个分量
   handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "在吗" } }]), "在吗");
@@ -1031,9 +1038,9 @@ test("主动插话：小模型答是就起一轮，工具按群友那轮限住�
     assert.ok(q.qqGuard, "插话那一轮限权");
     assert.equal(q.qqGuard.tools.join(","), "WebSearch,WebFetch");
     assert.ok(q.unattended);
-    assert.match(q.message, /没人叫你，你自己决定插一句；不想插就什么都不发/);
+    assert.match(q.message, /没人叫你，你自己决定插一句/);
     const before = REPLIES.length;
-    finish(q, "");
-    assert.equal(REPLIES.length, before, "她一句话没说，群里什么都不冒");
+    finish(q, "不插了，这个话题没什么可补充的。");
+    assert.equal(REPLIES.length, before, "插话那轮最后的自言自语不发进群，只认她自己调 send_message");
   } finally { ASK.claude = orig; }
 });

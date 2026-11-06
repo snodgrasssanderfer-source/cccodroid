@@ -78,7 +78,9 @@ const SELF_DENY = [
   "mcp__xk-memory__room_say", "mcp__xk-memory__room_read", "mcp__xk-memory__context_next", "mcp__xk-memory__room_mode",
   "mcp__device", "mcp__bili",
 ];
-const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。";
+const SELF_NOTE = "这一轮是群里的人叫你说话的：工具只有搜索、读网页、QQ 工具和记忆（能查、能记）。"
+  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主管在群里时，就在群里说一句「这个得主管点头」，等主管回话；"
+  + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
 /** 群里那段的口吻（#134：主管、基金会文风）：小克写在手机上，文件不存在就什么都不加 */
 export const GROUP_STYLE_FILE = path.join(roleDir("xiaoke"), "qq-group-style.md");
 export function groupStyle() {
@@ -87,8 +89,6 @@ export function groupStyle() {
     return t ? "\n\n" + t : "";
   } catch { return ""; }
 }
-  + "要跑命令、改文件、动手机、往外发东西，或者任何有实际后果的事：主管在群里时，就在群里说一句「这个得主管点头」，等主管回话；"
-  + "主人说过不在群时，调 ask_owner 把对方要什么报上去，网关会攒成清单，别自己先做，也别反复报同一件。";
 
 STATE.qq ||= { modes: {}, sessions: {} };   // 会话 → 模式（chat / work）；会话 → 干净会话的 Claude 会话号
 const BUSY = new Map();      // 会话 → { at, cid }：正在跑一轮
@@ -224,11 +224,15 @@ function connect(cfg) {
         else if (f.opcode === 0x9) { try { socket.write(encodeFrame(f.payload, 0xa)); } catch {} }
       }
     });
+    // NapCat 每 30 秒发一次心跳；90 秒什么都没收到就当断了（手机换网、热点断了时 TCP 不一定报错，会一直挂着）
+    socket.setTimeout(90000, () => { say("90 秒没动静，断开重连"); drop(cfg, socket); });
     socket.on("error", (e) => { say("连接出错：" + hide(e.message)); drop(cfg, socket); });
     socket.on("close", () => drop(cfg, socket));
   });
   req.on("response", (res) => { res.resume(); again(`HTTP ${res.statusCode}`); });
   req.on("error", (e) => again(e.message));
+  // 握手卡住不回（11-06 真机：网关重启时手机网络还没就绪，请求挂着既不报错也不超时，再也没重连）
+  req.setTimeout(15000, () => req.destroy(new Error("握手超时")));
   req.end();
 }
 function drop(cfg, socket) {
@@ -401,7 +405,7 @@ export async function handleEvent(cfg, ev) {
   let pending = "";
   if (isOwner) {
     if (STATE.qq.away) { STATE.qq.away = false; saveState(); }
-    if (/不用了|都不做/.test(p.text) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
+    if (/^(不用了|都不做|都不用)[。！!.]*$/.test(p.text.replace(/\s+/g, "")) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
     pending = pendingNote();
   }
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
@@ -459,7 +463,7 @@ function reply(cfg, ev, text, { split = false } = {}) {
       if (wait) await sleep(wait);
       await signalTyping(cfg, ev);
       const msg = [];
-      if (ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
+      if (i === 0 && ev.message_type === "group" && ev.message_id) msg.push({ type: "reply", data: { id: String(ev.message_id) } });
       msg.push({ type: "text", data: { text: c } });
       const ok = ev.message_type === "group"
         ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
@@ -556,11 +560,11 @@ export async function maybeInterject(cfg, ev, line, now = Date.now(), rnd = Math
   if (!hitKeyword && !hitMention && !hitQuiet) return false;
   if (rnd() >= c.dice) return false;
   if (!(await askInterject(cfg, ev, now))) return false;
-  const head = "（没人叫你，你自己决定插一句；不想插就什么都不发）";
+  const head = "（没人叫你，你自己决定插一句：要插就用 send_message 发，这一轮最后的文字不会发出去；不想插就什么都不发）";
   // 只读一份最近的消息当上下文，不清空：下一条叫到她时，攒的还是从上次叫到之后算起
   const hist = (HISTORY.get(String(ev.group_id)) || []).slice(0, -1);
   const ctx = hist.length ? "[最近群里的消息]\n" + hist.join("\n") + "\n[/最近群里的消息]\n" : "";
-  deliver(cfg, ev, convKey(ev), "self", head + "\n" + text, head + "\n" + ctx + line, [ev]);
+  deliver(cfg, ev, convKey(ev), "self", head + "\n" + text, head + "\n" + ctx + line, [ev], "", { interject: true });
   return true;
 }
 const QUIET = new Map();   // 群号 → { at }：上一条像问题的消息，两分钟没人接才算候选
@@ -587,7 +591,7 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   deliver(cfg, ev, key, kind, text, extra.line, null, extra.pending || "");
 }
 
-function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "") {
+function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "", opts = {}) {
   const b = BUSY.get(key);
   if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line, pending: pendingNote }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
   if (b) BUSY.delete(key);   // 记录里已经没有那一轮了（收尾事件丢了）：按实际放开
@@ -598,7 +602,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     sid = roleSid("xiaoke");
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
-  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text };
+  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject };
   if (kind === "self") {
     // 主人和群友的话混在一轮里：按最严的算，只要有一条不是主人发的就限权
     const evs = all?.length ? all : [ev];
@@ -619,7 +623,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       });
       RUNSQQ.set(item.id, r);
       writeRunCtx(item.id, r);
-      markRun("xiaoke", item.id, { channel: "qq-group", sessionId: item.sessionId || null });
+      markRun("xiaoke", item.id, { channel: "qq-group", sessionId: item.sessionId || null, kind: "self" });
     } catch (e) {
       r.done = true; RUNSQQ.delete(cid); BUSY.delete(key);
       say("这一轮没起来：" + e.message);
@@ -645,6 +649,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       item = enqueue({
         message: line || incomingLine(ev, text), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
+        // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
+        provider: roleById("xiaoke").provider,
         // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
         allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
         clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfig() },
@@ -1389,8 +1395,8 @@ END_HOOKS.push((run, f = {}) => {
     else reply(r.cfg, r.ev, said || "（这次没说出话）");
   } else if (r.kind === "self") {
     // 群里接本人：自己发过了就不再另发；没说话只记日志
-    if (!r.usedSend && said) reply(r.cfg, r.ev, said, { split: true });
-    if (r.usedSend || said) { STATE.qq.lastMine ||= {}; STATE.qq.lastMine[r.key.slice(2)] = Date.now(); saveState(); }
+    if (!r.usedSend && said && !r.interject) reply(r.cfg, r.ev, said, { split: true });
+    if (r.usedSend || (said && !r.interject)) { STATE.qq.lastMine ||= {}; STATE.qq.lastMine[r.key.slice(2)] = Date.now(); saveState(); }
     else if (!r.usedSend && (f.isError || f.failed)) say("群里这一轮没成，没回话（" + (f.error || "出错") + "）");
     // 主人批过的那件：办完/没办成都私聊回一句
     if (r.approval) {
