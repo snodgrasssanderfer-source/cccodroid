@@ -65,7 +65,7 @@ export const MODES = {
 };
 STATE.room.mode ||= { kind: "normal", prompt: "", since: 0, rounds: 0 };
 const named = () => (STATE.room.mode.kind === "goal" || STATE.room.mode.kind === "live" ? Infinity : CAP.named);
-// 直播（主人 11-04 晚定的）：哈基米操作；解说不定死，每次她说完，从其余醒着的人里随机挑一位接，解说完再交回她。主人一开口就打断这一串
+// 直播：谁玩没指定就是哈基米（主人 11-04 晚定的）。主人一开口就打断这一串
 export const LIVE_PLAYER = "hachimi";
 // 主人开直播时那句说明里写了「小克操作」「哈基米解说」就照它来；没写操作的默认哈基米，没写解说的就其余几位随机
 // 说明栏没填的话，开直播之后主人在群里说的也算；越新的越作数（11-05 主人定）
@@ -286,7 +286,7 @@ async function afterSaid(who, text, round) {
   if (!r || (STATE.room.mode.kind === "goal" ? round < OWNER_ROUND : round !== ROUND)) return;
   const live = STATE.room.mode.kind === "live";
   const named = called(text, who).filter((id) => !asleep(id));
-  // 直播：操作的那位每句都爱喊「解说小鱼」，按点名走就永远是同一个人解说；所以她说完不看点名，照样随机挑（主人 11-05 定的不定死）
+  // 直播：玩的那位爱在台词里喊人名，按点名走就乱了套；所以她说完不看点名，解说只认主人写的「某某解说」（11-05）
   if (live) {
     // 直播（11-05 改）：只玩的那位出声；她说完接着派她打下一步，句末写了【停】或主人开口就停。点名一概不理
     const p = livePlayer();
