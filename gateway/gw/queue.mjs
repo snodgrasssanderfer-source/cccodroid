@@ -295,6 +295,13 @@ const MSG_MAX = 2000000;                        // 字（UTF-16 码元）：两�
 const SID_OK = /^[A-Za-z0-9_-]{1,80}$/;
 /** 字符串数组：只留字符串，条数、每条长度、总长都有上限（总长见 settings-store 的 capList） */
 export const strList = (a, n, len, total) => capList(a, n, len, total);
+/** 干净会话（QQ 聊天模式，#134）：只给列出的内置工具、不挂任何 MCP、系统提示整个换成这里给的（不要 Claude Code 默认那套）。
+ *  只有网关自己能设（和 cwd、unattended 一样在 internal 里） */
+export function cleanOpt(c) {
+  if (!c || typeof c !== "object" || typeof c.systemPrompt !== "string" || !c.systemPrompt.trim()) return null;
+  const tools = Array.isArray(c.tools) ? c.tools.map(String).filter((t) => /^[A-Za-z]+$/.test(t)) : [];
+  return { tools, systemPrompt: c.systemPrompt };
+}
 export function enqueue(body) {
   const item = {
     id: newRunId(),
@@ -313,7 +320,8 @@ export function enqueue(body) {
     at: Date.now(),
     // 只有网关自己（定时任务）会带的：前端发来的 /api/chat 不许设这些
     ...(body.internal ? { cwd: body.cwd || null, effort: body.effort || null, provider: body.provider || null, sched: body.sched || null, unattended: !!body.unattended,
-      allowedTools: body.allowedTools || null, disallowedTools: body.disallowedTools || null, timeoutMs: body.timeoutMs || 0 } : {}),
+      allowedTools: body.allowedTools || null, disallowedTools: body.disallowedTools || null, timeoutMs: body.timeoutMs || 0,
+      clean: cleanOpt(body.clean) } : {}),
     ...(body.auto ? { auto: body.auto } : {}),
   };
   // 插话（"inject"，旧前端叫 "interrupt"）：不打断。消息直接写进正在跑的 claude 的 stdin，

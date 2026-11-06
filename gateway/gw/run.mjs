@@ -188,7 +188,11 @@ export async function startRun(item) {
   if (run.sessionId) argv.push("--resume", String(run.sessionId));
   // 设备工具（通知、剪贴板、打开应用、读屏点按…）：只有 cccodroid 有 Java 那一层。开关在应用里，
   // 这里只看总开关决定挂不挂；具体哪些工具出现由 device-mcp.mjs 现问应用。端侧小模型不挂（读不起）
-  const devMcp = deviceMcpConfig();
+  // 干净会话（QQ 聊天模式，#134）：只给白名单里的内置工具；--strict-mcp-config 不带 --mcp-config＝一个 MCP 都不挂
+  // （全局的 B站、设备、记忆都不要）；系统提示整个换成人设卡，不追加工具说明和子代理规矩
+  const clean = item.clean || null;
+  if (clean) argv.push("--tools", clean.tools.join(","), "--strict-mcp-config", "--system-prompt", clean.systemPrompt);
+  const devMcp = clean ? null : deviceMcpConfig();
   if (devMcp && !P.local && (await privCall({ op: "dev_status" }, 3000)).on) argv.push("--mcp-config", devMcp);
 
   // 告诉 claude 这台设备上有什么现成工具 —— 不说它就不会去用。
@@ -204,9 +208,9 @@ export async function startRun(item) {
   const xkRole = inXkRole(cwd);   // xk
   const arch = P.local || xkRole ? null : await archiveHint(run.sessionId).catch(() => null);
   const appendPrompt = xkRole ? integrityHint() : [P.local ? localHint : toolsHint(), !P.nativeModels && !P.local ? TASKS_HINT : "", P.local ? "" : previewHint(cwd), P.local ? "" : integrityHint(), arch?.rule].filter(Boolean).join("\n\n");
-  if (appendPrompt) argv.push("--append-system-prompt", appendPrompt);
+  if (appendPrompt && !clean) argv.push("--append-system-prompt", appendPrompt);
   // 子代理（连孙代理）统一的联络规矩：用 agentId 发消息、summary 写事由、长内容落文件只发路径（见 agents.mjs）
-  if (!P.local && !message.trim().startsWith("/")) argv.push("--append-subagent-system-prompt", SUBAGENT_HINT + "\n\n" + integrityHint());
+  if (!P.local && !clean && !message.trim().startsWith("/")) argv.push("--append-subagent-system-prompt", SUBAGENT_HINT + "\n\n" + integrityHint());
   // claude 没有 --output-style 参数（传了直接 unknown option，整条消息失败）；它是 settings 里的 outputStyle。
   // 密钥读取器也在这里（见 settingsArgs）
   argv.push(...settingsArgs(P));
