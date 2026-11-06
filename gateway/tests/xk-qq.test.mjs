@@ -450,7 +450,8 @@ test("表情：列表走 QQ 收藏，偷图用 add_custom_face，本地只留笔
   bot.answer.fetch_custom_face_detail = () => faces.slice();
   bot.answer.add_custom_face = (p) => {
     addedPath = p.file;
-    assert.ok(fs.existsSync(p.file), "传给 NapCat 的是本地文件路径");
+    // NapCat 在电脑上，读不到手机的本地路径：照原版传图的地址
+    assert.ok(/^https?:\/\//.test(p.file) || p.file.startsWith("base64://"), "传给 NapCat 的是地址或 base64，不是手机本地路径");
     faces.push({ emoji_id: "e2", resId: "e2", url: bot.img, md5: "BBB", desc: "新收的" });
     return { emoji_id: "e2" };
   };
@@ -482,7 +483,7 @@ test("表情：列表走 QQ 收藏，偷图用 add_custom_face，本地只留笔
     assert.ok(col.ok, col.error);
     assert.equal(col.result.id, "e2");
     assert.ok(addedPath, "调用了 add_custom_face");
-    assert.ok(!addedPath.startsWith(path.join(CFG.workspace, "roles")), "临时文件不在 roles");
+    assert.equal(addedPath, bot.img, "有直链就传直链（原版做法）");
     const store = JSON.parse(fs.readFileSync(STICKER_FILE, "utf8"));
     assert.equal(store.find((x) => x.id === "e2").localNote, "好笑的时候发", "本地记了笔记");
     assert.ok(!fs.readdirSync(CLEAN_DIR).some((f) => f.startsWith("e2.")), "本地不存表情文件");

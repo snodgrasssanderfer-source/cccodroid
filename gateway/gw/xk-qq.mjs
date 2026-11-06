@@ -755,17 +755,14 @@ async function runTool(req, ctx, r) {
       let buf;
       try { buf = await fetchImageOf(seg); } catch (e) { throw new Error(`这张图取不到（${e.message}），没有收藏`); }
       if (!buf?.length) throw new Error("这张图取不到，没有收藏");
-      // add_custom_face 要本地文件路径：先落一个临时的，进 QQ 收藏后本地不存图
-      fs.mkdirSync(TMP_DIR, { recursive: true });
-      const file = path.join(TMP_DIR, `collect-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.${extOf(buf)}`);
-      fs.writeFileSync(file, buf);
+      // add_custom_face 照原版传图的地址；NapCat 在主人电脑上，手机这边的本地路径它读不到。
+      // 没有直链时传 base64://（NapCat 的 file 参数都认），不落临时文件
+      const file = /^https?:\/\//.test(seg.url || "") ? seg.url : "base64://" + buf.toString("base64");
       let res;
       try { res = await act("add_custom_face", { file }, 60000); } catch (e) {
         const msg = String(e.message || e);
         const maybeFull = /full|limit|上限|超过|超出|500/i.test(msg);
         throw new Error(`加进 QQ 收藏没成${maybeFull ? "（可能收藏满了）" : ""}：${msg}`);
-      } finally {
-        try { fs.rmSync(file, { force: true }); } catch {}
       }
       let emojiId = String(res?.emoji_id || res?.resId || res?.id || res?.data?.emoji_id
         || (typeof res?.data === "string" || typeof res?.data === "number" ? res.data : "") || "").trim();
