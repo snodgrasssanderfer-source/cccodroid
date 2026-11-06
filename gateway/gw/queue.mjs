@@ -317,7 +317,8 @@ export function mcpConfigOpt(v) {
  *  只有网关自己能设（和 clean 一样在 internal 里） */
 export function qqGuardOpt(g) {
   if (!g || typeof g !== "object") return null;
-  const tools = Array.isArray(g.tools) ? g.tools.map(String).filter((t) => /^[A-Za-z]+$/.test(t)) : [];
+  // 内置工具是字母；MCP 工具是 mcp__<服务>__<工具>（ask_home 问屋里那一轮只给记忆的 recall/board_read）
+  const tools = Array.isArray(g.tools) ? g.tools.map(String).filter((t) => /^(?:[A-Za-z]+|mcp__[A-Za-z0-9-]+__[A-Za-z0-9_]+)$/.test(t)) : [];
   if (!tools.length) return null;
   return { tools, mcpConfig: mcpConfigOpt(g.mcpConfig) };
 }

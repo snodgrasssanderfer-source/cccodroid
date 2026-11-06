@@ -3,12 +3,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { KINDS, line, remember, remove, search, today } from "./xk-memstore.mjs";
+import { KINDS, line, memDirFor, qqMemDir, remember, remove, search, today } from "./xk-memstore.mjs";
 import { list as boardList, noteLine, post as boardPost, toId } from "./xk-board.mjs";
 import { displayName, writeJson } from "./xk-shared.mjs";
 
 const dir = process.argv[2];
 if (!dir || !fs.existsSync(dir)) { process.stderr.write("用法：xk-memory-mcp.mjs <角色目录>\n"); process.exit(2); }
+// 群里那段（QQ 群 self）读写的是一套单独的群聊库；屋里那段（App、QQ 私聊）用屋里的
+const mem = memDirFor(dir);
+const inGroup = mem !== dir;
 
 function runInfo() {
   const run = process.env.CCAPP_RUN_ID;
@@ -42,6 +45,14 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "room_read", description: "看三个人的群里最近说了什么（主人和三个人的话都在）。交出去的事办到哪了、群里聊过什么，用它看。",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "最近几条，默认 20" } } } },
+  ...(inGroup ? [] : [
+    { name: "recall_qq", description: "查群里那段的记忆（只读）：她认识的群友、群里发生过的事。屋里不往群聊库写，所以这里只能看。",
+      inputSchema: { type: "object", required: ["query"], properties: { query: { type: "string" }, limit: { type: "number", description: "最多几条，默认 8" } } } },
+    { name: "qq_say", description: "往主人的 QQ 群里说一句（只有屋里这段能用）。target 写 qq.json 里配的群名或群号；换行保留（开场白是一份多行的档案）；太长网关会分几条发。",
+      inputSchema: { type: "object", required: ["target", "text"], properties: {
+        target: { type: "string", description: "群名或群号" },
+        text: { type: "string", description: "要说的话" } } } },
+  ]),
   { name: "context_next", description: "上下文过线时用：告诉网关这一轮之后是压缩这段对话（compact）还是换新对话（new）。只在你收到「过线了」那句提示时用；不选就按 new。",
     inputSchema: { type: "object", required: ["mode"], properties: {
       mode: { type: "string", enum: ["compact", "new"], description: "compact 压缩这段 / new 换一段新对话" },
@@ -51,11 +62,11 @@ const TOOLS = [
 function call(name, a) {
   if (name === "remember") {
     const info = runInfo();
-    const m = remember(dir, { ...a, channel: info.channel || "app", source: { runId: process.env.CCAPP_RUN_ID || null, sessionId: info.sessionId || null } });
+    const m = remember(mem, { ...a, channel: info.channel || "app", source: { runId: process.env.CCAPP_RUN_ID || null, sessionId: info.sessionId || null } });
     return m.dup ? `已经记着一模一样的了，没再记一遍：${line(m)}` : `记下了：${line(m)}`;
   }
   if (name === "recall") {
-    const hits = search(dir, a.query, Number(a.limit) || 8);
+    const hits = search(mem, a.query, Number(a.limit) || 8);
     return hits.length ? `今天是 ${today()}。\n` + hits.map(line).join("\n") : "没有找到相关的记忆。";
   }
   if (name === "board_write") {
@@ -98,7 +109,36 @@ function call(name, a) {
     writeJson(path.join(path.dirname(dir), ".ctl", path.basename(dir) + ".json"), { mode, why: String(a.why || ""), at: Date.now() });
     return mode === "compact" ? "好，这一轮结束后压缩这段对话。" : "好，这一轮结束后换一段新对话。";
   }
-  if (name === "forget") return `删掉了：${line(remove(dir, String(a.id || "")))}`;
+  if (name === "forget") return `删掉了：${line(remove(mem, String(a.id || "")))}`;
+  if (name === "recall_qq") {
+    const hits = search(qqMemDir(dir), a.query, Number(a.limit) || 8);
+    return hits.length ? "群里记得的（只读）：\n" + hits.map(line).join("\n") : "群聊库里没有相关的记忆。";
+  }
+  if (name === "qq_say") {
+    if (inGroup) throw new Error("只有屋里那段能往群里发话");
+    const target = String(a.target || "").trim();
+    const text = String(a.text || "").replace(/\r\n?/g, "\n").trim();
+    if (!target) throw new Error("target 要写群名或群号");
+    if (!text) throw new Error("text 不能为空");
+    // 网关每 200ms 看一次 .xk/qq-say/req/：发出去、把这条记进那个群的最近消息，再写 res/
+    const box = path.join(dir, ".xk", "qq-say");
+    const id = `${Date.now().toString(36)}-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
+    writeJson(path.join(box, "req", id + ".json"), { id, target, text, at: Date.now() });
+    // 等结果再回话：群名/群号不对要当场说「没有这个群」，不能假装发出去了
+    const until = Date.now() + 20000;
+    while (Date.now() < until) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(box, "res", id + ".json"), "utf8"));
+        fs.rmSync(path.join(box, "res", id + ".json"), { force: true });
+        if (!j.ok) throw new Error(j.error || "没发出去");
+        return j.result || "发出去了。";
+      } catch (e) {
+        if (e.code !== "ENOENT") throw e;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+    throw new Error("网关没回话，不知道发没发出去；先别重发，等主人说");
+  }
   throw new Error("没有这个工具：" + name);
 }
 

@@ -54,7 +54,7 @@ export function selfMcpConfig(mode) {
     qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "ask_owner"].join(",") };
     Object.assign(servers, memoryMcpServer("xiaoke"));
   } else if (mode === "owner") {
-    qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "owner_away"].join(",") };
+    qq.env = { CCAPP_QQ_TOOLS: [...QQ_TOOLS, "owner_away", "ask_home"].join(",") };
   }
   return JSON.stringify({ mcpServers: servers });
 }
@@ -128,7 +128,15 @@ export function loadConfig(file = CONFIG_FILE) {
   if (j.groups && typeof j.groups === "object") {
     for (const [gid, who] of Object.entries(j.groups)) if (/^\d{1,20}$/.test(gid) && (who === "self" || who === "clean")) groups[gid] = who;
   }
-  return { ...j, groups, names: Array.isArray(j.names) ? j.names.map(String).filter(Boolean) : [] };
+  // 群名 → 群号：屋里的 qq_say 可以按名字发，主人不用记号码
+  const groupNames = {};
+  if (j.groupNames && typeof j.groupNames === "object") {
+    for (const [n, g] of Object.entries(j.groupNames)) {
+      const name = String(n).replace(/\s+/g, " ").trim();
+      if (name && /^\d{1,20}$/.test(String(g))) groupNames[name] = String(g);
+    }
+  }
+  return { ...j, groups, groupNames, names: Array.isArray(j.names) ? j.names.map(String).filter(Boolean) : [] };
 }
 
 /** 日志和报错里出现什么都不带地址、不带 token：调用处一律用这句，别拼 url。
@@ -564,6 +572,31 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
   }
 }
 let CID = 0;
+// 群里那段问屋里的小克（#134）：起一轮只读的、等她的答复再交回群里那一轮
+const ASKHOME = new Map();   // cid → { resolve, reject }
+async function askHome(cfg, ctx, question, timeoutMs = 120000) {
+  const at = Date.now(), cid = "xk-askhome-" + (++CID);
+  const fake = { message_type: "group", group_id: ctx.group_id ?? null, group_name: ctx.group_name ?? null, user_id: ctx.user_id ?? null, message_id: null };
+  const r = { key: "askhome:" + (ctx.group_id || ctx.user_id), cfg, ev: fake, kind: "askhome", at, trigger: question, cid };
+  const answer = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ASKHOME.delete(cid); reject(new Error("屋里那边没答上来（超时）")); }, timeoutMs);
+    timer.unref?.();
+    ASKHOME.set(cid, { resolve: (t) => { clearTimeout(timer); resolve(t); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+  });
+  try {
+    // 不接着屋里那段往下聊：每问一个新会话，只给 recall / board_read，不给 Bash、Edit
+    const item = enqueue({
+      message: question, cid, internal: true, unattended: true, cwd: roleDir("xiaoke"),
+      qqGuard: { tools: ["mcp__xk-memory__recall", "mcp__xk-memory__board_read"], mcpConfig: JSON.stringify({ mcpServers: memoryMcpServer("xiaoke") }) },
+    });
+    RUNSQQ.set(item.id, r); RUNSQQ.set(cid, r);
+    writeRunCtx(item.id, r);
+    markRun("xiaoke", item.id, { channel: "app", sessionId: null });
+  } catch (e) {
+    ASKHOME.delete(cid); throw e;
+  }
+  return answer;
+}
 /** 小克「最近那段」：还是她自己的、还在，才接；没有就新开（和 xk-room 的 sidOf 一个道理） */
 function roleSid(id) {
   const sid = STATE.lastByRole?.[id];
@@ -579,7 +612,7 @@ function writeRunCtx(runId, r) {
       runId: String(runId), key: r.key, type: r.ev.message_type === "group" ? "group" : "private",
       group_id: r.ev.group_id ?? null, user_id: r.ev.user_id ?? null,
       group_name: r.ev.group_name ?? null, message_id: r.ev.message_id ?? null, at: r.at,
-      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted, owner: !!r.owner,
+      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted, owner: !!r.owner, kind: r.kind ?? null,
     });
   } catch (e) { say("写这一轮的会话记录失败：" + e.message); }
 }
@@ -1018,6 +1051,15 @@ async function runTool(req, ctx, r) {
       try { await groupSay(r.cfg, ctx.group_id, "记下了，等主人回来看。"); } catch { /* 群里说一声失败不挡事 */ }
       return { pending: true, id: rec.id, text: `记进待审清单了（#${rec.id}），清单已私聊给主人。别再重复报同一件，也别自己先做。` };
     }
+    case "ask_home": {
+      // 只有主管那一轮才看得到（selfMcpConfig 按轮给）
+      if (!ctx.owner) throw new Error("只有主管那一轮能问屋里");
+      const question = oneLine(a.question, 500);
+      if (!question) throw new Error("question 不能为空：把要问的写清楚");
+      if (!r?.cfg) throw new Error("这一轮找不到配置；先别问");
+      const answer = await askHome(r.cfg, ctx, "群里的你在问，主管在场；只答这一个问题，不该往群里说的不说。\n\n" + question);
+      return { answer, text: answer };
+    }
     case "owner_away": {
       // 只有主人那一轮才看得到这个工具（网关按轮给）
       if (!ctx.owner) throw new Error("只有主人那一轮能用");
@@ -1109,6 +1151,55 @@ export async function drainQQRpc() {
   return tasks.length;
 }
 
+// ── 屋里的她往 QQ 群发话（qq_say，#134）：请求文件进 .xk/qq-say/req/，网关核对群名/群号、发出去、写回 res/ ──
+const QQ_SAY_DIR = path.join(roleDir("xiaoke"), ".xk", "qq-say");
+function splitLong(text, max = 1500) {
+  const out = []; let left = String(text || "").trim();
+  while (left.length > max) {
+    const cut = left.lastIndexOf("\n", max);
+    const at = cut > max * 0.4 ? cut : max;
+    out.push(left.slice(0, at)); left = left.slice(at).replace(/^\n+/, "");
+  }
+  if (left) out.push(left);
+  return out;
+}
+/** 发一条屋里来的话：群名或群号在 qq.json 里查不到就报「没有这个群」，不去猜 */
+export async function drainQQSay(cfg = null) {
+  const c = cfg || loadConfig();
+  if (!c) return 0;
+  const reqDir = path.join(QQ_SAY_DIR, "req"), resDir = path.join(QQ_SAY_DIR, "res");
+  let files = [];
+  try { files = fs.readdirSync(reqDir).filter((f) => f.endsWith(".json")); } catch (e) { if (e.code !== "ENOENT") throw e; return 0; }
+  let n = 0;
+  for (const f of files) {
+    const p = path.join(reqDir, f);
+    let req = null;
+    try { req = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
+    fs.rmSync(p, { force: true });
+    if (!req?.id) continue;
+    n++;
+    const out = { id: req.id, ok: true };
+    try {
+      const target = String(req.target || "").trim();
+      const gid = /^\d{1,20}$/.test(target) ? target : (c.groupNames?.[target] || "");
+      if (!gid || !c.groups?.[gid]) throw new Error("没有这个群：" + oneLine(target, 40));
+      const name = c.groupNames?.[target] || Object.keys(c.groupNames || {}).find((k) => c.groupNames[k] === gid) || "";
+      const chunks = splitLong(req.text, 1500);
+      let sent = 0;
+      for (const t of chunks) {
+        await act("send_group_msg", { group_id: Number(gid) || gid, message: [{ type: "text", data: { text: t } }] }, 30000);
+        sent++;
+      }
+      // 记进那个群的「最近消息」：群里那段下次叫到她时，知道这是自己在屋里发过的
+      historyPush({ message_type: "group", group_id: gid, group_name: name, user_id: c.bot, message_id: null, sender: { nickname: "你" } },
+        `[群 ${name || gid}] 你（这是你自己在屋里发的）：${oneLine(req.text, 500)}`);
+      out.result = `发出去了：${sent} 条。下次群里叫到她时，她会看到这是自己在屋里发的话。`;
+    } catch (e) { out.ok = false; out.error = String(e.message || e).slice(0, 200); }
+    try { writeJson(path.join(resDir, String(req.id) + ".json"), out); } catch {}
+  }
+  return n;
+}
+
 // 聊天模式的干净会话：目录、项目级设置（兜底，真正管用的是 run 里的 --tools 白名单和 --strict-mcp-config）、人设卡。
 // 返回人设卡正文。卡改过了就把各会话的旧段落放掉：claude 第一轮就把系统提示记死了，续旧段落用的还是旧卡
 export function ensureClean() {
@@ -1171,6 +1262,14 @@ END_HOOKS.push((run, f = {}) => {
   }
   const ts = run.sessionId ? turns(String(run.sessionId), r.at) : [];
   const said = r.kind === "work" ? workReply(ts, r.head) : lastReply(ts);
+  if (r.kind === "askhome") {
+    // 群里那段问屋里：答案原样交回那一轮，不往 QQ 发
+    const w = ASKHOME.get(r.cid); ASKHOME.delete(r.cid);
+    say("[ask_home] 问：" + oneLine(r.trigger, 200) + "；答：" + oneLine(said, 300));
+    if (f.isError || f.failed) w?.reject(new Error("屋里那一轮出错了"));
+    else w?.resolve(said || "（屋里没答上来）");
+    return;
+  }
   if (r.kind === "work") {
     // 工作模式照旧：没说话、出错都给一句
     if (f.isError || f.failed) reply(r.cfg, r.ev, said || "（这一轮出错了）");
@@ -1223,4 +1322,6 @@ if (LIVE) {
   // 聊天工具来的请求：两百毫秒看一次，有就做；起手先清一遍没人取的旧文件
   try { sweepRpc(); } catch {}
   setInterval(() => { drainQQRpc().catch((e) => say("聊天工具出错：" + e.message)); }, 200).unref();
+  // 屋里的她往群里发话：两百毫秒看一次，有就发（和聊天工具一样借文件）
+  setInterval(() => { drainQQSay().catch((e) => say("往群里发话出错：" + e.message)); }, 200).unref();
 }

@@ -8,6 +8,22 @@ export const KINDS = ["fact", "event", "plan", "opinion"];
 const KIND_ZH = { fact: "事实", event: "事件", plan: "计划", opinion: "看法" };
 
 const file = (dir) => path.join(dir, "memory", "memories.json");
+
+// ── 群聊那段的记忆库和屋里的分开（#134 第三步）：群友随口一句话，不能把主人的私事带进群聊那轮 ──
+/** 这一轮是不是群里那段：网关写在 .xk/runs/<runId>.json 的 kind === "self" */
+export function isQqGroupRun(dir, runId = process.env.CCAPP_RUN_ID) {
+  if (!runId) return false;
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, ".xk", "runs", String(runId) + ".json"), "utf8"));
+    return j && j.kind === "self";
+  } catch { return false; }
+}
+/** 群聊库的目录：同一个角色目录下单独放，和屋里的 memory/ 并排 */
+export const qqMemDir = (dir) => path.join(dir, "qq-memory");
+/** 这一轮该读写的记忆目录：群里那段用群聊库，其余（App、QQ 私聊、工作模式）用屋里的 */
+export function memDirFor(dir, runId = process.env.CCAPP_RUN_ID) {
+  return isQqGroupRun(dir, runId) ? qqMemDir(dir) : dir;
+}
 export function load(dir) {
   try { return JSON.parse(fs.readFileSync(file(dir), "utf8")); }
   catch (e) { if (e.code === "ENOENT") return []; throw new Error(`记忆文件读不了（${file(dir)}）：${e.message}`); }
