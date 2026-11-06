@@ -687,13 +687,16 @@ function replayPut(req, result) {
 async function handleReq(req) {
   const out = { id: req.id, ok: true };
   try {
+    // 超时重试来的时候，头一次往往还没做完：认正在做的那一份，等它的结果，不另起一遍
     const hit = replayGet(req);
-    if (hit) { out.result = hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out); }
+    if (hit) { out.result = await hit.result; out.replayed = true; say("重试的同一件，没再发一遍"); return writeJsonAtomic(path.join(RES_DIR, String(req.id) + ".json"), out); }
     const ctx = runCtxOf(req.runId);
     if (!ctx) throw new Error("这一轮不在 QQ 会话里（没有会话记录）");
     const r = RUNSQQ.get(String(req.runId)) || [...RUNSQQ.values()].find((x) => x.cid === req.runId) || null;
-    out.result = await runTool(req, ctx, r);
-    replayPut(req, out.result);
+    const job = runTool(req, ctx, r);
+    replayPut(req, job);
+    // 没做成的不留：下次重试应该真去做
+    out.result = await job.catch((e) => { REPLAY.delete(replayKey(req)); throw e; });
   } catch (e) {
     out.ok = false; out.error = String(e.message || e).slice(0, 300);
   }

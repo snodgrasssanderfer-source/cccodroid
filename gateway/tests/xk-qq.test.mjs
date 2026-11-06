@@ -557,6 +557,23 @@ test("模型超时重试同一句：不再发第二遍", async () => {
   } finally { stopQQ(); bot.close(); }
 });
 
+test("头一次还没发完，重试就来了：也只发一遍", async () => {
+  const bot = await connectedBot();
+  bot.answer.send_private_msg = () => new Promise((ok) => setTimeout(() => ok({ message_id: 777 }), 300));
+  try {
+    handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+    const q = queued[0];
+    rpcReq("e1", q, "send_message", { messages: [{ text: "在" }] });
+    const first = drainQQRpc();
+    await new Promise((r) => setTimeout(r, 50));
+    rpcReq("e2", q, "send_message", { messages: [{ text: "在" }] });
+    await Promise.all([first, drainQQRpc()]);
+    assert.equal(bot.actions.filter((a) => a.action === "send_private_msg").length, 1, "只发了一次");
+    assert.equal(rpcRes("e2").replayed, true);
+    assert.deepEqual(rpcRes("e2").result, rpcRes("e1").result);
+  } finally { stopQQ(); bot.close(); }
+});
+
 test("没人取的旧结果和临时文件会被清掉", async () => {
   const old = path.join(CLEAN_DIR, ".rpc", "res", "old.json");
   const oldTmp = path.join(CLEAN_DIR, ".rpc", "tmp", "old.img");
