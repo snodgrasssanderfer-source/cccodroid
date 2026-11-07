@@ -88,3 +88,7 @@ header small { color: var(--fg3); font-size: 12px; white-space: nowrap; overflow
 #in.qqmode textarea { border-radius: 4px; background: var(--panel); }
 #in.qqmode .btn { border-radius: 4px; background: var(--pink); }
 #dm.on { background: var(--pink); color: #fff; box-shadow: none; }
+/* 横屏、手机画面也是横的时，互动区半透明叠在画面右边（主人 11-07）：深色半透明底、浅色字，看得见底下的牌桌 */
+html.ov { --bg: rgba(18, 14, 11, .58); --bg2: rgba(255, 255, 255, .14); --panel: transparent; --fg: #fff; --fg3: rgba(255, 255, 255, .72);
+  --line: rgba(255, 255, 255, .16); --name: rgba(255, 255, 255, .75); --accent: #f39a58; }
+html.ov .qq { text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }

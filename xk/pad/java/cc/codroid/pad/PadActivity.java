@@ -84,6 +84,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
             ui.removeCallbacks(hideExit); ui.postDelayed(hideExit, 3000);
         });
         web = new WebView(this);
+        web.setBackgroundColor(Color.TRANSPARENT);   // 叠在画面上时靠网页自己的半透明底色
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -126,6 +127,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
      */
     private void arrange() {
         if (full && screenBox.getVisibility() == View.VISIBLE) {
+            setOverlay(false);
             screenBox.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
             ui.post(this::fitScreen);
             return;
@@ -133,6 +135,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         int w = root.getWidth() - root.getPaddingLeft() - root.getPaddingRight();
         int h = root.getHeight() - root.getPaddingTop() - root.getPaddingBottom();
         if (screenBox.getVisibility() != View.VISIBLE || w <= 0 || h <= 0) {
+            setOverlay(false);
             web.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
             return;
         }
@@ -141,7 +144,22 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         // 并排时右边的互动区至少留 340dp（11-07 真机：竖着拿平板时只剩四百来像素，标题折成四行、按钮挤出屏幕）
         float minPanel = 340 * getResources().getDisplayMetrics().density;
         float side = Math.min(Math.min(w * 2f / 3, w - minPanel) / pw, (float) h / ph), stack = Math.min((float) w / pw, h * 2f / 3 / ph);
+        float whole = Math.min((float) w / pw, (float) h / ph);
         boolean beside = side > stack || (side == stack && land);
+        // 横着拿（主人 11-07：横屏画面太小，做半透明）：并排、上下叠都会把画面压小时，画面铺满，互动区半透明叠在右边。
+        // 手机竖着时并排本来就顶满高度，照旧并排、不挡画面；手机横着（打小丑牌）时才叠
+        boolean over = land && Math.max(side, stack) < whole * 0.97f;
+        setOverlay(over);
+        if (over) {
+            int panel = Math.round(Math.max(minPanel, w * 0.3f));
+            root.setOrientation(LinearLayout.HORIZONTAL);
+            screenBox.setLayoutParams(new LinearLayout.LayoutParams(w, -1));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(panel, -1);
+            lp.leftMargin = -panel;   // 往回叠到画面上（后加的子视图画在上面、先收点击）
+            web.setLayoutParams(lp);
+            ui.post(this::fitScreen);
+            return;
+        }
         root.setOrientation(beside ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         if (beside) {
             screenBox.setLayoutParams(new LinearLayout.LayoutParams(Math.round(pw * side), -1));
@@ -151,6 +169,31 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
             web.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
         }
         ui.post(this::fitScreen);
+    }
+
+    private boolean overlay;
+    /** 互动区叠在画面上：网页底色换成半透明深色，系统栏也收起（多出来的高度给画面） */
+    private void setOverlay(boolean on) {
+        if (on == overlay) return;
+        overlay = on;
+        js("padOverlay", on ? "true" : "false");
+        if (!full) bars(!on);
+    }
+
+    /** 状态栏、导航栏：收起时从边上划一下会临时出来 */
+    private void bars(boolean show) {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = getWindow().getInsetsController();
+            if (c == null) return;
+            if (show) c.show(android.view.WindowInsets.Type.systemBars());
+            else {
+                c.hide(android.view.WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(show ? 0 : (View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE));
+        }
     }
 
     /** 画面按手机的长宽比缩放、居中，不拉伸 */
@@ -211,19 +254,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         web.setVisibility(on ? View.GONE : View.VISIBLE);
         exitFull.setVisibility(View.GONE);
         ui.removeCallbacks(hideExit);
-        View dv = getWindow().getDecorView();
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            android.view.WindowInsetsController c = getWindow().getInsetsController();
-            if (c != null) {
-                if (on) {
-                    c.hide(android.view.WindowInsets.Type.systemBars());
-                    c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                } else c.show(android.view.WindowInsets.Type.systemBars());
-            }
-        } else {
-            dv.setSystemUiVisibility(on ? (View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE) : 0);
-        }
+        bars(!on && !overlay);
         arrange();
     }
 
