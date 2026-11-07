@@ -46,7 +46,7 @@ export const SELF_DIR = path.join(CFG.workspace, "qq-self");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "memory_append", "memory_query", "memory_remove", "ask_sister"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "memory_append", "memory_query", "memory_remove", "ask_sister"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
@@ -1176,7 +1176,7 @@ function padQQ(gid, m) {
   publish({ type: "xk", op: "qq_msg", group: String(gid), at: Date.now(), ...m, text });
 }
 function segsText(segs) {
-  return (segs || []).map((s) => s.type === "text" ? s.data?.text || "" : s.type === "image" ? "[图片]" : s.type === "face" || s.type === "mface" ? "[表情]" : s.type === "at" ? "@" + (NICK.get(String(s.data?.qq)) || s.data?.qq || "") + " " : "").join("");
+  return (segs || []).map((s) => s.type === "text" ? s.data?.text || "" : s.type === "image" ? "[图片]" : s.type === "face" || s.type === "mface" ? "[表情]" : s.type === "record" ? "[语音]" : s.type === "at" ? "@" + (NICK.get(String(s.data?.qq)) || s.data?.qq || "") + " " : "").join("");
 }
 async function sendSegs(ctx, segs, timeoutMs = 20000) {
   const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
@@ -1189,6 +1189,34 @@ async function sendSegs(ctx, segs, timeoutMs = 20000) {
     SENT_KEY.set(ctx.key, set);
   }
   return id;
+}
+// ── QQ 语音：qq.json 的 voice 写 { code, url?, role? }。url 默认主人电脑（NapCat 那台）的 8790，role 默认直播用的 voiceRole ──
+const VOICE_MAX = 200;
+function voiceCfg() {
+  let q = {}; try { q = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) || {}; } catch {}
+  const v = q.voice && typeof q.voice === "object" ? q.voice : {};
+  let url = String(v.url || "");
+  if (!url) { try { url = "http://" + new URL(q.ws).hostname + ":8790"; } catch {} }
+  const lc = readJson(LIVE_FILE, null) || {};
+  return { url: url.replace(/\/+$/, ""), code: String(v.code || "").trim(), role: String(v.role || lc.voiceRole || "xiaoke") };
+}
+function voiceTts(v, text) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(v.url + "/tts"), body = JSON.stringify({ role: v.role, text });
+    const req = (u.protocol === "https:" ? https : http).request(u, { method: "POST", family: 4, timeout: 90000,
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-xk-code": v.code } }, (res) => {
+      const bufs = []; res.on("data", (c) => bufs.push(c));
+      res.on("end", () => {
+        const b = Buffer.concat(bufs);
+        if (res.statusCode >= 400) { let m = ""; try { m = JSON.parse(b.toString("utf8")).error || ""; } catch {} return reject(Object.assign(new Error(`HTTP ${res.statusCode} ${oneLine(m, 120)}`), { status: res.statusCode })); }
+        if (b.length < 100 || b.toString("latin1", 0, 4) !== "RIFF") return reject(new Error("回来的不是 WAV"));
+        resolve(b);
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("超时")));
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 async function sendOne(ctx, m) {
   const text = oneLine(m.text, 1500);
@@ -1292,6 +1320,21 @@ async function runTool(req, ctx, r) {
       else await act("upload_private_file", { user_id: ctx.user_id, file: pdf, name }, 120000);
       if (r) r.usedSend = true;
       return { sent: true, name, text: "发出去了：" + name };
+    }
+    case "send_voice": {
+      // 照直播那套：文字交给主人电脑上的语音服务（xk/voice，GPT-SoVITS）念成 WAV，再当 QQ 语音发（NapCat 自己转 silk）
+      const text = oneLine(a.text, VOICE_MAX);
+      if (!text) throw new Error("text 不能为空：写要念的话");
+      const v = voiceCfg();
+      if (!v.code) throw new Error("还没配语音服务的配对码（电脑上语音服务窗口里那个）：主人写进手机 ~/.config/xiaoke/qq.json 的 voice.code 才能发语音");
+      let wav;
+      try { wav = await voiceTts(v, text); }
+      catch (e) { throw new Error("念不出来（语音服务 " + (e.status === 401 ? "配对码不对" : e.status === 409 ? v.role + " 的声音没接入" : e.message) + "）：先发文字吧"); }
+      await signalTyping(r?.cfg, { message_type: ctx.type, user_id: ctx.user_id });
+      const id = await sendSegs(ctx, [{ type: "record", data: { file: "base64://" + wav.toString("base64") } }], 60000);
+      if (id == null) throw new Error("NapCat 没回消息号，语音可能没发出去");
+      if (r) r.usedSend = true;
+      return { sent: true, messageId: id, text: `发了一条语音（${text.length} 字）。` };
     }
     case "send_poke": {
       const p = pokeTarget(ctx, a.targetUserId);
@@ -1507,7 +1550,7 @@ async function runTool(req, ctx, r) {
  *  （MCP 那头 60 秒没等到回话，模型会重试同一句；网关这边可能其实已经发出去了） */
 const REPLAY = new Map();
 const REPLAY_MS = 10 * 60000;
-const SEND_TOOLS = new Set(["send_message", "send_sticker", "send_poke"]);
+const SEND_TOOLS = new Set(["send_message", "send_sticker", "send_poke", "send_voice"]);
 const stable = (v) => (Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v);
 const replayKey = (req) => req.runId + "|" + req.tool + "|" + JSON.stringify(stable(req.args || {}));
 function replayGet(req) {

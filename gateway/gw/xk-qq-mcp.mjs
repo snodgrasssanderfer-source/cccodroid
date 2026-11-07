@@ -70,6 +70,8 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["path"], properties: {
       path: { type: "string", description: "发件箱里的文件名或相对路径" },
       name: { type: "string", description: "发出去显示的文件名，可不填（默认用文件名）" } } } },
+  { name: "send_voice", description: "把一句话念成语音发到当前聊天（主人电脑上的语音服务，用直播那个声音）。text 是要念的原话，口语、短一点（200 字以内），别带表情、括号和网址。念要几秒钟，别连着发好几条；语音服务没开或念不出来会报错，那就改发文字。",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要念的话" } } } },
   { name: "send_poke", description: "拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时先看聊天记录里谁在说话；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传「未知」或 0 这类占位。适合用「戳一下」代替一句废话，或偶尔逗一下正在聊的人。别频繁。",
     inputSchema: { type: "object", properties: { targetUserId: { type: ["integer", "string"], description: "要拍的群友 QQ 号（数字，群聊必填）" } } } },
   { name: "get_message_images", description: "查看某条消息里的图片/表情（你能直接看懂）。聊天记录里出现 [图片] / [表情] 时可用。先判断它想表达的情绪/态度，再针对态度回话，不要复述画面。",
@@ -145,6 +147,10 @@ async function call(name, a = {}) {
   if (name === "send_file") {
     const r = await rpc("send_file", { path: a.path, name: a.name }, 180000);
     return textOf(r, "发出去了。");
+  }
+  if (name === "send_voice") {
+    const r = await rpc("send_voice", { text: a.text }, 150000);
+    return textOf(r, "发了语音。");
   }
   if (name === "send_poke") {
     const r = await rpc("send_poke", { targetUserId: a.targetUserId }, 30000);

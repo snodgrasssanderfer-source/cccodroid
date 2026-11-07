@@ -424,6 +424,34 @@ test("拍一拍照原版：群聊必须给号，号码必须是群里出现过�
   } finally { stopQQ(); bot.close(); }
 });
 
+test("send_voice：没配码先说清；配了就把文字交给语音服务念，WAV 当 record 发进群", async () => {
+  const bot = await connectedBot();
+  const got = [];
+  const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(200)]);
+  const tts = http.createServer((req, res) => {
+    let b = ""; req.on("data", (c) => (b += c));
+    req.on("end", () => { got.push({ path: req.url, code: req.headers["x-xk-code"], body: JSON.parse(b) }); res.writeHead(200, { "content-type": "audio/wav" }); res.end(wav); });
+  });
+  await new Promise((r) => tts.listen(0, "127.0.0.1", r));
+  const saved = fs.existsSync(CONFIG_FILE) ? fs.readFileSync(CONFIG_FILE, "utf8") : null;
+  try {
+    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 说句话" } }]), "小克 说句话");
+    const q = queued.at(-1);
+    rpcReq("v0", q, "send_voice", { text: "你好呀" });
+    await drainQQRpc();
+    assert.match(rpcRes("v0").error, /配对码/, "没码要说清找主人配");
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...(saved ? JSON.parse(saved) : {}), voice: { code: "AB12", url: `http://127.0.0.1:${tts.address().port}`, role: "hachimi" } }));
+    rpcReq("v1", q, "send_voice", { text: "你好呀" });
+    await drainQQRpc();
+    assert.ok(rpcRes("v1").ok, rpcRes("v1").error);
+    assert.deepEqual(got, [{ path: "/tts", code: "AB12", body: { role: "hachimi", text: "你好呀" } }]);
+    const seg = bot.actions.filter((x) => x.action === "send_group_msg").at(-1).params.message.at(-1);
+    assert.equal(seg.type, "record");
+    assert.equal(seg.data.file, "base64://" + wav.toString("base64"));
+  } finally { if (saved == null) fs.rmSync(CONFIG_FILE, { force: true }); else fs.writeFileSync(CONFIG_FILE, saved); tts.close(); stopQQ(); bot.close(); }
+});
+
 test("send_message 照原版：字符串、字符串数组、对象数组都认；非法的 @ 只丢目标", async () => {
   const bot = await connectedBot();
   try {
