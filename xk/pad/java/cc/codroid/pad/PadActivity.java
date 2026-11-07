@@ -5,6 +5,9 @@ import android.app.Activity;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.SurfaceTexture;
+import android.graphics.drawable.GradientDrawable;
+import android.view.KeyEvent;
+import android.widget.TextView;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -38,6 +41,11 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
     private TextureView screen;
     private Surface surface;
     private int vw, vh;   // 手机画面的宽高（服务端报的）
+    // 全屏（主人 11-07）：只留手机画面、收起系统栏，平板拿去开 QQ 群直播分享屏幕时画面最大；点一下画面出「退出全屏」，三秒后自己藏起来
+    private boolean full;
+    private TextView exitFull;
+    private PadDanmaku danmaku;
+    private final Runnable hideExit = () -> { if (exitFull != null) exitFull.setVisibility(View.GONE); };
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override protected void onCreate(Bundle b) {
@@ -56,6 +64,25 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         });
         screenBox.addView(screen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
         screenBox.setVisibility(View.GONE);   // 没开串流时整块收起，聊天页占满
+        exitFull = new TextView(this);
+        exitFull.setText("退出全屏");
+        exitFull.setTextColor(Color.WHITE);
+        exitFull.setTextSize(15);
+        exitFull.setPadding(42, 22, 42, 22);
+        GradientDrawable pill = new GradientDrawable();
+        pill.setColor(0xAA000000); pill.setCornerRadius(80);
+        exitFull.setBackground(pill);
+        exitFull.setVisibility(View.GONE);
+        exitFull.setOnClickListener(v -> setFull(false));
+        FrameLayout.LayoutParams ep = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        ep.setMargins(0, 40, 40, 0);
+        screenBox.addView(exitFull, ep);
+        danmaku = new PadDanmaku(this, screenBox, ui);
+        screenBox.setOnClickListener(v -> {
+            if (!full) return;
+            exitFull.setVisibility(View.VISIBLE);
+            ui.removeCallbacks(hideExit); ui.postDelayed(hideExit, 3000);
+        });
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -98,6 +125,11 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
      * 聊天页至少留 1/3，画面算出来超了才在剩下的地方等比缩小、留一点黑边。
      */
     private void arrange() {
+        if (full && screenBox.getVisibility() == View.VISIBLE) {
+            screenBox.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            ui.post(this::fitScreen);
+            return;
+        }
         int w = root.getWidth() - root.getPaddingLeft() - root.getPaddingRight();
         int h = root.getHeight() - root.getPaddingTop() - root.getPaddingBottom();
         if (screenBox.getVisibility() != View.VISIBLE || w <= 0 || h <= 0) {
@@ -139,12 +171,20 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
     @Override public void onHeard(String text, String error) {
         try { js("padHeard", new JSONObject().put("text", text).put("error", error == null ? "" : error).toString()); } catch (Exception ignored) {}
     }
-    @Override public void onEvent(JSONObject ev) { js("padEvent", ev.toString()); }
+    @Override public void onEvent(JSONObject ev) {
+        js("padEvent", ev.toString());
+        // QQ 群的话飘成弹幕（开着弹幕、正看着手机画面才飘）。长轮询重连补发的旧消息不飘：一分钟以前的不要
+        if ("xk".equals(ev.optString("type")) && "qq_msg".equals(ev.optString("op")) && stream != null) {
+            long at = ev.optLong("at", 0);
+            if (at == 0 || Math.abs(System.currentTimeMillis() - at) < 60_000)
+                danmaku.add(ev.optString("from"), ev.optString("text"), PadDanmaku.colorFor(ev.optBoolean("mine"), ev.optBoolean("owner")));
+        }
+    }
 
     // ── PadStream ──
     @Override public void onSize(int w, int h) { vw = w; vh = h; ui.post(this::arrange); }
     @Override public void onEnd(String why) {
-        ui.post(() -> { stream = null; screenBox.setVisibility(View.GONE); arrange(); });
+        ui.post(() -> { stream = null; if (full) setFull(false); screenBox.setVisibility(View.GONE); arrange(); });
         js("padStream", JSONObject.quote(why == null ? "" : why));
     }
 
@@ -160,7 +200,35 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
             js("padStream", "\"on\"");
         }, 200);
     }
-    private void stopStream() { PadStream s = stream; stream = null; if (s != null) s.close(); }
+    private void stopStream() { PadStream s = stream; stream = null; if (s != null) s.close(); if (full) setFull(false); }
+
+    /** 进出全屏：聊天页整块藏起来，系统栏收起（从边上划一下会临时出来） */
+    private void setFull(boolean on) {
+        if (on && screenBox.getVisibility() != View.VISIBLE) return;
+        full = on;
+        web.setVisibility(on ? View.GONE : View.VISIBLE);
+        exitFull.setVisibility(View.GONE);
+        ui.removeCallbacks(hideExit);
+        View dv = getWindow().getDecorView();
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                if (on) {
+                    c.hide(android.view.WindowInsets.Type.systemBars());
+                    c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                } else c.show(android.view.WindowInsets.Type.systemBars());
+            }
+        } else {
+            dv.setSystemUiVisibility(on ? (View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE) : 0);
+        }
+        arrange();
+    }
+
+    @Override public boolean onKeyDown(int code, KeyEvent e) {
+        if (code == KeyEvent.KEYCODE_BACK && full) { setFull(false); return true; }
+        return super.onKeyDown(code, e);
+    }
 
     @Override protected void onDestroy() { stopStream(); link.stop(); super.onDestroy(); }
 
@@ -175,6 +243,10 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         @JavascriptInterface public void voiceCode(String code) { voice.setCode(code); }
         @JavascriptInterface public void voiceFind() { voice.check(); }
         @JavascriptInterface public void say(String role, String text) { voice.say(role, text); }
+        @JavascriptInterface public void voiceStop() { voice.stopTalking(); }
+        @JavascriptInterface public void full(boolean on) { ui.post(() -> setFull(on)); }
+        @JavascriptInterface public void danmaku(boolean on) { danmaku.setOn(on); }
+        @JavascriptInterface public boolean danmakuOn() { return danmaku.on(); }
         /** 按住说话：第一次先要录音权限（要到了再按一次） */
         @JavascriptInterface public void listen(boolean down) {
             if (!down) { voice.listenStop(); return; }

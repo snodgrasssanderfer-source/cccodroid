@@ -136,7 +136,7 @@ export async function padCall(env, now = Date.now()) {
 const RING = [];   // [{ seq, ev }]
 let EVSEQ = 0;
 const WAITERS = new Set();
-const WANT = (ev) => ev && ((ev.type === "xk" && /^(room|room_typing|overlay|overlay_say)$/.test(ev.op)) || ev.type === "run_end");
+const WANT = (ev) => ev && ((ev.type === "xk" && /^(room|room_typing|overlay|overlay_say|voice|voice_stop|qq_msg)$/.test(ev.op)) || ev.type === "run_end");
 onPublish((ev) => {
   if (!WANT(ev)) return;
   RING.push({ seq: ++EVSEQ, ev });
@@ -165,8 +165,11 @@ function startStream(d, b) {
   STREAM.port = 20000 + crypto.randomInt(20000);
   STREAM.at = Date.now(); STREAM.error = "";
   // 平板说它解得了什么（H.265、Opus）；画质参数照易控的默认，平板可以给
-  const opts = { serverPort: STREAM.port, isAudio: b.audio === false ? 0 : 1, maxSize: Number(b.maxSize) || 1600, maxFps: Number(b.maxFps) || 60,
-    maxVideoBit: Number(b.maxVideoBit) || 8000000, keepAwake: 1, supportH265: b.h265 ? 1 : 0, supportOpus: b.opus ? 1 : 0, listenClip: 0 };
+  // 主人 11-07：60 帧、2K（长边 2560，手机屏本身没这么大就按原样）。
+  // 易控服务端的 maxVideoBit 是「兆」，它自己乘 100 万（Options.parse）：以前这里传 8000000，乘完 int 溢出成负数，画质全靠编码器瞎猜
+  const mbps = (v) => { const n = Number(v) || 0; return n > 1000 ? Math.round(n / 1e6) : n; };
+  const opts = { serverPort: STREAM.port, isAudio: b.audio === false ? 0 : 1, maxSize: Number(b.maxSize) || 2560, maxFps: Number(b.maxFps) || 60,
+    maxVideoBit: Math.min(Math.max(mbps(b.maxVideoBit) || 20, 2), 60), keepAwake: 1, supportH265: b.h265 ? 1 : 0, supportOpus: b.opus ? 1 : 0, listenerClip: 0 };
   STREAM.opts = opts;
   publish({ type: "xk", op: "stream_start", sid: STREAM.sid, device: d.name, opts });
   return { s: 200, b: { sid: STREAM.sid } };

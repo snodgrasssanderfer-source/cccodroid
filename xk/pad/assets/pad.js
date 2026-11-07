@@ -64,6 +64,7 @@
     $("#empty")?.remove();
     $("#list").insertAdjacentHTML("beforeend", row(m));
     $("#list").scrollTop = $("#list").scrollHeight;
+    if (tab !== "room" && m.from !== "owner") $("#rdot").hidden = false;
   }
   function members(ms) {
     $("#mem").innerHTML = ms.map((m) => {
@@ -82,6 +83,8 @@
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; };
   ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#in").requestSubmit(); } };
   async function send(text) {
+    // 互动页：当成主人在 QQ 群里 @ 12 号（网关认配对过的平板，群里先贴一条「主人（平板）：原话」）
+    if (tab === "qq") return call("POST", "/pad/qq/say", { text, group: qgroup || undefined });
     await call("POST", "/api/xk/room", { text, to: [...to] });
     to.clear(); document.querySelectorAll(".chip.on").forEach((c) => c.classList.remove("on"));
   }
@@ -98,6 +101,10 @@
     if (ev.type !== "xk") return;
     // 按消息号只念一次：长轮询重连时补发的旧消息不再念第二遍（#101）
     if (ev.op === "room") { add(ev.msg); if (ROLE[ev.msg.from] && voiceOk && ev.msg.n > spoken) { spoken = ev.msg.n; Pad.say(ev.msg.from, ev.msg.text); } }
+    // QQ 群直播：12 号的台词边写边推过来（一段一个 id，重连补发的旧段不再念）
+    else if (ev.op === "voice") { if (voiceOk && ev.id > voiceSeen) { voiceSeen = ev.id; Pad.say(ev.role, ev.text); } }
+    else if (ev.op === "voice_stop") Pad.voiceStop();
+    else if (ev.op === "qq_msg") { const k = ev.at + "|" + ev.uid + "|" + ev.text; if (!qseen.has(k)) { qseen.add(k); if (qseen.size > 600) qseen.delete(qseen.values().next().value); window.padQQ?.(ev); } }   // 长轮询重连补发的不重复显示
     else if (ev.op === "room_typing") {
       if (ev.on) talking.add(ev.role); else talking.delete(ev.role);
       $("#typing").innerHTML = [...talking].map((id) => `<span style="--c:${ROLE[id]?.c}">${esc(ROLE[id]?.name || id)}在说…</span>`).join("");
@@ -117,7 +124,7 @@
   $("#upd").onclick = () => Pad.update();
 
   // ── 声音：直连主人电脑上的语音服务（xk/voice），念她们的话、按住说话 ──
-  let voiceOk = false, spoken = -1;
+  let voiceOk = false, spoken = -1, voiceSeen = 0;   // 直播台词按 id 只念一次（id 是手机的时钟，跟平板的时钟不比）
   window.padVoice = (v) => {
     voiceOk = v.ok && v.on;
     $("#mic").hidden = !v.ok;
@@ -151,13 +158,60 @@
 
   // ── 手机画面（串流）：点了才开，省电 ──
   let streaming = false;
-  $("#screen").onclick = () => { streaming = !streaming; Pad.stream(streaming); $("#screen").textContent = streaming ? "收起画面" : "看手机画面"; };
+  $("#screen").onclick = () => { streaming = !streaming; Pad.stream(streaming); $("#screen").textContent = streaming ? "收起画面" : "看手机画面"; $("#full").hidden = !streaming; };
   window.padStream = (s) => {
-    if (s === "on") return;
-    streaming = false; $("#screen").textContent = "看手机画面";
+    if (s === "on") { $("#full").hidden = false; return; }
+    streaming = false; $("#screen").textContent = "看手机画面"; $("#full").hidden = true;
     if (s) fail(new Error("手机画面断了：" + s));
   };
+  // 全屏：只留手机画面、收起系统栏；点一下画面右上角出「退出全屏」，返回键也能退（都在 Java 里）
+  $("#full").onclick = () => Pad.full(true);
 
+  // ── 弹幕：画面上飘（Java 画，见 PadDanmaku）；开关记在平板上 ──
+  const dmSync = () => $("#dm").classList.toggle("on", Pad.danmakuOn());
+  $("#dm").onclick = () => { Pad.danmaku(!Pad.danmakuOn()); dmSync(); };
+  window.padDanmaku = dmSync;
+  dmSync();
+
+  // ── 互动区两页：互动（QQ 群，照 B 站直播间的弹幕列表）/ 我们仨 ──
+  let tab = "qq";
+  const QMAX = 300;
+  const groups = new Set();
+  let qgroup = "";   // 最近说话的那个群：输入框发到这里
+  function setTab(t) {
+    tab = t;
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+    for (const id of ["#list", "#mem", "#typing"]) $(id).hidden = t !== "room";
+    $("#qlist").hidden = t !== "qq";
+    $("#in").classList.toggle("qqmode", t === "qq");
+    ta.placeholder = t === "qq" ? "发个弹幕呗~（当成你在群里叫 12 号）" : "在我们仨里说点什么…";
+    const dot = t === "qq" ? "#qdot" : "#rdot";
+    $(dot).hidden = true;
+    const box = t === "qq" ? $("#qlist") : $("#list");
+    box.scrollTop = box.scrollHeight;
+    try { localStorage.setItem("tab", t); } catch {}
+  }
+  document.querySelectorAll("#tabs button").forEach((b) => { b.onclick = () => setTab(b.dataset.tab); });
+  const hhmm = (t) => { const d = new Date(t || Date.now()); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  function addQQ(m) {
+    const q = $("#qlist");
+    $("#qempty")?.remove();
+    if (m.group) { groups.add(m.group); qgroup = m.group; }
+    const near = q.scrollHeight - q.scrollTop - q.clientHeight < 80;
+    const d = document.createElement("div");
+    d.className = "qq" + (m.mine ? " mine" : m.owner ? " owner" : "");
+    const tag = m.mine ? '<span class="tag">主播</span>' : m.owner ? '<span class="tag">主人</span>' : "";
+    const g = groups.size > 1 && m.gname ? `<span class="g">[${esc(m.gname)}] </span>` : "";
+    d.innerHTML = `${g}${tag}<b>${esc(m.from)}：</b>${esc(m.text)}<span class="t">${hhmm(m.at)}</span>`;
+    q.appendChild(d);
+    while (q.children.length > QMAX) q.firstChild.remove();
+    if (near || m.mine || m.owner) q.scrollTop = q.scrollHeight;
+    if (tab !== "qq") $("#qdot").hidden = false;
+  }
+  window.padQQ = addQQ;
+
+  let saved = "qq"; try { saved = localStorage.getItem("tab") || "qq"; } catch {}
+  setTab(saved === "room" ? "room" : "qq");
   window.padState(JSON.parse(Pad.state()));
   window.padVoice(JSON.parse(Pad.voiceState()));
 })();
