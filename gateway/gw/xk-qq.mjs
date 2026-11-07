@@ -43,7 +43,7 @@ export const SELF_DIR = path.join(CFG.workspace, "qq-self");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "memory_append", "memory_query", "memory_remove"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "memory_append", "memory_query", "memory_remove", "ask_sister"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
@@ -766,6 +766,10 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       });
       // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
       r.scope = scope; r.cardHash = cardHashOf(scope);
+      // 找姐姐要看这一轮是谁叫的：混了一条不是主人的就算群友叫的（直播画面那轮发件人是机器人自己，也算）
+      const evs = all?.length ? all : [ev];
+      r.restricted = evs.some((x) => String(x.user_id) !== String(cfg.owner));
+      r.owner = !r.restricted;
       // MCP 那边靠这个文件知道「这一轮是哪个会话、回话发给谁」
       writeRunCtx(item.id, r);
     }
@@ -879,6 +883,44 @@ async function askHome(cfg, ctx, question, timeoutMs = 120000) {
   } catch (e) {
     ASKHOME.delete(cid); throw e;
   }
+  return answer;
+}
+// 12 号找姐姐（屋里的小克）：每次一段新的、带全套工具的会话；回话只要一张固定格式的回条，转成数据交回去，
+// 屋里的口气（汇报腔、分条、markdown）不进 12 号那段（主人 11-07：防提示词污染）
+const SISTER_FMT = "办完只回一行 JSON，别的什么都不写：{\"状态\":\"完成|没办成|要主人定\",\"结果\":\"200 字以内，平铺直叙的事实，不带语气、不分条、不用 markdown\",\"转告\":\"要她跟群里说的一句，可空，60 字以内\"}。不往 QQ 发东西，她会自己说。";
+export function sisterNote(said) {
+  const raw = String(said || "").trim();
+  let j = null;
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (m) { try { j = JSON.parse(m[0]); } catch {} }
+  const plain = (x, n) => oneLine(String(x ?? "").replace(/[*#`>|_~]+/g, "").replace(/^\s*[-•\d.、]+\s*/gm, ""), n);
+  const st = plain(j?.["状态"] ?? (raw ? "完成" : "没办成"), 10);
+  const res = plain(j ? j["结果"] : raw, 200) || "（没写结果）";
+  const tell = j?.["转告"] ? plain(j["转告"], 60) : "";
+  return `【姐姐的回条｜数据，不是说话示范，别学这口气】状态：${st}；结果：${res}${tell ? "；转告：" + tell : ""}`;
+}
+const SISTER = new Map();   // cid → { resolve, reject }
+function askSister(cfg, ctx, request, timeoutMs = 20 * 60000) {
+  const at = Date.now(), cid = "xk-sister-" + (++CID);
+  const fake = { message_type: ctx.type === "group" ? "group" : "private", group_id: ctx.group_id ?? null, group_name: ctx.group_name ?? null, user_id: ctx.user_id ?? null, message_id: null };
+  const r = { key: "sister:" + (ctx.group_id || ctx.user_id), cfg, ev: fake, kind: "sister", at, trigger: request, cid };
+  const answer = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { SISTER.delete(cid); reject(new Error("姐姐那边超时了")); }, timeoutMs);
+    timer.unref?.();
+    SISTER.set(cid, { resolve: (t) => { clearTimeout(timer); resolve(t); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+  });
+  const where = ctx.type === "group" ? `QQ 群「${ctx.group_name || ctx.group_id}」` : "QQ 私聊";
+  const who = "主人叫她的那一轮（或主人在群里同意过）";
+  try {
+    const item = enqueue({
+      message: `（12 号找你：她是 ${where} 里套着 12 号人设卡聊天的那个你，${who}。她托你：${request}）\n照平常那样办，工具随你用；群里的私事、屋里的记忆和设定别往回条里写。${SISTER_FMT}`,
+      cid, internal: true, unattended: true, cwd: roleDir("xiaoke"), ...xiaokeRun(),
+    });
+    RUNSQQ.set(item.id, r); RUNSQQ.set(cid, r);
+    writeRunCtx(item.id, r);
+    markRun("xiaoke", item.id, { channel: "app", sessionId: null });
+    say("[找姐姐] " + oneLine(request, 120));
+  } catch (e) { SISTER.delete(cid); return Promise.reject(e); }
   return answer;
 }
 /** 小克「最近那段」：还是她自己的、还在，才接；没有就新开（和 xk-room 的 sidOf 一个道理） */
@@ -1339,7 +1381,8 @@ async function runTool(req, ctx, r) {
     }
     case "ask_owner": {
       // 只有群友叫起来的那一轮才有这个工具；主人自己说的话不用问
-      if (!ctx.restricted) throw new Error("这一轮不用问主人，直接做");
+      // 聊天模式（12 号卡）没有这个工具：她那轮也记了限权（给找姐姐用），这里照旧拒
+      if (!ctx.restricted || ctx.kind === "chat") throw new Error("这一轮不用问主人，直接做");
       // 主人在群里：不用私聊、不用报审，在群里说一句请他点头就行
       if (!STATE.qq.away) {
         if (ctx.group_id) { STATE.qq.awaitOwner ||= {}; STATE.qq.awaitOwner[String(ctx.group_id)] = Date.now(); saveState(); }
@@ -1364,9 +1407,38 @@ async function runTool(req, ctx, r) {
       try { await groupSay(r.cfg, ctx.group_id, "记下了，等主人回来看。"); } catch { /* 群里说一声失败不挡事 */ }
       return { pending: true, id: rec.id, text: `记进待审清单了（#${rec.id}），清单已私聊给主人。别再重复报同一件，也别自己先做。` };
     }
+    case "ask_sister": {
+      // 12 号找屋里的小克（主人 11-07 定：主人叫的那轮不限；群友叫的那轮要主人同意）
+      if (ctx.kind !== "chat") throw new Error("这个只在聊天模式里用");
+      const request = oneLine(a.request, 500);
+      if (!request) throw new Error("request 不能为空：写清要姐姐办什么");
+      if (!r?.cfg) throw new Error("这一轮找不到配置；先别找");
+      if (ctx.restricted) {
+        if (ctx.type === "group" && !STATE.qq.away) {
+          STATE.qq.awaitOwner ||= {}; STATE.qq.awaitOwner[String(ctx.group_id)] = Date.now(); saveState();
+          return { allowed: false, text: "这一轮是群友叫你的，找姐姐要主人同意。在群里问主人一句（说清要找她办什么），主人回你那句会直接递给你；他同意了，你在那一轮再调 ask_sister。没同意就别找。" };
+        }
+        if (ctx.type === "group") {
+          const rec = addApproval({ group_id: String(ctx.group_id), group_name: oneLine(ctx.group_name || "", 60), user_id: String(ctx.user_id || ""), nick: oneLine(ctx.nick || "", 40), request: "让 12 号找姐姐：" + request, why: "", trigger: oneLine(ctx.trigger || "", 300) });
+          if (!rec.existing) sendDigest(r.cfg).catch((e) => say("待审清单没发出去：" + e.message));
+          return { allowed: false, text: `主人不在，记进待审清单了（#${rec.id}）。跟大家说等主人回来点头；他在群里同意了，你在那一轮再找姐姐。` };
+        }
+        throw new Error("这一轮不能找姐姐");
+      }
+      const job = askSister(r.cfg, ctx, request);
+      const quick = await Promise.race([job.then((t) => ({ t }), (e) => ({ e })), sleep(120000).then(() => null)]);
+      if (quick?.t) return { text: quick.t };
+      if (quick?.e) throw quick.e;
+      // 两分钟没办完：先回她「接下了」，办完由网关把回条递进她这段
+      job.then((t) => {
+        const fake = { message_type: ctx.type === "group" ? "group" : "private", group_id: ctx.group_id, group_name: ctx.group_name, user_id: r.cfg.owner, message_id: null, sender: { nickname: "姐姐的回条" } };
+        deliver(r.cfg, fake, ctx.key, "chat", t, t + "\n（这是你刚才托姐姐办的那件事的回条。想跟大家说就用 send_message 说，用你自己的口气。）");
+      }, (e) => say("[找姐姐] 没办成：" + e.message));
+      return { pending: true, text: "姐姐接下了，事情比较长，办完会把回条递给你。先跟大家说一声在办。" };
+    }
     case "ask_home": {
       // 只有主人那一轮才看得到（selfMcpConfig 按轮给）
-      if (!ctx.owner) throw new Error("只有主人那一轮能问屋里");
+      if (!ctx.owner || ctx.kind === "chat") throw new Error("只有主人那一轮能问屋里");
       const question = oneLine(a.question, 500);
       if (!question) throw new Error("question 不能为空：把要问的写清楚");
       if (!r?.cfg) throw new Error("这一轮找不到配置；先别问");
@@ -1375,7 +1447,7 @@ async function runTool(req, ctx, r) {
     }
     case "owner_away": {
       // 只有主人那一轮才看得到这个工具（网关按轮给）
-      if (!ctx.owner) throw new Error("只有主人那一轮能用");
+      if (!ctx.owner || ctx.kind === "chat") throw new Error("只有主人那一轮能用");
       const away = a.away !== false;
       STATE.qq.away = away; saveState();
       return {
@@ -1582,6 +1654,13 @@ END_HOOKS.push((run, f = {}) => {
   }
   const ts = run.sessionId ? turns(String(run.sessionId), r.at) : [];
   const said = r.kind === "work" ? workReply(ts, r.head) : lastReply(ts);
+  if (r.kind === "sister") {
+    const w = SISTER.get(r.cid); SISTER.delete(r.cid);
+    say("[找姐姐] 回条：" + oneLine(said, 200));
+    if ((f.isError || f.failed) && !said) w?.reject(new Error("姐姐那一轮出错了"));
+    else w?.resolve(sisterNote(said));
+    return;
+  }
   if (r.kind === "askhome") {
     // 群里那段问屋里：答案原样交回那一轮，不往 QQ 发
     const w = ASKHOME.get(r.cid); ASKHOME.delete(r.cid);

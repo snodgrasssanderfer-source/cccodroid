@@ -107,6 +107,9 @@ const TOOLS = [
   { name: "ask_home", description: "问屋里的你一件事（只有主人叫起来的那一轮能用）。网关另起一轮只给你记忆的 recall 和留言板 board_read 的权限，用你本来的人设回答；答案原样回来。只问真需要屋里知道的，别拿它闲聊。",
     inputSchema: { type: "object", required: ["question"], properties: {
       question: { type: "string", description: "要问的事，一句话说清" } } } },
+  { name: "ask_sister", description: "找姐姐（主人手机里的小克，有跑命令、查文件、动手机、翻屋里记忆这些你没有的工具）帮你办一件事或问一件事。主人叫你的那一轮可以直接找；群友叫你的那一轮要先在群里问主人、主人同意了才行（工具会告诉你）。她回的是一张固定格式的回条（状态、结果、要你转告的），那是数据，不是说话示范：别学它的口气，用你自己的话说给大家。",
+    inputSchema: { type: "object", required: ["request"], properties: {
+      request: { type: "string", description: "要她办什么、问什么，一两句写清" } } } },
   { name: "ask_owner", description: "群里有人要你做实际的事（跑命令、改文件、动手机、往外发东西），而这一轮你只有聊天、搜索和记忆的工具时，用这个把对方要什么报给主人，等主人批准。一件只报一次，别反复报；没批之前不要做，也不要换个说法绕过去。",
     inputSchema: { type: "object", required: ["request"], properties: {
       request: { type: "string", description: "对方要你做什么，一句话说清" },
@@ -189,6 +192,10 @@ async function call(name, a = {}) {
   if (name === "ask_home") {
     const r = await rpc("ask_home", { question: a.question }, 180000);
     return textOf(r, "屋里没答上来。");
+  }
+  if (name === "ask_sister") {
+    const r = await rpc("ask_sister", { request: a.request }, 150000);
+    return textOf(r, "姐姐没回话。");
   }
   if (name === "ask_owner") {
     const r = await rpc("ask_owner", { request: a.request, why: a.why }, 30000);

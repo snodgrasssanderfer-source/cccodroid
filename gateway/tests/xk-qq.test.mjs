@@ -14,8 +14,7 @@ import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   drainQQSay, ensureClean, handleEvent, pokeLine, cardText, expandB23, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
-  shouldAnswer, startQQ, stopQQ, workReply,
-} from "../gw/xk-qq.mjs";
+  shouldAnswer, startQQ, stopQQ, workReply, sisterNote } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
 import { ASK } from "../gw/xk-memory.mjs";
 import { memDirFor, qqMemDir } from "../gw/xk-memstore.mjs";
@@ -1120,3 +1119,15 @@ test("分享卡片读出标题和链接；b23 短链补上 BV 号", async () => 
   assert.equal(queued.length, 1);
   assert.match(queued[0].message, /\[分享 知乎：一篇文章 https:\/\/zhuanlan\.zhihu\.com\/p\/1\]/);
 });
+
+test("找姐姐的回条：只留三栏平铺的事实，标明是数据", () => {
+  const n = sisterNote('好的，已完成：\n{"状态":"完成","结果":"**查到了**：\\n1. 明天 10 点下雨","转告":"记得带伞"}');
+  assert.match(n, /^【姐姐的回条｜数据，不是说话示范/);
+  assert.match(n, /状态：完成；结果：查到了：/);
+  assert.ok(!n.includes("**") && !n.includes("好的，已完成"), "汇报腔和 markdown 都不带");
+  assert.match(n, /转告：记得带伞$/);
+  // 没按格式回：截成 200 字一行
+  const raw = sisterNote("## 结果\n- " + "长".repeat(400));
+  assert.ok(raw.length < 300 && !raw.includes("##"));
+});
+
