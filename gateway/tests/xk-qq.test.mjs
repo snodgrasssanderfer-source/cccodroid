@@ -13,7 +13,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  drainQQSay, ensureClean, handleEvent, pokeLine, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
+  drainQQSay, ensureClean, handleEvent, pokeLine, cardText, expandB23, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -1102,4 +1102,19 @@ test("干净会话只列聊天那套 QQ 工具：没有 ask_owner、ask_home、o
   const env = JSON.parse(queued.at(-1).clean.mcpConfig).mcpServers.qq.env.CCAPP_QQ_TOOLS.split(",");
   for (const t of ["ask_owner", "ask_home", "owner_away"]) assert.ok(!env.includes(t), t);
   assert.ok(env.includes("send_message"));
+});
+
+test("分享卡片读出标题和链接；b23 短链补上 BV 号", async () => {
+  const raw = JSON.stringify({ prompt: "[QQ小程序]AI 陪你玩星露谷", meta: { detail_1: { title: "哔哩哔哩", desc: "可以让AI像真人一样陪你玩星露谷物语！", qqdocurl: "https://b23.tv/ElFbOr3?share_medium=android&bbid=XX0FEC", url: "m.q.qq.com/a/s/x" } } });
+  const line = cardText(raw);
+  assert.equal(line, "[分享 哔哩哔哩：可以让AI像真人一样陪你玩星露谷物语！ https://b23.tv/ElFbOr3]");
+  assert.doesNotMatch(line, /bbid/, "设备号那串去掉");
+  assert.equal(cardText("不是json"), "[分享卡片]");
+  const out = await expandB23(line, async () => "https://m.bilibili.com/video/BV1abcdefghi?p=1");
+  assert.match(out, /b23\.tv\/ElFbOr3（BV1abcdefghi）/);
+  assert.equal(await expandB23(line, async () => { throw new Error("断网"); }), line, "解析不了原样");
+  // 光一张卡片的私聊也要递进去
+  await handleEvent(cfg, { post_type: "message", message_type: "private", user_id: STRANGER, sender: { nickname: "阿五" }, message_id: "pm-card", message: [{ type: "json", data: { data: JSON.stringify({ meta: { news: { title: "知乎", desc: "一篇文章", jumpUrl: "https://zhuanlan.zhihu.com/p/1" } } }) } }] });
+  assert.equal(queued.length, 1);
+  assert.match(queued[0].message, /\[分享 知乎：一篇文章 https:\/\/zhuanlan\.zhihu\.com\/p\/1\]/);
 });

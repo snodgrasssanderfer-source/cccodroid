@@ -339,11 +339,37 @@ export function parseSegments(message, bot, sent = SENT) {
     else if (s.type === "reply") { reply = String(d.id || ""); if (sent.has(reply)) replySelf = true; }
     else if (s.type === "image") text += "[图片]";
     else if (s.type === "face" || s.type === "mface") text += "[表情]";
+    else if (s.type === "json") text += cardText(d.data);
   }
   text = text.replace(/\s+/g, " ").trim();
   // 光 @ 她、什么字都没打（11-06 真机：主人在群里只 @ 了一下）：空文本会在 handleEvent 里被当成没内容丢掉
   if (!text && atBot) text = "[@你]";
   return { text, atBot, reply, replySelf };
+}
+/** 分享卡片（QQ 小程序 / 结构化消息，type json）：取标题、简介和跳转链接（11-07 真机：主人分享的 B站视频整条被当空消息丢了） */
+export function cardText(raw) {
+  let j; try { j = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return "[分享卡片]"; }
+  const meta = j?.meta && typeof j.meta === "object" ? Object.values(j.meta).find((v) => v && typeof v === "object") || {} : {};
+  const app = short(meta.title || meta.tag || "", 20);
+  const desc = short(meta.desc || j?.prompt || "", 80);
+  let url = String(meta.qqdocurl || meta.jumpUrl || meta.url || "");
+  if (/^https?:\/\/b23\.tv\//.test(url)) url = url.split("?")[0];   // 短链后面那串是分享来源和设备号，不要
+  url = /^https?:\/\//.test(url) ? oneLine(url, 200) : "";
+  return `[分享${app ? " " + app : ""}：${desc || "（没写标题）"}${url ? " " + url : ""}]`;
+}
+/** b23.tv 短链换出 BV 号补在后面（她的 B站工具认 BV 号）；解析不了就原样 */
+export async function expandB23(text, get = b23Location) {
+  const links = [...new Set(String(text).match(/https?:\/\/b23\.tv\/[A-Za-z0-9]+/g) || [])].slice(0, 3);
+  for (const l of links) {
+    let loc = ""; try { loc = await get(l); } catch {}
+    const bv = String(loc).match(/BV[0-9A-Za-z]{10}/)?.[0];
+    if (bv) text = text.split(l).join(`${l}（${bv}）`);
+  }
+  return text;
+}
+async function b23Location(url) {
+  const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+  return r.headers.get("location") || "";
 }
 /** 群里要不要接：被 @、引用了我们的话、或者叫到 names 里的名字；私聊每条都接 */
 export function shouldAnswer(ev, cfg) {
@@ -410,7 +436,8 @@ async function quoteOf(cfg, id) {
   try {
     const d = await act("get_msg", { message_id: Number(id) || id }, 4000);
     if (!d || !d.message) return { nick: "未知", text: "" };
-    return { nick: d.sender?.card || d.sender?.nickname || "未知", text: parseSegments(d.message, cfg.bot).text };
+    const t = parseSegments(d.message, cfg.bot).text;
+    return { nick: d.sender?.card || d.sender?.nickname || "未知", text: t.includes("b23.tv/") ? await expandB23(t) : t };
   } catch { return { nick: "未知", text: "" }; }
 }
 
@@ -449,6 +476,7 @@ export async function handleEvent(cfg, ev) {
   if (ev.post_type !== "message" || (ev.message_type !== "private" && ev.message_type !== "group")) return;
   const p = parseSegments(ev.message, cfg.bot);
   if (!p.text) return;
+  if (p.text.includes("b23.tv/")) p.text = await expandB23(p.text);
   const nick = nickOf(ev);
   NICK.set(String(ev.user_id), nick);
   const key = convKey(ev);
