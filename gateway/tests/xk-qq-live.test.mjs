@@ -161,3 +161,41 @@ test("打法偏好写进决策请求", async () => {
   assert.match(body.state, /主播定下的打法偏好.*前两个底注别跳盲注/);
   assert.doesNotMatch(decisionRequest({ state: "SHOP", jokers: [] }, [{ key: "x", label: "y" }]).state, /打法偏好/);
 });
+
+test("直播：进商店先报货架、等群友点单再动；点的单进决策，离店作废；开局带种子；每步都记", async () => {
+  let t = 0, i = 0;
+  const said = [], acts = [], bodies = [], recs = [];
+  const joker = { name: "贪婪小丑", set: "JOKER", effect: "方片 +3 倍率", price: 5 };
+  const shop = { state: "SHOP", ready: true, seq: 1, money: 10, jokers: [], capacity: { jokers: 5 }, shop: { cards: [joker] },
+    actions: { buy: { type: "object", properties: { card: { type: "integer", const: 0 } } }, next_round: {} } };
+  const blind = { state: "BLIND_SELECT", ready: true, seq: 2, money: 5, actions: { select: {}, skip: {} }, blinds: {} };
+  const menu = { state: "MENU", ready: true, seq: 3, actions: { start: { type: "object", properties: { deck: { const: "RED" }, stake: { enum: ["WHITE"] } } } } };
+  const seqs = [shop, shop, blind, menu];
+  const live = createLive({
+    now: () => t, sleep: async (ms) => { t += ms; },
+    bridge: { state: async () => seqs[Math.min(i, seqs.length - 1)], act: async (a) => { acts.push(a); i++; return { ok: true, events: [], state: {} }; } },
+    decide: async (body) => { bodies.push(body); return { answers: { move: { choice: Object.keys(body.questions.move.criteria)[0], confidence: 0.4 } } }; },
+    busy: () => false, speak: async (line) => { said.push(line); }, remember: () => {}, recent: () => [], log: () => {},
+    record: (o) => recs.push(o),
+  });
+  live._S.on = true;
+  await live._step();
+  assert.equal(acts.length, 0, "进店那一下先不动");
+  assert.ok(said[0].includes("进商店了") && said[0].includes("贪婪小丑"), "报了货架");
+  assert.ok(t >= 15000, "等了群友点单");
+  live.setIntent("买贪婪小丑");
+  await live._step();
+  assert.match(bodies[0].state, /主播这一步就想这么做.*买贪婪小丑/);
+  assert.match(bodies[0].state, /打法底子/);
+  assert.equal(acts[0].action, "buy");
+  i = 2; t += 10000;
+  await live._step();   // 离店到选盲注：想法作废
+  assert.equal(live.intent, "");
+  assert.doesNotMatch(bodies.at(-1).state, /主播这一步就想/);
+  i = 3;
+  await live._step();
+  const start = acts.find((a) => a.action === "start");
+  assert.match(start.seed, /^[1-9A-Z]{8}$/);
+  assert.ok(recs.some((r) => r.ev === "decide" && r.choice && r.options.length));
+  assert.ok(recs.some((r) => r.ev === "start" && r.seed === start.seed));
+});

@@ -5,7 +5,7 @@
 //   冷场 100 秒自己找个角度聊；观众的打法建议摆 90 秒、最多 3 条，只当参考递给决策模型。
 // 群友的话照旧走 12 号平时那套（发言节奏、表情、记忆都不变）；这里只往她那段里递「画面」。
 // 牌局的要点记进她自己的 memory.json（和群聊记忆同一份），下次开播、平时聊天都翻得到。
-import { plan, decisionRequest, readDecision, HAND_CN } from "./xk-balatro.mjs";
+import { plan, decisionRequest, readDecision, HAND_CN, shelfLine } from "./xk-balatro.mjs";
 
 export const LIVE_PARAMS = {
   linesPerMinute: 4, minGapSec: 6, topicTtlSec: 15, decisionCooldownSec: 60, combatGapSec: 20, idleSec: 100,
@@ -16,7 +16,10 @@ export const LIVE_PARAMS = {
   settleMaxMs: 240000,     // 动作超时后最多等画面换帧这么久（牌局桥自己等 180 秒）
   settleTellMs: 20000,     // 等过这么久还没换，跟群里说一声游戏卡了
   stuckLimit: 5,           // 连着这么多次读不到局面：多半是游戏被切到后台了
+  shopWaitMs: 15000,       // 主人 11-07：商店是互动点，进店报完货架等群友点单这么久再动
 };
+const SEED_CH = "123456789ABCDEFGHIJKLMNPQRSTUVWXYZ";
+const randomSeed = () => Array.from({ length: 8 }, () => SEED_CH[Math.floor(Math.random() * SEED_CH.length)]).join("");
 
 /** 主人在群里说的开播 / 下播（只认主人的号，调用方核） */
 export function liveCmd(text) {
@@ -52,7 +55,10 @@ export function createLive(deps, params = LIVE_PARAMS) {
     on: false, startedAt: 0, said: [], lastLine: -Infinity, lastDecisionLine: -Infinity, lastCombatLine: -Infinity,
     topics: [], guidance: [], stuck: 0, runs: 0, best: 0, bestHand: "", lastAnte: 0, stopReason: "",
     actedSeq: null,   // 上一个动作是对着哪一帧（牌局桥的 seq）做的：同一帧不再问第二遍
+    lastState: "",    // 上一帧在哪个界面（进商店那一下要报货架）
+    intent: null,     // 12 号这一步的想法 { text, scope }：管到办成或局面过去（离店、这一手打完）
   };
+  const rec = (o) => { try { deps.record?.({ t: now(), ...o }); } catch {} };
 
   const okRate = (t = now()) => {
     S.said = S.said.filter((x) => t - x < 60000);
@@ -93,6 +99,9 @@ export function createLive(deps, params = LIVE_PARAMS) {
   /** 这一步要不要先说再打，说什么 */
   function beforeLine(state, d) {
     const o = d.option, t = now();
+    // 商店里买东西每件都说（主人 11-07：商店慢点没事，是互动的地方）；离店说一声剩多少钱
+    if (state.state === "SHOP" && o.kind === "buy") return `[画面] 在商店，$${state.money}。你决定：${o.label}`;
+    if (state.state === "SHOP" && o.kind === "leave") return `[画面] 逛完了，离开商店，还剩 $${state.money}，小丑：${(state.jokers || []).map((j) => j.name).join("、") || "还是没有"}。`;
     if (["buy", "pack", "skip", "pack_skip"].includes(o.kind)) {
       if (t - S.lastDecisionLine < P.decisionCooldownSec * 1000) return null;
       S.lastDecisionLine = t;
@@ -144,21 +153,50 @@ export function createLive(deps, params = LIVE_PARAMS) {
     if (state.seq != null && state.seq === S.actedSeq) { await sleep(800); return; }
     const p = plan(state);
     if (p.wait) { await sleep(800); return; }
+    // 局面过去了（离开商店、换了界面），一次性的想法作废
+    if (S.intent && S.intent.scope && state.state !== S.intent.scope) { rec({ ev: "intent_end", text: S.intent.text, why: "局面过去了" }); S.intent = null; }
+    const entered = state.state !== S.lastState;
+    S.lastState = state.state;
+    if (S.intent && !S.intent.scope) S.intent.scope = state.state;
+    // 主人 11-07：商店是互动点。进店先报货架，留一会儿给群友点单，再让 Jev 动
+    if (entered && state.state === "SHOP") {
+      const shelf = shelfLine(state);
+      topic(`[画面] 进商店了，$${state.money}，小丑 ${(state.jokers || []).length}/${state.capacity?.jokers ?? 5}。货架：${shelf || "空的"}。跟大家报一下有什么、你想买哪个，问问群友想要哪个。群友点了要买的，用 live_intent 记下。`, true);
+      await flushTopics();
+      const t0 = now();
+      while (S.on && (now() - t0 < P.shopWaitMs || (deps.busy() && now() - t0 < P.shopWaitMs * 2))) await sleep(500);
+      rec({ ev: "shop_enter", money: state.money, shelf, waitedMs: now() - t0 });
+      S.actedSeq = null;
+      return;   // 等的这会儿可能有人点单：下一圈重新读局面再决策
+    }
     let act = p.auto, d = null;
     if (!act) {
-      let res = null;
-      try { res = await deps.decide(decisionRequest(state, p.options, { model: deps.model, guidance: guidance(), style: deps.style?.() || [] })); }
-      catch (e) { deps.log?.("决策模型出错，先按估分最高的打：" + e.message); }
+      let res = null, err = "";
+      const g = guidance(), st = deps.style?.() || [], intent = S.intent?.text || "";
+      const t0 = now();
+      try { res = await deps.decide(decisionRequest(state, p.options, { model: deps.model, guidance: g, style: st, intent })); }
+      catch (e) { err = e.message; deps.log?.("决策模型出错，先按估分最高的打：" + e.message); }
       d = readDecision(res, p.options);
       act = d.option.act;
+      // 逐步记下来（11-07 复盘只能靠解说倒推）：局面、候选、选了什么、把握度。不记群友原话
+      rec({ ev: "decide", seq: state.seq, state: state.state, ante: state.ante, money: state.money, blind: state.blind?.name || "",
+        score: state.score, target: state.target, hands_left: state.hands_left, discards_left: state.discards_left,
+        jokers: (state.jokers || []).map((j) => j.name), options: p.options.map((o) => ({ key: o.key, label: o.label, score: o.score })),
+        choice: d.option.key, confidence: d.confidence, notable: d.notable, fallback: d.fallback, err, decideMs: now() - t0,
+        guidance: g.length, style: st.length, intent });
       let line = beforeLine(state, d);
       // 攒着没说的要紧画面（「开了一局新的」）先说，免得顺序倒过来（11-07：先说跳盲注、才说开了新局）
       if (line) {
         const keys = S.topics.filter((x) => x.key);
         if (keys.length) { S.topics = S.topics.filter((x) => !x.key); line = keys.map((x) => x.text).join("\n") + "\n" + line; }
-        await say(line, { wait: true });
+        const t1 = now();
+        const spoke = await say(line, { wait: true });
+        rec({ ev: "line", seq: state.seq, spoke, waitMs: now() - t1 });
       }
     } else if (act.action === "start") {
+      // 11-07：没给种子，连着几局开局手牌一模一样。随机给一个，记进日志；live.json 的 seed 能钉死（复现用）
+      act = { ...act, seed: act.seed || deps.seed?.() || randomSeed() };
+      rec({ ev: "start", seed: act.seed, deck: act.deck, stake: act.stake });
       S.runs++; S.best = 0; S.bestHand = "";
       topic(S.runs === 1 ? "[画面] 开了一局新的小丑牌（红色牌组、白注）。" : "[画面] 又开了一局。", true);
     }
@@ -174,6 +212,9 @@ export function createLive(deps, params = LIVE_PARAMS) {
       if (!(await settle(state))) S.actedSeq = null;
       return;
     }
+    rec({ ev: "act", seq: state.seq, action: act.action, ok: r?.ok !== false, error: r?.ok === false ? String(r.error || "").slice(0, 200) : undefined, ms: r?.elapsed_ms });
+    // 「这手就打同花」：这一手打出去就算办过了
+    if (S.intent && act.action === "play") { rec({ ev: "intent_end", text: S.intent.text, why: "这一手打完了" }); S.intent = null; }
     afterEvents(state, r?.events || [], r?.state || {});
     await flushTopics();
     // 冷场太久：自己找个角度聊（手牌、小丑、Boss…）
@@ -211,6 +252,14 @@ export function createLive(deps, params = LIVE_PARAMS) {
     get on() { return S.on; },
     status: () => ({ on: S.on, startedAt: S.startedAt, runs: S.runs, best: S.best, lines: S.said.length }),
     hear,
+    /** 12 号说「这次就买那张」：一次性的，管到办成或局面过去；不按秒过期 */
+    setIntent(text) {
+      const t = String(text || "").trim().slice(0, 200);
+      S.intent = t ? { text: t, scope: S.lastState || "" } : null;
+      rec({ ev: "intent", text: t, scope: S.intent?.scope || "" });
+      return S.intent;
+    },
+    get intent() { return S.intent?.text || ""; },
     async start() {
       if (S.on) return false;
       S.on = true; S.startedAt = now();

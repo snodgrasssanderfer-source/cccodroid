@@ -70,6 +70,8 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["path"], properties: {
       path: { type: "string", description: "发件箱里的文件名或相对路径" },
       name: { type: "string", description: "发出去显示的文件名，可不填（默认用文件名）" } } } },
+  { name: "live_intent", description: "直播时这一步就想怎么做（一次性的），比如群友在商店点名「买那个贪婪小丑」、你想「这手先弃牌凑同花」。Jev 下一次决策照这个来，办成了或者局面过去（离开商店、这一手打完）自动作废，说完的人不用一直盯着。「以后都…」这种长期的用 live_style。text 传空是清掉。",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "这一步想怎么做，一句话" } } } },
   { name: "live_style", description: "看或改直播打小丑牌时给 Jev（替你出牌的那个）的打法偏好，比如「前两个底注别跳盲注」「商店优先买加倍率的小丑」。Jev 每步决策都会读，下一步就生效，但只是参考，照做明显会输时它不照做。action：list 看（默认）；add 往后加几条（items）；remove 按编号删（numbers）；set 整组换成 items（合并、理顺时用）；clear 清空。每次改完会把整组带编号列回来：过一遍有没有互相矛盾或重复的，有就用 set 换成合并好的一组。",
     inputSchema: { type: "object", properties: {
       action: { type: "string", enum: ["list", "add", "remove", "set", "clear"], description: "默认 list" },
@@ -153,6 +155,10 @@ async function call(name, a = {}) {
   if (name === "send_file") {
     const r = await rpc("send_file", { path: a.path, name: a.name }, 180000);
     return textOf(r, "发出去了。");
+  }
+  if (name === "live_intent") {
+    const r = await rpc("live_intent", { text: a.text }, 20000);
+    return textOf(r, "记下了。");
   }
   if (name === "live_style") {
     const r = await rpc("live_style", { action: a.action, items: a.items, numbers: a.numbers }, 20000);

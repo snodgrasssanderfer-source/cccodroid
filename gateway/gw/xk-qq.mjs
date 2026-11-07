@@ -46,7 +46,7 @@ export const SELF_DIR = path.join(CFG.workspace, "qq-self");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "live_style", "memory_append", "memory_query", "memory_remove", "ask_sister"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "live_style", "live_intent", "memory_append", "memory_query", "memory_remove", "ask_sister"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
@@ -833,7 +833,11 @@ onPublish((ev) => {
   else if (ev.type === "discard_partial") r.speech.tool();   // 重试丢掉的那截不认，已经念的收不回，到此为止
 });
 
+export const LIVE_LOG_DIR = path.join(CFG.home, ".config", "xiaoke", "live-log");
 function liveDeps(cfg, ev, key, lc) {
+  // 每场一个逐步记录（11-07 复盘用）：只在手机本地，不记群友原话、不记 key
+  const d0 = new Date(), pad = (n) => String(n).padStart(2, "0");
+  const logFile = path.join(LIVE_LOG_DIR, `${d0.getFullYear()}${pad(d0.getMonth() + 1)}${pad(d0.getDate())}-${pad(d0.getHours())}${pad(d0.getMinutes())}.jsonl`);
   const fake = { message_type: "group", group_id: ev.group_id, group_name: ev.group_name, user_id: cfg.bot, message_id: null, sender: { nickname: "直播画面" } };
   return {
     model: lc.model,
@@ -858,6 +862,9 @@ function liveDeps(cfg, ev, key, lc) {
     },
     recent: () => (readJson(MEMORY_FILE, []) || []).filter((m) => m.tag === "game" || m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
     log: (t) => say("[直播] " + t),
+    record: (o) => { fs.mkdirSync(LIVE_LOG_DIR, { recursive: true, mode: 0o700 }); fs.appendFileSync(logFile, JSON.stringify(o) + "\n", { mode: 0o600 }); },
+    // live.json 的 seed：钉死种子复现用；不填就每局随机
+    seed: () => { const c = readJson(LIVE_FILE, null); return typeof c?.seed === "string" && c.seed.trim() ? c.seed.trim().toUpperCase() : ""; },
   };
 }
 async function liveCommand(cfg, ev, key, cmd) {
@@ -1332,6 +1339,15 @@ async function runTool(req, ctx, r) {
       else await act("upload_private_file", { user_id: ctx.user_id, file: pdf, name }, 120000);
       if (r) r.usedSend = true;
       return { sent: true, name, text: "发出去了：" + name };
+    }
+    case "live_intent": {
+      // 主人 11-07：「这次就买那张」这种一次性的话。管到办成或局面过去（离店、这一手打完），不按秒过期
+      const live = LIVES.get(ctx.key);
+      if (!live?.on) throw new Error("现在没在直播");
+      const text = oneLine(a.text || "", 200);
+      const it = live.setIntent(text);
+      say("[直播] 这一步的想法：" + (text || "（清掉）"));
+      return { intent: it?.text || "", text: text ? `记下了：「${text}」。Jev 下一次决策就照这个来，办成了或者局面过去（离开商店、这一手打完）自动作废。长期的打法用 live_style。` : "清掉了。" };
     }
     case "live_style": {
       // 主人 11-07：Jev 本来就是打游戏用的，12 号自己定打法偏好，群友起哄也行。写 live.json 的 style，下一次决策就读到
