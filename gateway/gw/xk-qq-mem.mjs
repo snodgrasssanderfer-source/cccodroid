@@ -18,6 +18,10 @@ export function memLine(m, clip = 0) {
   return `[${m.id}][${catOf(m)}] ${t}（${day(m.at)}${m.past ? "，已过去" : ""}）`;
 }
 
+/** 从哪边记的：私聊（p:）记的只在私聊看得到；群里、日记、直播都只看群里记的（主人 11-07 晚定：日记不写私聊的事）。老记忆没标的都是群里记的 */
+export const sideOf = (key) => (String(key || "").startsWith("p:") ? "p" : "g");
+export const memVisible = (list, side) => (side === "p" ? list : list.filter((m) => m.src !== "p"));
+
 /** 关键词按相邻两字拆开算重合度，再加一点新近分；已过去的排后面（和屋里 search 一个算法） */
 export function memSearch(list, query, { cat = "", limit = 8, past = true, minKw = 0, skip = null, now = Date.now() } = {}) {
   const pool = list.filter((m) => (!cat || catOf(m) === cat) && (past || !m.past) && !(skip && skip.has(m.id)));
@@ -35,17 +39,18 @@ export function memSearch(list, query, { cat = "", limit = 8, past = true, minKw
 }
 
 /** 记一条；ends 里的旧记忆标成已过去（合并、改正都走这个）。返回 { list, item, dup, near } */
-export function memAdd(list, { text, cat, ends = [] }, now = Date.now(), rnd = Math.random) {
+export function memAdd(list, { text, cat, ends = [], src = "g" }, now = Date.now(), rnd = Math.random) {
   if (!text) throw new Error("text 不能为空");
   if (!CATS.includes(cat)) throw new Error("cat 要从这几类里选：" + CATS.join("、"));
   const endIds = [].concat(ends || []).map(String);
-  for (const id of endIds) if (!list.some((m) => m.id === id)) throw new Error("ends 里没有这条记忆：" + id);
-  const same = list.find((m) => !m.past && m.text === text && catOf(m) === cat);
+  const seen = memVisible(list, src);
+  for (const id of endIds) if (!seen.some((m) => m.id === id)) throw new Error("ends 里没有这条记忆：" + id);
+  const same = seen.find((m) => !m.past && m.text === text && catOf(m) === cat);
   if (same && !endIds.length) return { list, item: same, dup: true, near: [] };
   for (const m of list) if (endIds.includes(m.id)) { m.past = true; m.ended = now; }
-  const item = { id: "m" + now.toString(36) + rnd().toString(36).slice(2, 4), text, cat, at: now };
+  const item = { id: "m" + now.toString(36) + rnd().toString(36).slice(2, 4), text, cat, at: now, ...(src === "p" ? { src: "p" } : {}) };
   // 同类里跟它相近、还作数的：交回去让她自己看有没有重复、打架的
-  const near = memSearch(list, text, { cat, limit: 3, past: false, minKw: 0.5, now });
+  const near = memSearch(seen, text, { cat, limit: 3, past: false, minKw: 0.5, now });
   list.push(item);
   // 不再悄悄挤掉旧的；真到了硬上限，先丢已过去的，再丢最旧的
   while (list.length > MEM.hardMax) {

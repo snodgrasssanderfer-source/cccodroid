@@ -19,7 +19,7 @@ import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
-import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch } from "./xk-qq-mem.mjs";
+import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch, memVisible, sideOf } from "./xk-qq-mem.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
@@ -838,7 +838,7 @@ function memNoteFor(key, text) {
     const fresh = !s || s.sid !== sid;
     if (fresh) { s = { sid, ids: new Set() }; MEM_SEEN.set(key, s); }
     const ms = readJson(MEMORY_FILE, []) || [], before = new Set(s.ids);
-    const note = memInject(ms, text, s.ids, { fresh });
+    const note = memInject(memVisible(ms, sideOf(key)), text, s.ids, { fresh });
     if (memTouch(ms, [...s.ids].filter((id) => !before.has(id)), "inj")) writeJson(MEMORY_FILE, ms);
     return note;
   } catch (e) { say("附记忆出错：" + e.message); return ""; }
@@ -922,7 +922,7 @@ function liveDeps(cfg, ev, key, lc) {
       const d = new Date();
       writeJson(MEMORY_FILE, memAdd(ms, { text: oneLine(`${d.getMonth() + 1}月${d.getDate()}日${text}`, 500), cat: "游戏" }).list);
     },
-    recent: () => (readJson(MEMORY_FILE, []) || []).filter((m) => !m.past && catOf(m) === "游戏" && m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
+    recent: () => memVisible(readJson(MEMORY_FILE, []) || [], "g").filter((m) => !m.past && catOf(m) === "游戏" && m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
     log: (t) => say("[直播] " + t),
     record: (o) => { fs.mkdirSync(LIVE_LOG_DIR, { recursive: true, mode: 0o700 }); fs.appendFileSync(logFile, JSON.stringify(o) + "\n", { mode: 0o600 }); },
     // live.json 的 seed：钉死种子复现用；不填就每局随机
@@ -1563,7 +1563,7 @@ async function runTool(req, ctx, r) {
     case "memory_append": {
       const text = oneLine(a.text, 500);
       const ms = readJson(MEMORY_FILE, []) || [];
-      const r = memAdd(ms, { text, cat: a.cat, ends: a.ends });
+      const r = memAdd(ms, { text, cat: a.cat, ends: a.ends, src: sideOf(ctx.key) });
       if (r.dup) return { saved: false, id: r.item.id, text: "已经记过一样的了：" + memLine(r.item) };
       writeJson(MEMORY_FILE, r.list);
       const n = r.list.filter((m) => !m.past).length;
@@ -1577,13 +1577,13 @@ async function runTool(req, ctx, r) {
       if (a.cat && !CATS.includes(a.cat)) throw new Error("cat 要从这几类里选：" + CATS.join("、"));
       const ms = readJson(MEMORY_FILE, []) || [];
       const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
-      const hits = memSearch(ms, q, { cat: a.cat || "", limit, past: a.past !== false });
+      const hits = memSearch(memVisible(ms, sideOf(ctx.key)), q, { cat: a.cat || "", limit, past: a.past !== false });
       if (q && memTouch(ms, hits.map((m) => m.id), "q")) writeJson(MEMORY_FILE, ms);   // 光翻最近几条不算用到
       return { text: hits.length ? hits.map((m) => memLine(m)).join("\n") : "没有相关的记忆；换个说法或换一类再试。" };
     }
     case "memory_remove": {
       const ms = readJson(MEMORY_FILE, []) || [];
-      const i = ms.findIndex((m) => m.id === String(a.id));
+      const i = ms.findIndex((m) => m.id === String(a.id) && (sideOf(ctx.key) === "p" || m.src !== "p"));
       if (i < 0) throw new Error("没有这条记忆：" + a.id);
       const [gone] = ms.splice(i, 1);
       writeJson(MEMORY_FILE, ms);
@@ -1977,7 +1977,7 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 const md = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
 export function diaryPrompt(day, now = new Date()) {
   const d0 = new Date(day + "T00:00:00"), d1 = new Date(d0.getTime() + 86400000);
-  const ms = (readJson(MEMORY_FILE, []) || []).filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
+  const ms = memVisible(readJson(MEMORY_FILE, []) || [], "g").filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
   const prev = new Date(d0.getTime() - 86400000);
   let last = ""; try { last = fs.readFileSync(path.join(DIARY_DIR, ymd(prev) + ".md"), "utf8").trim(); } catch {}
   return `[日记] 现在是${md(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}，${md(d0)}过完了。写一篇这一天的日记，想写什么就写什么，长短随你。\n` +

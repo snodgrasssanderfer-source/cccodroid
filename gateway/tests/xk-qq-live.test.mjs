@@ -226,6 +226,20 @@ test("她的记忆：新开一段先带主人的规矩，再按这句话挑；�
   assert.equal(big.length, MEM.warnAt + 5, "过了 300 条也不删");
 });
 
+test("她的记忆：私聊记的只在私聊看得到，群里和日记看不到", async () => {
+  const { memAdd, memInject, memSearch, memVisible, sideOf } = await import("../gw/xk-qq-mem.mjs");
+  assert.equal(sideOf("p:123"), "p"); assert.equal(sideOf("g:555"), "g"); assert.equal(sideOf("sister:555"), "g");
+  let ms = [];
+  ms = memAdd(ms, { text: "主人私下说最近在准备考试", cat: "杂事", src: "p" }, 1000).list;
+  ms = memAdd(ms, { text: "群里在聊考试周", cat: "杂事" }, 2000).list;
+  assert.equal(ms[0].src, "p"); assert.equal(ms[1].src, undefined, "群里记的不多带字段，老记忆一样算群里");
+  const g = memVisible(ms, "g");
+  assert.deepEqual(g.map((m) => m.text), ["群里在聊考试周"]);
+  assert.ok(!memInject(g, "主人最近考试吗", new Set(), { fresh: true, now: 3000 }).includes("私下"));
+  assert.equal(memSearch(memVisible(ms, "p"), "考试", {}).length, 2, "私聊那边两边都看得到");
+  assert.throws(() => memAdd(ms, { text: "x", cat: "杂事", ends: [ms[0].id] }), /没有这条/, "群里改不了私聊记的");
+});
+
 test("直播：平常的几手边打边说、不等她；嘴上一句没说完就不插新的", async () => {
   const f = fakeDeps();
   let mouth = false, waited = 0;
