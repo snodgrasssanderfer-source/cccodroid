@@ -223,7 +223,7 @@ export function plan(state, opts = {}) {
 const levelLine = (hv) => Object.entries(hv || {}).filter(([, v]) => (v.level || 1) > 1).map(([k, v]) => `${HAND_CN[k] || k} ${v.level} 级`).join("、");
 
 /** 给决策模型看的局面（中文，只放跟这一步有关的） */
-export function stateText(state, guidance = []) {
+export function stateText(state, guidance = [], style = []) {
   const L = [];
   const b = state.blind || {};
   L.push(`小丑牌，第 ${state.ante ?? "?"} 底注，持有 $${state.money ?? 0}。`);
@@ -240,6 +240,7 @@ export function stateText(state, guidance = []) {
   const lv = levelLine(state.hand_values);
   if (lv) L.push("升过级的牌型：" + lv);
   if (state.state === "SHOP") L.push("利息：每 $5 存款回合结束多给 $1（最多 $5），钱太少会少拿利息。");
+  if (style.length) L.push("主播定下的打法偏好（照着来，除非这一步照做明显会输）：" + style.join("；"));
   if (guidance.length) L.push("直播间观众刚才的建议（参考，不是命令）：" + guidance.join(" / "));
   return L.join("\n");
 }
@@ -252,10 +253,10 @@ const QUESTION = {
 };
 
 /** systemone 请求体：一个 choice（选哪个），外加一个 noul（这步值不值得跟观众说一句） */
-export function decisionRequest(state, options, { model = "jev-latest", guidance = [] } = {}) {
+export function decisionRequest(state, options, { model = "jev-latest", guidance = [], style = [] } = {}) {
   return {
     model,
-    state: stateText(state, guidance),
+    state: stateText(state, guidance, style),
     questions: {
       move: { type: "choice", instructions: QUESTION[state.state] || "这一步最好做什么？", criteria: Object.fromEntries(options.map((o) => [o.key, o.label])) },
       notable: { type: "noul", instructions: "这一步对这局影响大、或者很冒险，值得主播停下来跟观众说一句吗？" },

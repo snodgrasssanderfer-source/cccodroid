@@ -154,3 +154,10 @@ test("直播：开新局的话先于第一个决定说出来", async () => {
   const first = f.said[0];
   assert.ok(first.indexOf("开了一局新的") >= 0 && first.indexOf("开了一局新的") < first.indexOf("你决定"));
 });
+
+test("打法偏好写进决策请求", async () => {
+  const { decisionRequest } = await import("../gw/xk-balatro.mjs");
+  const body = decisionRequest({ state: "BLIND_SELECT", ante: 1, money: 4, jokers: [] }, [{ key: "play", label: "打" }], { style: ["前两个底注别跳盲注"] });
+  assert.match(body.state, /主播定下的打法偏好.*前两个底注别跳盲注/);
+  assert.doesNotMatch(decisionRequest({ state: "SHOP", jokers: [] }, [{ key: "x", label: "y" }]).state, /打法偏好/);
+});

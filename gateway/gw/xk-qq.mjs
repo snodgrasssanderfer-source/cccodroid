@@ -837,6 +837,8 @@ function liveDeps(cfg, ev, key, lc) {
   const fake = { message_type: "group", group_id: ev.group_id, group_name: ev.group_name, user_id: cfg.bot, message_id: null, sender: { nickname: "直播画面" } };
   return {
     model: lc.model,
+    // 打法偏好：live.json 的 style（字符串数组），每次决策现读，改了不用重启
+    style: () => { const c = readJson(LIVE_FILE, null); return Array.isArray(c?.style) ? c.style.map(String).filter(Boolean).slice(0, 8) : []; },
     bridge: {
       state: () => jsonReq(lc.bridge + "/state", undefined, { timeoutMs: 10000 }),
       act: async (a) => {

@@ -147,7 +147,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
     let act = p.auto, d = null;
     if (!act) {
       let res = null;
-      try { res = await deps.decide(decisionRequest(state, p.options, { model: deps.model, guidance: guidance() })); }
+      try { res = await deps.decide(decisionRequest(state, p.options, { model: deps.model, guidance: guidance(), style: deps.style?.() || [] })); }
       catch (e) { deps.log?.("决策模型出错，先按估分最高的打：" + e.message); }
       d = readDecision(res, p.options);
       act = d.option.act;
