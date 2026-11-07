@@ -13,6 +13,8 @@ export const LIVE_PARAMS = {
   actGapMs: 2500,          // 两步之间至少停这么久，群里看得过来
   sayWaitMs: 30000,        // 先说后打：最多等她这么久
   notableBar: 0.75,        // 决策模型觉得「值得说一句」到这个数，平常的出牌也说
+  settleMaxMs: 240000,     // 动作超时后最多等画面换帧这么久（牌局桥自己等 180 秒）
+  settleTellMs: 20000,     // 等过这么久还没换，跟群里说一声游戏卡了
   stuckLimit: 5,           // 连着这么多次读不到局面：多半是游戏被切到后台了
 };
 
@@ -49,6 +51,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
   const S = {
     on: false, startedAt: 0, said: [], lastLine: -Infinity, lastDecisionLine: -Infinity, lastCombatLine: -Infinity,
     topics: [], guidance: [], stuck: 0, runs: 0, best: 0, bestHand: "", lastAnte: 0, stopReason: "",
+    actedSeq: null,   // 上一个动作是对着哪一帧（牌局桥的 seq）做的：同一帧不再问第二遍
   };
 
   const okRate = (t = now()) => {
@@ -137,6 +140,8 @@ export function createLive(deps, params = LIVE_PARAMS) {
       await sleep(S.stuck >= P.stuckLimit ? 10000 : 2000);
       return;
     }
+    // 11-07 真机：选卡包后游戏三分钟不报「好了」，网关超时后拿同一帧又问了她一遍。动过的那一帧不再拿去决策
+    if (state.seq != null && state.seq === S.actedSeq) { await sleep(800); return; }
     const p = plan(state);
     if (p.wait) { await sleep(800); return; }
     let act = p.auto, d = null;
@@ -146,16 +151,29 @@ export function createLive(deps, params = LIVE_PARAMS) {
       catch (e) { deps.log?.("决策模型出错，先按估分最高的打：" + e.message); }
       d = readDecision(res, p.options);
       act = d.option.act;
-      const line = beforeLine(state, d);
-      if (line) await say(line, { wait: true });
+      let line = beforeLine(state, d);
+      // 攒着没说的要紧画面（「开了一局新的」）先说，免得顺序倒过来（11-07：先说跳盲注、才说开了新局）
+      if (line) {
+        const keys = S.topics.filter((x) => x.key);
+        if (keys.length) { S.topics = S.topics.filter((x) => !x.key); line = keys.map((x) => x.text).join("\n") + "\n" + line; }
+        await say(line, { wait: true });
+      }
     } else if (act.action === "start") {
       S.runs++; S.best = 0; S.bestHand = "";
       topic(S.runs === 1 ? "[画面] 开了一局新的小丑牌（红色牌组、白注）。" : "[画面] 又开了一局。", true);
     }
     if (!S.on) return;
     let r;
+    S.actedSeq = state.seq ?? null;
     try { r = await deps.bridge.act(act); }
-    catch (e) { deps.log?.("动作没成：" + JSON.stringify(act) + " " + e.message); await sleep(2000); return; }
+    catch (e) {
+      deps.log?.("动作没成：" + JSON.stringify(act) + " " + e.message);
+      // 被拒（不合法、牌局桥 4xx）：画面没动，这一帧可以重新决策
+      if (!/超时|timeout|aborted|502/i.test(e.message)) { S.actedSeq = null; await sleep(2000); return; }
+      // 超时：动作多半已经到了游戏，只是还没报完。等画面真的变了再往下走，不拿旧帧重问；等不到就放开重来
+      if (!(await settle(state))) S.actedSeq = null;
+      return;
+    }
     afterEvents(state, r?.events || [], r?.state || {});
     await flushTopics();
     // 冷场太久：自己找个角度聊（手牌、小丑、Boss…）
@@ -163,6 +181,23 @@ export function createLive(deps, params = LIVE_PARAMS) {
       await say(`[画面] 好一阵没说话了。现在：第 ${state.ante} 底注，$${state.money}，小丑：${(state.jokers || []).map((j) => j.name).join("、") || "还没有"}。挑个角度随口聊一句（手里的牌、小丑、接下来的 Boss 都行）。`);
     }
     await sleep(P.actGapMs);
+  }
+
+  /** 动作超时以后：等牌局桥的画面换一帧、而且能操作了；等久了跟大家说一声 */
+  async function settle(before) {
+    const t0 = now();
+    let told = false;
+    while (S.on && now() - t0 < P.settleMaxMs) {
+      await sleep(2000);
+      let s = null;
+      try { s = await deps.bridge.state(); } catch {}
+      if (s && s.ready !== false && (before.seq == null || s.seq !== before.seq) && s.state !== undefined) {
+        deps.log?.(`画面换好了（等了 ${Math.round((now() - t0) / 1000)} 秒）`);
+        return true;
+      }
+      if (!told && now() - t0 > P.settleTellMs) { told = true; topic("[画面] 游戏卡住了，刚才那步还没转完。跟大家说一声在等它缓过来。", true); await flushTopics(); }
+    }
+    return false;
   }
 
   async function loop() {

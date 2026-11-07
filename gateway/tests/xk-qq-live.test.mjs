@@ -121,3 +121,36 @@ test("直播：输了、下播都记进她的记忆", async () => {
   live.stop("测试");
   assert.ok(f.mem.some((m) => m.includes("直播打了")));
 });
+
+test("直播：动作超时不拿同一帧重问，等画面换了再走；被拒的可以重来", async () => {
+  const f = fakeDeps();
+  const st = { ...handState([c("HJ"), c("DJ"), c("S4"), c("C4"), c("S2")]), seq: 5 };
+  let reads = 0, decides = 0;
+  f.deps.bridge.state = async () => (++reads > 4 ? { ...st, seq: 6 } : st);
+  f.deps.bridge.act = async (a) => { f.acts.push(a); throw new Error("超时"); };
+  const dec = f.deps.decide; f.deps.decide = async (b) => { decides++; return dec(b); };
+  const live = createLive(f.deps);
+  live._S.on = true;
+  await live._step();
+  assert.equal(f.acts.length, 1);
+  assert.ok(reads >= 5, "超时后一直读到换帧");
+  // 下一步读到的已经是新帧（seq 6），但同一帧 5 不会再决策
+  f.deps.bridge.state = async () => st;
+  await live._step();
+  assert.equal(decides, 1, "seq 5 动过了，不再问");
+  // 被拒：这一帧放开
+  f.deps.bridge.act = async () => { throw new Error("游戏拒绝 act：不合法"); };
+  live._S.actedSeq = null;
+  await live._step();
+  assert.equal(live._S.actedSeq, null);
+});
+
+test("直播：开新局的话先于第一个决定说出来", async () => {
+  const f = fakeDeps();
+  const live = createLive(f.deps);
+  live._S.on = true;
+  live._S.topics.push({ text: "[画面] 开了一局新的小丑牌（红色牌组、白注）。", key: true, at: 0 });
+  await live._step();
+  const first = f.said[0];
+  assert.ok(first.indexOf("开了一局新的") >= 0 && first.indexOf("开了一局新的") < first.indexOf("你决定"));
+});
