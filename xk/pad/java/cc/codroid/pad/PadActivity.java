@@ -138,7 +138,9 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         }
         boolean land = w >= h;
         int pw = vw > 0 ? vw : 9, ph = vh > 0 ? vh : 20;   // 还没拿到尺寸时先按手机竖屏猜
-        float side = Math.min(w * 2f / 3 / pw, (float) h / ph), stack = Math.min((float) w / pw, h * 2f / 3 / ph);
+        // 并排时右边的互动区至少留 340dp（11-07 真机：竖着拿平板时只剩四百来像素，标题折成四行、按钮挤出屏幕）
+        float minPanel = 340 * getResources().getDisplayMetrics().density;
+        float side = Math.min(Math.min(w * 2f / 3, w - minPanel) / pw, (float) h / ph), stack = Math.min((float) w / pw, h * 2f / 3 / ph);
         boolean beside = side > stack || (side == stack && land);
         root.setOrientation(beside ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         if (beside) {
