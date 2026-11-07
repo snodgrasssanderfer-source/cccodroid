@@ -16,6 +16,7 @@ import { projectById, projectDefaults } from "./projects.mjs";
 import { memoryMcpServer, roleById, roleDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { writeJson } from "./xk-shared.mjs";
+import { READ_ONLY } from "./xk-bili-ro.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -44,10 +45,28 @@ export const QQ_MCP_NAME = "qq";
 export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "memory_append", "memory_query", "memory_remove"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
-/** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list） */
-const qqMcpConfigTools = (tools) => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: {
-  type: "stdio", command: process.execPath, args: [QQ_MCP], env: { CCAPP_QQ_TOOLS: tools.join(",") },
-} } });
+/** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
+const qqMcpConfigTools = (tools, withBili = false) => {
+  const servers = { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP], env: { CCAPP_QQ_TOOLS: tools.join(",") } } };
+  const bili = withBili ? biliRoServer() : null;
+  if (bili) servers[BILI_RO_NAME] = bili;
+  return JSON.stringify({ mcpServers: servers });
+};
+// ── 只读 B站（主人 11-07 定）：xk-bili-ro.mjs 夹在中间，只露看的那几样、结果截短；名字和全局的 bili 分开，项目设置里 deny 的 mcp__bili 照旧拦着 ──
+export const BILI_RO = path.join(HERE, "xk-bili-ro.mjs");
+export const BILI_RO_NAME = "bili-ro";
+export const BILI_RO_TOOLS = READ_ONLY.map((t) => `mcp__${BILI_RO_NAME}__${t}`);
+/** 真正的 B站服务怎么起：从全局 ~/.claude.json 的 mcpServers.bili 抄；没配就不挂 */
+export function biliTarget() {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(CFG.home, ".claude.json"), "utf8"))?.mcpServers?.bili;
+    return b?.command ? { command: b.command, args: b.args || [], env: b.env || {} } : null;
+  } catch { return null; }
+}
+function biliRoServer() {
+  const t = biliTarget();
+  return t ? { type: "stdio", command: process.execPath, args: [BILI_RO], env: { BILI_RO_TARGET: JSON.stringify(t) } } : null;
+}
 /** 群里接小克本人（#134 第三步）：
  *  "restricted" 群友叫起来的一轮：strict，只挂 QQ 工具（多 ask_owner）和记忆服务（recall + remember）；
  *  "owner" 主人那一轮：只额外加 QQ 工具（多 owner_away），项目 .mcp.json 的记忆照挂 */
@@ -706,9 +725,9 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
         // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
-        allowedTools: QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`),
+        allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
         // 只列聊天那套：ask_owner、ask_home、owner_away 调了也会被拒，列出来她会当成自己有（11-07 真机她把这三样报给了主人）
-        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS) },
+        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS, true) },
       });
       // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
       r.scope = scope; r.cardHash = cardHashOf(scope);
@@ -1386,7 +1405,7 @@ export function ensureClean(scope = "p") {
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const want = JSON.stringify({
     permissions: {
-      allow: [...CLEAN_TOOLS, ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`)],
+      allow: [...CLEAN_TOOLS, ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
       deny: [...CLEAN_DENY, "mcp__device", "mcp__xk-memory", "mcp__bili"],
     },
     disableClaudeAiConnectors: true, disableBundledSkills: true,
