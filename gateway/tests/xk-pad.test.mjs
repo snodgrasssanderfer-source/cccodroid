@@ -126,6 +126,11 @@ test("串流中转：开串流 → 升级连接 → 本机服务端的数据加�
   assert.equal(started.sid, b.sid);
   assert.equal(started.opts.supportH265, 1);
   assert.equal(started.opts.serverPort, STREAM.port);
+  // 主人 11-07：2K、60 帧；码率按「兆」传（易控服务端自己乘 100 万，传 8000000 会溢出成负数）
+  assert.equal(started.opts.maxSize, 2560);
+  assert.equal(started.opts.maxFps, 60);
+  assert.ok(started.opts.maxVideoBit >= 2 && started.opts.maxVideoBit <= 60, "码率是兆：" + started.opts.maxVideoBit);
+  assert.ok(started.opts.maxVideoBit * 1000000 < 2 ** 31, "乘完不溢出 int");
   // 假的易控服务端：把收到的原样回去，再主动发一句
   const fake = net.createServer((c) => { c.write("hello"); c.on("data", (d) => c.write(d)); });
   await new Promise((ok) => fake.listen(0, "127.0.0.1", ok));

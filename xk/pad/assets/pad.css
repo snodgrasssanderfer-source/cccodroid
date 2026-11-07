@@ -1,6 +1,6 @@
-:root { --bg: #fff7ee; --bg2: #fff; --fg: #2a211b; --fg3: #9a8778; --line: #eadfd3; --accent: #c8642a; --err: #c9452e;
+:root { --pink: #fb7299; --panel: #f6f7f8; --name: #9499a0; --bg: #fff7ee; --bg2: #fff; --fg: #2a211b; --fg3: #9a8778; --line: #eadfd3; --accent: #c8642a; --err: #c9452e;
   --xiaoke: #d9692a; --hachimi: #7d55c9; --xiaoyu: #3a6cc0; font-family: system-ui, sans-serif; }
-@media (prefers-color-scheme: dark) { :root { --bg: #1d1814; --bg2: #2a231e; --fg: #f3e9df; --fg3: #a8988a; --line: #3a312a; --accent: #f39a58;
+@media (prefers-color-scheme: dark) { :root { --panel: #231d19; --name: #9a8f86; --bg: #1d1814; --bg2: #2a231e; --fg: #f3e9df; --fg3: #a8988a; --line: #3a312a; --accent: #f39a58;
   --xiaoke: #f39a58; --hachimi: #b496ef; --xiaoyu: #7ea8ee; } }
 * { box-sizing: border-box; }
 /* 整页不滚、只有消息列表滚：不然弹过一次键盘，整页被顶上去就不回来，顶上「看手机画面」跟着看不见（主人 11-03 真机截图） */
@@ -61,3 +61,22 @@ header small { color: var(--fg3); font-size: 12px; }
 #lart { display: flex; gap: 12px; }
 #lart img { width: min(160px, 25vw); }
 #listening p { color: var(--fg3); }
+
+/* B 站直播间那套：互动区是一行一条「名字：内容」，名字灰、身份用小牌子；输入条「发个弹幕呗~」 */
+#tabs { display: flex; gap: 22px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+#tabs button { border: 0; background: none; color: var(--fg3); font: inherit; font-size: 15px; padding: 9px 0 7px; position: relative; border-bottom: 2px solid transparent; }
+#tabs button.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--pink); }
+#tabs i { position: absolute; top: 8px; right: -8px; width: 6px; height: 6px; border-radius: 50%; background: var(--pink); }
+#qlist { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px; display: flex; flex-direction: column; gap: 2px; background: var(--panel); }
+#qempty { margin: auto; text-align: center; color: var(--fg3); font-size: 13px; max-width: 24em; line-height: 1.6; }
+.qq { font-size: 14px; line-height: 1.65; padding: 2px 0; word-break: break-word; }
+.qq b { color: var(--name); font-weight: 400; }
+.qq .tag { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 5px; margin-right: 5px; border-radius: 3px; color: #fff; vertical-align: 1px; }
+.qq.owner .tag { background: var(--accent); }
+.qq.mine .tag { background: var(--pink); }
+.qq.mine b, .qq.owner b { color: var(--fg); }
+.qq .g { color: var(--fg3); font-size: 12px; }
+.qq .t { color: var(--fg3); font-size: 11px; margin-left: 6px; }
+#in.qqmode textarea { border-radius: 4px; background: var(--panel); }
+#in.qqmode .btn { border-radius: 4px; background: var(--pink); }
+#dm.on { background: var(--pink); color: #fff; box-shadow: none; }

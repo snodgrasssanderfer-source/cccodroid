@@ -20,6 +20,7 @@ import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
 import { onPublish, publish } from "./bus.mjs";
+import { PAD_SPECIAL } from "./xk-pad.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -501,6 +502,8 @@ export async function handleEvent(cfg, ev) {
     if (/^(不用了|都不做|都不用)[。！!.]*$/.test(p.text.replace(/\s+/g, "")) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
     pending = pendingNote();
   }
+  // 平板上的「QQ 群」页（主人 11-07）：群里的话照推一份；私聊不推
+  if (ev.message_type === "group") padQQ(ev.group_id, { from: nick, uid: String(ev.user_id), owner: isOwner, gname: String(ev.group_name || ""), text: p.text });
   // 直播（11-07）：主人在群里说「开播」「下播」；直播时群里的话都当观众建议摆给决策模型看一会儿
   if (ev.message_type === "group") {
     const lc = isOwner ? liveCmd(p.text) : null;
@@ -1163,10 +1166,21 @@ function segsOf(ctx, m, tail) {
   segs.push(...tail);
   return segs;
 }
+/** 推给平板的群消息：只要群里的，正文截短；表情、图写成一个记号 */
+function padQQ(gid, m) {
+  const text = oneLine(m.text, 300);
+  if (!text) return;
+  PAD_GROUP = String(gid);
+  publish({ type: "xk", op: "qq_msg", group: String(gid), at: Date.now(), ...m, text });
+}
+function segsText(segs) {
+  return (segs || []).map((s) => s.type === "text" ? s.data?.text || "" : s.type === "image" ? "[图片]" : s.type === "face" || s.type === "mface" ? "[表情]" : s.type === "at" ? "@" + (NICK.get(String(s.data?.qq)) || s.data?.qq || "") + " " : "").join("");
+}
 async function sendSegs(ctx, segs, timeoutMs = 20000) {
   const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
     ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, timeoutMs);
   const id = d?.message_id ?? null;
+  if (id != null && ctx.type === "group") padQQ(ctx.group_id, { from: "小克", mine: true, text: segsText(segs) });
   if (id != null) {
     const set = SENT_KEY.get(ctx.key) || new Set();
     set.add(String(id)); while (set.size > 200) set.delete(set.values().next().value);
@@ -1735,6 +1749,35 @@ END_HOOKS.push((run, f = {}) => {
     deliver(last.cfg, last.ev, r.key, r.kind, pend.map((x) => x.text).join("\n"), lines, pend.map((x) => x.ev), note);
   }
 });
+
+// ── 平板上的输入框（主人 11-07 定「给 12 号，群里带上原话」）──
+// 平板是配过对的、请求加了密，只有主人的平板发得进来：这一句当成主人在群里 @ 她说的，照常走一遍（开播、切模式这些口令也认）；
+// 发之前机器人号先在群里贴一条「主人（平板）：原话」，群友才看得懂她在回什么。只认 qq.json 里配过的群
+PAD_SPECIAL["/pad/qq/say"] = async (b) => {
+  const cfg = loadConfig();
+  if (!cfg) return { s: 503, error: "QQ 还没接上（没有 qq.json）" };
+  const text = oneLine(b.text, 500);
+  if (!text) return { s: 400, error: "没写字" };
+  const gid = String(b.group || lastPadGroup(cfg) || "");
+  if (!cfg.groups?.[gid]) return { s: 400, error: "不知道发到哪个群：等群里有人说过话再发，或者先在 qq.json 里配群" };
+  if (!status.connected) return { s: 503, error: "QQ 那边断着，发不出去" };
+  const who = NICK.get(String(cfg.owner)) || "主人";
+  try { await act("send_group_msg", { group_id: Number(gid), message: [{ type: "text", data: { text: "主人（平板）：" + text } }] }, 15000); }
+  catch (e) { return { s: 502, error: "群里没贴上：" + e.message }; }
+  const ev = { post_type: "message", message_type: "group", group_id: Number(gid), group_name: cfg.groupNames?.[gid] || "", user_id: Number(cfg.owner), self_id: Number(cfg.bot),
+    message_id: null, sender: { nickname: who, card: who }, time: Math.floor(Date.now() / 1000),
+    message: [{ type: "at", data: { qq: String(cfg.bot) } }, { type: "text", data: { text } }] };
+  handleEvent(cfg, ev).catch((e) => say("平板那句没递进去：" + e.message));
+  return { s: 200, b: { ok: true, group: gid } };
+};
+/** 平板没说群：直播着的那个，不然最近有人说话的那个，不然 qq.json 里唯一的那个 */
+let PAD_GROUP = "";
+function lastPadGroup(cfg) {
+  for (const [k, l] of LIVES) if (l.on) return k.replace(/^g:?/, "");
+  if (PAD_GROUP) return PAD_GROUP;
+  const gs = Object.keys(cfg.groups || {});
+  return gs.length === 1 ? gs[0] : "";
+}
 
 // ── 启动 ──
 let STARTED = false;
