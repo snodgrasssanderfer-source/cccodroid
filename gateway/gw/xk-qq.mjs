@@ -716,7 +716,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     sid = roleSid("xiaoke");
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
-  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, onEnd: opts.onEnd || null };
+  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, diary: opts.diary || "", onEnd: opts.onEnd || null };
   // 直播画面那几轮：她的正文就是台词，边出字边切段送平板念（见 xk-qq-speech.mjs）
   if (opts.live && kind === "chat") r.speech = createSpeech({ onChunk: (t) => voiceOut(opts.voiceRole, t), onStop: () => voiceStop(opts.voiceRole) });
   if (kind === "self") {
@@ -764,7 +764,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const scope = ev.message_type === "group" ? "g" : "p";
       const card = ensureClean(scope);
       // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
-      const memNote = opts.live ? "" : memNoteFor(key, text);
+      const memNote = opts.live || opts.diary ? "" : memNoteFor(key, text);
       item = enqueue({
         message: memNote + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
@@ -1855,6 +1855,20 @@ END_HOOKS.push((run, f = {}) => {
         : `[待审 #${r.approval.id}] 办完了${said ? "：" + oneLine(said, 120) : ""}`;
       privateSay(r.cfg, note).catch((e) => say("私聊汇报没发出去：" + e.message));
     }
+  } else if (r.diary) {
+    // 日记那轮：最后的正文就是日记，原样存一份、原样发进群（主人 11-07 定：不过目、不设限，她想写什么写什么）
+    const text = String(said || "").trim();
+    const gid = String(r.ev.group_id);
+    if (text) {
+      fs.mkdirSync(DIARY_DIR, { recursive: true });
+      fs.writeFileSync(path.join(DIARY_DIR, r.diary + ".md"), text + "\n");
+      if (!r.usedSend) reply(r.cfg, r.ev, text);
+      say(`[日记] ${r.diary} 写好了，${text.length} 字${r.usedSend ? "（她自己用 send_message 发了，不再另发）" : "，发进群了"}`);
+    } else {
+      // 没写出来：放开，下一分钟再试（最多三次，过了早上六点就不补了）
+      if (STATE.qq.diaryDone?.[gid] === r.diary) { delete STATE.qq.diaryDone[gid]; saveState(); }
+      say("[日记] 这一轮没写出来" + (f.error ? "：" + f.error : ""));
+    }
   } else if (r.speech) {
     // 直播画面那轮：工具前、空行前、没露汇报腔的那段正文就是台词，作为一条字幕发进群（声音已经边出字边推了）
     const out = r.speech.end();
@@ -1909,6 +1923,45 @@ function lastPadGroup(cfg) {
   return gs.length === 1 ? gs[0] : "";
 }
 
+// ── 每晚的日记（主人 11-07 定：零点写、直接发群里，不过他的眼、不设限）──
+// 写在她聊天那一段里：这一天的事她那段里都有。零点没写上（网关没开、她正忙、正直播）就每分钟再看，到早上六点为止
+export const DIARY_DIR = path.join(CLEAN_DIR, "diary");
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const md = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
+export function diaryPrompt(day, now = new Date()) {
+  const d0 = new Date(day + "T00:00:00"), d1 = new Date(d0.getTime() + 86400000);
+  const ms = (readJson(MEMORY_FILE, []) || []).filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
+  const prev = new Date(d0.getTime() - 86400000);
+  let last = ""; try { last = fs.readFileSync(path.join(DIARY_DIR, ymd(prev) + ".md"), "utf8").trim(); } catch {}
+  return `[日记] 现在是${md(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}，${md(d0)}过完了。写一篇这一天的日记，想写什么就写什么，长短随你。\n` +
+    "这一轮最后写出来的正文就是日记：网关原样存一份，再原样发进群里。别用 send_message，正文之外也不用再跟谁交代。" +
+    (ms.length ? "\n这天你新记的记忆：\n" + ms.map((m) => "- " + memLine(m)).join("\n") : "") +
+    (last ? `\n前一天（${md(prev)}）你写的日记，供参考：\n` + (last.length > 1200 ? last.slice(0, 1200) + "…" : last) : "");
+}
+export function diaryTick(cfg, now = new Date()) {
+  if (!cfg || now.getHours() >= 6) return [];
+  const day = ymd(new Date(now.getTime() - 86400000));
+  STATE.qq.diaryDone ||= {}; STATE.qq.diaryTries ||= {};
+  const fired = [];
+  for (const gid of Object.keys(cfg.groups || {})) {
+    if (STATE.qq.diaryDone[gid] === day) continue;
+    const tk = gid + ":" + day;
+    if ((STATE.qq.diaryTries[tk] || 0) >= 3) continue;
+    const key = "g:" + gid;
+    if (LIVES.get(key)?.on) continue;                                   // 正直播：下播了再写
+    const b = BUSY.get(key); if (b && RUNSQQ.get(b.cid)) continue;     // 她正回着话：等这一轮完
+    STATE.qq.diaryDone[gid] = day;
+    STATE.qq.diaryTries = { [tk]: (STATE.qq.diaryTries[tk] || 0) + 1 };
+    saveState();
+    const ev = { message_type: "group", group_id: Number(gid), group_name: cfg.groupNames?.[gid] || "", user_id: cfg.bot, message_id: null, sender: { nickname: "日记" } };
+    const text = diaryPrompt(day, now);
+    deliver(cfg, ev, key, "chat", text, text, null, "", { diary: day });
+    say(`[日记] 叫她写 ${day} 的日记（群 ${gid}）`);
+    fired.push(gid);
+  }
+  return fired;
+}
+
 // ── 启动 ──
 let STARTED = false;
 export function startQQ(cfg = loadConfig()) {
@@ -1925,6 +1978,7 @@ if (LIVE) {
   };
   setTimeout(tick, 5000).unref();
   setInterval(tick, 60000).unref();
+  setInterval(() => { try { const cfg = loadConfig(); if (cfg && STARTED) diaryTick(cfg); } catch (e) { say("[日记] " + e.message); } }, 60000).unref();
   // 聊天工具来的请求：两百毫秒看一次，有就做；起手先清一遍没人取的旧文件
   try { sweepRpc(); } catch {}
   setInterval(() => { drainQQRpc().catch((e) => say("聊天工具出错：" + e.message)); }, 200).unref();
