@@ -493,7 +493,8 @@ export async function handleEvent(cfg, ev) {
   const media = imageSegs(ev.message).slice(0, 4).map((s, i) => ({ kind: "image", index: i, url: s.url, file: s.file }));
   if (ev.message_id) remember(ev.message_id, { key, nick, text: p.text, media }, MSGS, 500);
   const quote = p.reply ? await quoteOf(cfg, p.reply) : null;
-  const line = incomingLine(ev, p.text, quote, cfg.owner);
+  // 带图的标上消息号：攒进「最近群里的消息」的图，她看图时不用挨条去试（11-07 真机：空 @ 指前一条的图，她试了五条才找到）
+  const line = incomingLine(ev, p.text, quote, cfg.owner) + (media.length && ev.message_id ? `（图的消息号 ${ev.message_id}）` : "");
   const isOwner = String(ev.user_id) === String(cfg.owner);
   // 主人一开口就当他回来了（不在群的标记清掉）；待审清单拼进这一轮的上下文
   let pending = "";
