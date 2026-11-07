@@ -159,6 +159,8 @@
   // ── 手机画面（串流）：点了才开，省电 ──
   let streaming = false;
   $("#screen").onclick = () => { streaming = !streaming; Pad.stream(streaming); $("#screen").textContent = streaming ? "收起画面" : "看手机画面"; $("#full").hidden = !streaming; };
+  // 横屏叠在画面上时换半透明的皮（PadActivity.setOverlay 叫）
+  window.padOverlay = (on) => document.documentElement.classList.toggle("ov", !!on);
   window.padStream = (s) => {
     if (s === "on") { $("#full").hidden = false; return; }
     streaming = false; $("#screen").textContent = "看手机画面"; $("#full").hidden = true;

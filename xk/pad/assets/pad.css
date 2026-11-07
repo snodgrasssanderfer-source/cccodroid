@@ -18,8 +18,16 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 #list { min-height: 0; }
 header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 header img { width: 40px; height: 40px; }
-header div { flex: 1; display: flex; flex-direction: column; }
-header small { color: var(--fg3); font-size: 12px; }
+header { flex-wrap: wrap; row-gap: 8px; }
+header div { flex: 1; display: flex; flex-direction: column; min-width: 150px; }
+header b, header .btn { white-space: nowrap; }
+header .btn { flex: none; }
+header small { color: var(--fg3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 互动区窄（竖着拿平板）：按钮换到第二行、缩小一号 */
+@media (max-width: 520px) {
+  header img { width: 32px; height: 32px; }
+  header .btn.small { font-size: 13px; padding: 5px 11px; }
+}
 #mem { display: flex; gap: 8px; padding: 8px 14px; }
 .chip { display: flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 3px 12px 3px 3px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1.5px transparent; }
 .chip.on { box-shadow: inset 0 0 0 1.5px var(--c); }
@@ -80,3 +88,7 @@ header small { color: var(--fg3); font-size: 12px; }
 #in.qqmode textarea { border-radius: 4px; background: var(--panel); }
 #in.qqmode .btn { border-radius: 4px; background: var(--pink); }
 #dm.on { background: var(--pink); color: #fff; box-shadow: none; }
+/* 横屏、手机画面也是横的时，互动区半透明叠在画面右边（主人 11-07）：深色半透明底、浅色字，看得见底下的牌桌 */
+html.ov { --bg: rgba(18, 14, 11, .58); --bg2: rgba(255, 255, 255, .14); --panel: transparent; --fg: #fff; --fg3: rgba(255, 255, 255, .72);
+  --line: rgba(255, 255, 255, .16); --name: rgba(255, 255, 255, .75); --accent: #f39a58; }
+html.ov .qq { text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
