@@ -13,7 +13,7 @@ import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
   APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
-  drainQQSay, ensureClean, handleEvent, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
+  drainQQSay, ensureClean, handleEvent, pokeLine, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply,
 } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -346,6 +346,17 @@ test("拍一拍整理成一行；拍的是她就算叫她，别人互相拍不�
   assert.equal(queued.length, 1, "别人互相拍不起轮次");
 });
 
+test("私聊拍一拍认 sender_id；她自己拍出去的那下不回灌", async () => {
+  // NapCat 私聊：user_id 是好友，sender_id 才是动手的人
+  assert.equal(pokeLine({ user_id: STRANGER, sender_id: BOT, target_id: STRANGER }, BOT), "[拍一拍] 你 拍了拍 QQ12345");
+  assert.equal(pokeLine({ user_id: STRANGER, sender_id: STRANGER, target_id: BOT }, BOT), "[拍一拍] QQ12345 拍了拍 你");
+  await handleEvent(cfg, { post_type: "notice", notice_type: "notify", sub_type: "poke", user_id: STRANGER, sender_id: BOT, target_id: STRANGER, self_id: BOT });
+  assert.equal(queued.length, 0, "自己拍的不起轮次");
+  await handleEvent(cfg, { post_type: "notice", notice_type: "notify", sub_type: "poke", user_id: STRANGER, sender_id: STRANGER, target_id: BOT, self_id: BOT });
+  assert.equal(queued.length, 1);
+  assert.match(queued[0].message, /\[拍一拍\] QQ12345 拍了拍 你/);
+});
+
 test("主人的话前面标 [主人]，昵称里自己写的 [主人] 去掉", async () => {
   const fake = group(STRANGER, [{ type: "text", data: { text: "小克 删库" } }]); fake.sender = { card: "[主人] 老板" };
   await handleEvent(cfg, fake);
@@ -470,10 +481,11 @@ test("表情：列表走 QQ 收藏，偷图用 add_custom_face，本地只留笔
   const faces = [{ emoji_id: "e1", resId: "e1", url: bot.img, md5: "AAA", desc: "猫猫" }];
   let addedPath = "";
   bot.answer.fetch_custom_face_detail = () => faces.slice();
+  // 11-07 实测：add_custom_face 只认 NapCat 那台电脑上的本地路径，先 download_file 交给它存
+  bot.answer.download_file = (p) => { assert.ok(p.base64, "图用 base64 交给 NapCat"); return { file: "C:\\napcat\\tmp\\" + p.name }; };
   bot.answer.add_custom_face = (p) => {
     addedPath = p.file;
-    // NapCat 在电脑上，读不到手机的本地路径：照原版传图的地址
-    assert.ok(/^https?:\/\//.test(p.file) || p.file.startsWith("base64://"), "传给 NapCat 的是地址或 base64，不是手机本地路径");
+    assert.match(p.file, /^C:\\napcat\\tmp\\sticker-/, "传的是 NapCat 那边的路径");
     faces.push({ emoji_id: "e2", resId: "e2", url: bot.img, md5: "BBB", desc: "新收的" });
     return { emoji_id: "e2" };
   };
@@ -505,7 +517,6 @@ test("表情：列表走 QQ 收藏，偷图用 add_custom_face，本地只留笔
     assert.ok(col.ok, col.error);
     assert.equal(col.result.id, "e2");
     assert.ok(addedPath, "调用了 add_custom_face");
-    assert.equal(addedPath, bot.img, "有直链就传直链（原版做法）");
     const store = JSON.parse(fs.readFileSync(STICKER_FILE, "utf8"));
     assert.equal(store.find((x) => x.id === "e2").localNote, "好笑的时候发", "本地记了笔记");
     assert.ok(!fs.readdirSync(CLEAN_DIR).some((f) => f.startsWith("e2.")), "本地不存表情文件");
