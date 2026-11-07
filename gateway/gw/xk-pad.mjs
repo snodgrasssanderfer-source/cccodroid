@@ -136,7 +136,7 @@ export async function padCall(env, now = Date.now()) {
 const RING = [];   // [{ seq, ev }]
 let EVSEQ = 0;
 const WAITERS = new Set();
-const WANT = (ev) => ev && ((ev.type === "xk" && /^(room|room_typing|overlay|overlay_say)$/.test(ev.op)) || ev.type === "run_end");
+const WANT = (ev) => ev && ((ev.type === "xk" && /^(room|room_typing|overlay|overlay_say|voice|voice_stop)$/.test(ev.op)) || ev.type === "run_end");
 onPublish((ev) => {
   if (!WANT(ev)) return;
   RING.push({ seq: ++EVSEQ, ev });

@@ -18,6 +18,8 @@ import { turns } from "./xk-transcript.mjs";
 import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
+import { createSpeech } from "./xk-qq-speech.mjs";
+import { onPublish, publish } from "./bus.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -710,6 +712,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
   const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, onEnd: opts.onEnd || null };
+  // 直播画面那几轮：她的正文就是台词，边出字边切段送平板念（见 xk-qq-speech.mjs）
+  if (opts.live && kind === "chat") r.speech = createSpeech({ onChunk: (t) => voiceOut(opts.voiceRole, t), onStop: () => voiceStop(opts.voiceRole) });
   if (kind === "self") {
     // 主人和群友的话混在一轮里：按最严的算，只要有一条不是主人发的就限权
     const evs = all?.length ? all : [ev];
@@ -789,7 +793,7 @@ function liveConfig() {
   const c = readJson(LIVE_FILE, null);
   if (!c?.jevUrl) throw new Error("没配直播（~/.config/xiaoke/live.json 里要有 jevUrl）");
   const key = c.key || (c.keyFile ? fs.readFileSync(c.keyFile.replace(/^~/, CFG.home), "utf8").trim() : "");
-  return { bridge: c.bridge || "http://127.0.0.1:12347", bridgeStart: c.bridgeStart || "", jevUrl: c.jevUrl, model: c.model || "jev-latest", key };
+  return { bridge: c.bridge || "http://127.0.0.1:12347", bridgeStart: c.bridgeStart || "", jevUrl: c.jevUrl, model: c.model || "jev-latest", key, voiceRole: c.voiceRole || "" };
 }
 /** 走 IPv4 发 JSON（这台手机走 IPv6 连 Cloudflare 的域名会在握手时断） */
 function jsonReq(url, body, { method = body === undefined ? "GET" : "POST", headers = {}, timeoutMs = 20000 } = {}) {
@@ -808,6 +812,24 @@ function jsonReq(url, body, { method = body === undefined ? "GET" : "POST", head
     req.end(body === undefined ? undefined : JSON.stringify(body));
   });
 }
+// ── 直播的声音：推给平板（xk-pad 的长轮询带 op=voice），平板照「念她们的话」那套切句、取音频、放 ──
+// 没配 voiceRole（live.json）就不推，只出字幕
+let VOICE_SEQ = 0;
+function voiceOut(role, text) {
+  if (!role || !String(text || "").trim()) return;
+  publish({ type: "xk", op: "voice", role, text: String(text), id: Date.now() * 100 + (++VOICE_SEQ % 100) });
+}
+function voiceStop(role) { if (role) publish({ type: "xk", op: "voice_stop", role }); }
+// 直播那几轮的逐字正文：网关本来就开着 --include-partial-messages，这里接过来喂给切句
+onPublish((ev) => {
+  if (!ev?.runId) return;
+  const r = RUNSQQ.get(ev.runId);
+  if (!r?.speech) return;
+  if (ev.type === "delta") r.speech.feed(ev.text);
+  else if (ev.type === "phase" && ev.phase === "tool") r.speech.tool();
+  else if (ev.type === "discard_partial") r.speech.tool();   // 重试丢掉的那截不认，已经念的收不回，到此为止
+});
+
 function liveDeps(cfg, ev, key, lc) {
   const fake = { message_type: "group", group_id: ev.group_id, group_name: ev.group_name, user_id: cfg.bot, message_id: null, sender: { nickname: "直播画面" } };
   return {
@@ -821,7 +843,7 @@ function liveDeps(cfg, ev, key, lc) {
     },
     decide: (body) => jsonReq(lc.jevUrl, body, { headers: { authorization: "Bearer " + lc.key }, timeoutMs: 15000 }),
     busy: () => { const b = BUSY.get(key); return !!(b && RUNSQQ.get(b.cid)); },
-    speak: (line) => new Promise((resolve) => deliver(cfg, fake, key, "chat", line, line, null, "", { live: true, onEnd: resolve })),
+    speak: (line) => new Promise((resolve) => deliver(cfg, fake, key, "chat", line, line, null, "", { live: true, voiceRole: lc.voiceRole, onEnd: resolve })),
     remember: (text) => {
       const ms = readJson(MEMORY_FILE, []) || [];
       const d = new Date();
@@ -856,6 +878,7 @@ async function liveCommand(cfg, ev, key, cmd) {
   }
   if (!(await ping())) return reply(cfg, ev, "游戏没开：把「小丑牌·小克实验版」打开放在前台，再说一次「开播」");
   const live = createLive(liveDeps(cfg, ev, key, lc));
+  live.voiceRole = lc.voiceRole;
   LIVES.set(key, live);
   say("[直播] 开播");
   live.start().catch((e) => say("[直播] 开播出错：" + e.message));
@@ -1217,6 +1240,9 @@ async function runTool(req, ctx, r) {
         try {
           const id = await sendOne(ctx, { text: m.text, ...target });
           if (id != null) { n++; ids.push(id); }
+          // 直播时回群友的话也念（整条一起到，平板那边照句号切）
+          const lv = LIVES.get(ctx.key);
+          if (id != null && lv?.on && !r?.speech?.spoke) voiceOut(lv.voiceRole, m.text);   // 画面那轮她照老习惯用了 send_message：没念过正文就念这条
         } catch (e) {
           failed.push(`第${i + 1}条「${String(m.text).slice(0, 15)}」：${e.message}`);
         }
@@ -1685,6 +1711,11 @@ END_HOOKS.push((run, f = {}) => {
         : `[待审 #${r.approval.id}] 办完了${said ? "：" + oneLine(said, 120) : ""}`;
       privateSay(r.cfg, note).catch((e) => say("私聊汇报没发出去：" + e.message));
     }
+  } else if (r.speech) {
+    // 直播画面那轮：工具前、空行前、没露汇报腔的那段正文就是台词，作为一条字幕发进群（声音已经边出字边推了）
+    const out = r.speech.end();
+    if (out.text && !r.usedSend) reply(r.cfg, r.ev, out.text);
+    say(`[直播] ${out.silent ? "这轮不说" : out.text ? "说：" + oneLine(out.text, 80) : "没出字"}${out.stopped ? "（后半段像汇报，停了）" : ""}${r.usedSend ? "（她另外用 send_message 发了，字幕不再发）" : ""}${out.dropped ? "；没念的：" + oneLine(out.dropped, 80) : ""}`);
   } else if (r.usedSend) {
     // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
   } else if (said) {

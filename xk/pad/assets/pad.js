@@ -98,6 +98,9 @@
     if (ev.type !== "xk") return;
     // 按消息号只念一次：长轮询重连时补发的旧消息不再念第二遍（#101）
     if (ev.op === "room") { add(ev.msg); if (ROLE[ev.msg.from] && voiceOk && ev.msg.n > spoken) { spoken = ev.msg.n; Pad.say(ev.msg.from, ev.msg.text); } }
+    // QQ 群直播：12 号的台词边写边推过来（一段一个 id，重连补发的旧段不再念）
+    else if (ev.op === "voice") { if (voiceOk && ev.id > voiceSeen) { voiceSeen = ev.id; Pad.say(ev.role, ev.text); } }
+    else if (ev.op === "voice_stop") Pad.voiceStop();
     else if (ev.op === "room_typing") {
       if (ev.on) talking.add(ev.role); else talking.delete(ev.role);
       $("#typing").innerHTML = [...talking].map((id) => `<span style="--c:${ROLE[id]?.c}">${esc(ROLE[id]?.name || id)}在说…</span>`).join("");
@@ -117,7 +120,7 @@
   $("#upd").onclick = () => Pad.update();
 
   // ── 声音：直连主人电脑上的语音服务（xk/voice），念她们的话、按住说话 ──
-  let voiceOk = false, spoken = -1;
+  let voiceOk = false, spoken = -1, voiceSeen = 0;   // 直播台词按 id 只念一次（id 是手机的时钟，跟平板的时钟不比）
   window.padVoice = (v) => {
     voiceOk = v.ok && v.on;
     $("#mic").hidden = !v.ok;

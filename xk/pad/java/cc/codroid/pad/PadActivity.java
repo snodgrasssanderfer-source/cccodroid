@@ -175,6 +175,7 @@ public class PadActivity extends Activity implements PadLink.Listener, PadStream
         @JavascriptInterface public void voiceCode(String code) { voice.setCode(code); }
         @JavascriptInterface public void voiceFind() { voice.check(); }
         @JavascriptInterface public void say(String role, String text) { voice.say(role, text); }
+        @JavascriptInterface public void voiceStop() { voice.stopTalking(); }
         /** 按住说话：第一次先要录音权限（要到了再按一次） */
         @JavascriptInterface public void listen(boolean down) {
             if (!down) { voice.listenStop(); return; }
