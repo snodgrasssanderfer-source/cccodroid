@@ -97,6 +97,7 @@
   function fail(e) { const p = $("#stream-err"); p.hidden = false; p.textContent = e.message || String(e); setTimeout(() => { p.hidden = true; }, 6000); }
 
   // ── 手机推过来的事件（加密长轮询，Java 解好了递过来） ──
+  const qseen = new Set();   // QQ 群消息去重（11-07 真机：这行漏了，qq_msg 一来就报错，互动页一条都不显示）
   window.padEvent = (ev) => {
     if (ev.type !== "xk") return;
     // 按消息号只念一次：长轮询重连时补发的旧消息不再念第二遍（#101）
