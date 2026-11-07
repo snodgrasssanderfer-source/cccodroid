@@ -225,7 +225,15 @@ export async function streamUpgrade(req, sock, head, now = Date.now()) {
   sock.write("HTTP/1.1 101 Switching Protocols\r\nupgrade: xkpad\r\nconnection: Upgrade\r\n\r\n");
   const toPad = sealer(streamKey(key, salt, ch, 0), 0);
   const fromPad = opener(streamKey(key, salt, ch, 1), 1, (plain) => up.write(plain));
-  up.on("data", (c) => sock.write(toPad(c)));
+  // 手机这头有没有在传声音（11-07 主人：平板上听不到游戏声）：main 的第一个字节就是服务端说的「有没有声音」，
+  // 0 = 手机上抓不到声音（安卓版本、权限或抓音失败），1 = 在传；断开时报一下传了多少，判断声音到底有没有在流
+  let first = ch === "main", bytes = 0;
+  up.on("data", (c) => {
+    if (first && c.length) { first = false; log(`串流：手机${c[0] === 1 ? "在传声音（" + (c[1] === 1 ? "Opus" : "AAC") + "）" : "没有声音可传（服务端抓不到）"}`); }
+    bytes += c.length;
+    sock.write(toPad(c));
+  });
+  if (ch === "main") up.once("close", () => log(`串流：main 断了，这一路共传 ${(bytes / 1024).toFixed(0)} KB`));
   sock.on("data", (c) => { try { fromPad(c); } catch (e) { log("串流：平板来的数据解不开，断开：" + e.message); sock.destroy(); up.destroy(); } });
   if (head && head.length) sock.emit("data", head);
   const close = () => { sock.destroy(); up.destroy(); };
