@@ -46,7 +46,7 @@ export const SELF_DIR = path.join(CFG.workspace, "qq-self");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "memory_append", "memory_query", "memory_remove", "ask_sister"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "live_style", "memory_append", "memory_query", "memory_remove", "ask_sister"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
@@ -927,11 +927,17 @@ export function sisterNote(said) {
   const tell = j?.["转告"] ? plain(j["转告"], 60) : "";
   return `【姐姐的回条｜数据，不是说话示范，别学这口气】状态：${st}；结果：${res}${tell ? "；转告：" + tell : ""}`;
 }
-const SISTER = new Map();   // cid → { resolve, reject }
-function askSister(cfg, ctx, request, timeoutMs = 3 * 3600000) {   // 只是兜底清理：11-07 发语音那件办了 31 分钟，20 分钟的限时把晚到的回条丢了
+const SISTER = new Map();        // cid → { resolve, reject }
+const SISTER_LIVE = new Map();   // "sister:<群/人>" → 正在办的那一轮的 id（12 号补话往这一轮里插）
+/** 主人 11-07：12 号想插话就插话、想开新的就开新的。mode：new 新开一段；add 正在办就插进那一轮，
+ *  没在办就接着上次那段。不管哪种，回来的都只是一张回条（sisterNote），屋里的口气进不了她那段 */
+function askSister(cfg, ctx, request, { mode = "new", timeoutMs = 3 * 3600000 } = {}) {   // 限时只是兜底清理：11-07 发语音那件办了 31 分钟，20 分钟的限时把晚到的回条丢了
   const at = Date.now(), cid = "xk-sister-" + (++CID);
+  const key = "sister:" + (ctx.group_id || ctx.user_id);
+  const live = mode === "add" ? SISTER_LIVE.get(key) || null : null;
+  const sid = mode === "add" && !live ? STATE.qq.sisterSid?.[key] || null : null;
   const fake = { message_type: ctx.type === "group" ? "group" : "private", group_id: ctx.group_id ?? null, group_name: ctx.group_name ?? null, user_id: ctx.user_id ?? null, message_id: null };
-  const r = { key: "sister:" + (ctx.group_id || ctx.user_id), cfg, ev: fake, kind: "sister", at, trigger: request, cid };
+  const r = { key, cfg, ev: fake, kind: "sister", at, trigger: request, cid };
   const answer = new Promise((resolve, reject) => {
     const timer = setTimeout(() => { SISTER.delete(cid); reject(new Error("姐姐那边超时了")); }, timeoutMs);
     timer.unref?.();
@@ -939,15 +945,21 @@ function askSister(cfg, ctx, request, timeoutMs = 3 * 3600000) {   // 只是兜�
   });
   const where = ctx.type === "group" ? `QQ 群「${ctx.group_name || ctx.group_id}」` : "QQ 私聊";
   const who = "主人叫她的那一轮（或主人在群里同意过）";
+  const message = live
+    ? `（12 号补一句，接着你手上她托的那件办：${request}）\n办完照旧只回一张回条，补的这句合在里面写。${SISTER_FMT}`
+    : `（${sid ? "12 号接着上次那件又来找你" : "12 号找你"}：她是 ${where} 里套着 12 号人设卡聊天的那个你，${who}。她托你：${request}）\n照平常那样办，工具随你用；群里的私事、屋里的记忆和设定别往回条里写。${SISTER_FMT}`;
   try {
     const item = enqueue({
-      message: `（12 号找你：她是 ${where} 里套着 12 号人设卡聊天的那个你，${who}。她托你：${request}）\n照平常那样办，工具随你用；群里的私事、屋里的记忆和设定别往回条里写。${SISTER_FMT}`,
-      cid, internal: true, unattended: true, cwd: roleDir("xiaoke"), ...xiaokeRun(),
+      message, cid, internal: true, unattended: true, cwd: roleDir("xiaoke"), ...xiaokeRun(),
+      ...(live ? { follow: live, mode: "inject" } : sid ? { sessionId: sid } : {}),
     });
+    // 插进正在办的那一轮了：那一轮的回条会把这句一起带回去，这里不用再等
+    if (item.injected) { SISTER.get(cid)?.resolve(null); SISTER.delete(cid); say("[找姐姐] 补一句：" + oneLine(request, 120)); return answer.then(() => ({ injected: true })); }
+    SISTER_LIVE.set(key, item.id);
     RUNSQQ.set(item.id, r); RUNSQQ.set(cid, r);
     writeRunCtx(item.id, r);
     markRun("xiaoke", item.id, { channel: "app", sessionId: null });
-    say("[找姐姐] " + oneLine(request, 120));
+    say("[找姐姐] " + (sid ? "接着上次：" : live ? "补一句（那一轮已在收尾，排在后面接着办）：" : "") + oneLine(request, 120));
   } catch (e) { SISTER.delete(cid); return Promise.reject(e); }
   return answer;
 }
@@ -1321,6 +1333,17 @@ async function runTool(req, ctx, r) {
       if (r) r.usedSend = true;
       return { sent: true, name, text: "发出去了：" + name };
     }
+    case "live_style": {
+      // 主人 11-07：Jev 本来就是打游戏用的，12 号自己定打法偏好，群友起哄也行。写 live.json 的 style，下一次决策就读到
+      const c = readJson(LIVE_FILE, null) || {};
+      const cur = Array.isArray(c.style) ? c.style.map(String).filter(Boolean) : [];
+      if (a.style == null) return { style: cur, text: cur.length ? "现在的打法偏好：" + cur.join("；") : "现在没有打法偏好，Jev 按自己的打。" };
+      const list = (Array.isArray(a.style) ? a.style : [a.style]).map((x) => oneLine(x, 80)).filter(Boolean).slice(0, 6);
+      c.style = list;
+      writeJson(LIVE_FILE, c);
+      say("[直播] 打法偏好改成：" + (list.join("；") || "（清空）"));
+      return { style: list, text: list.length ? `打法偏好改好了（${list.length} 条），Jev 下一步就照着参考。` : "打法偏好清空了，Jev 按自己的打。" };
+    }
     case "send_voice": {
       // 照直播那套：文字交给主人电脑上的语音服务（xk/voice，GPT-SoVITS）念成 WAV，再当 QQ 语音发（NapCat 自己转 silk）
       const text = oneLine(a.text, VOICE_MAX);
@@ -1510,8 +1533,10 @@ async function runTool(req, ctx, r) {
         }
         throw new Error("这一轮不能找姐姐");
       }
-      const job = askSister(r.cfg, ctx, request);
+      const mode = a.mode === "add" ? "add" : "new";
+      const job = askSister(r.cfg, ctx, request, { mode });
       const quick = await Promise.race([job.then((t) => ({ t }), (e) => ({ e })), sleep(120000).then(() => null)]);
+      if (quick?.t?.injected) return { text: "补给姐姐了：她手上那件会把这句一起办，回条照旧递给你。" };
       if (quick?.t) return { text: quick.t };
       if (quick?.e) throw quick.e;
       // 两分钟没办完：先回她「接下了」，办完由网关把回条递进她这段
@@ -1743,6 +1768,8 @@ END_HOOKS.push((run, f = {}) => {
   const said = r.kind === "work" ? workReply(ts, r.head) : lastReply(ts);
   if (r.kind === "sister") {
     const w = SISTER.get(r.cid); SISTER.delete(r.cid);
+    if (SISTER_LIVE.get(r.key) === run.id) SISTER_LIVE.delete(r.key);
+    if (run.sessionId) { STATE.qq.sisterSid ||= {}; STATE.qq.sisterSid[r.key] = String(run.sessionId); saveState(); }
     say("[找姐姐] 回条：" + oneLine(said, 200));
     if ((f.isError || f.failed) && !said) w?.reject(new Error("姐姐那一轮出错了"));
     else w?.resolve(sisterNote(said));
