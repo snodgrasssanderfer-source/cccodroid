@@ -8,7 +8,8 @@
 import { plan, decisionRequest, readDecision, HAND_CN, shelfLine } from "./xk-balatro.mjs";
 
 export const LIVE_PARAMS = {
-  linesPerMinute: 4, minGapSec: 6, topicTtlSec: 15, decisionCooldownSec: 60, combatGapSec: 20, idleSec: 100,
+  // 11-07 晚：两场直播里说话间隔超过 35 秒的有十几处，中间几手 Jev 闷头打、她不知道。放宽：每分钟 6 句、出牌最短隔 8 秒、冷场 25 秒就找话说
+  linesPerMinute: 6, minGapSec: 5, topicTtlSec: 15, decisionCooldownSec: 60, combatGapSec: 8, idleSec: 25,
   guidanceSec: 90, guidanceMax: 3,
   actGapMs: 2500,          // 两步之间至少停这么久，群里看得过来
   sayWaitMs: 30000,        // 先说后打：最多等她这么久
@@ -43,7 +44,8 @@ const TAIL = "（你在 QQ 群里直播打小丑牌，主人和群友在看。�
  * deps:
  *   bridge.state() / bridge.act(a)：牌局桥
  *   decide(body)：systemone 请求 → 回答
- *   speak(line) → Promise（她那一轮跑完才 resolve）；busy()：她这会儿是不是正在回别人
+ *   speak(line) → Promise（她那一轮跑完才 resolve）；busy()：她聊天那边是不是正在回别人；
+ *   mouthBusy()：解说那边（嘴）上一句还在说没有（主人 11-07 晚：解说另起一段，不跟回群消息抢一个对话）
  *   remember(text)：记进她的记忆；recent()：她以前记过的几条牌局记忆
  *   log(text)
  */
@@ -64,12 +66,13 @@ export function createLive(deps, params = LIVE_PARAMS) {
     S.said = S.said.filter((x) => t - x < 60000);
     return S.said.length < P.linesPerMinute && t - S.lastLine >= P.minGapSec * 1000;
   };
+  const mouthBusy = () => (deps.mouthBusy || deps.busy)();
   async function say(text, { wait = false } = {}) {
     const t = now();
     if (!okRate(t)) return false;
-    // 她正在回群友：先说后打的那句最多等几秒，等不到就不说了，牌照打
-    for (let i = 0; deps.busy() && i < 20; i++) await sleep(400);
-    if (deps.busy()) return false;
+    // 上一句还没说完：要等她的那句最多等几秒，等不到就不说了，牌照打；顺口的那种直接不说
+    for (let i = 0; wait && mouthBusy() && i < 20; i++) await sleep(400);
+    if (mouthBusy()) return false;
     S.said.push(t); S.lastLine = t;
     const p = Promise.resolve(deps.speak(text + "\n" + TAIL)).catch((e) => deps.log?.("直播说话出错：" + e.message));
     if (wait) await Promise.race([p, sleep(P.sayWaitMs)]);
@@ -79,7 +82,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
   async function flushTopics() {
     const t = now();
     S.topics = S.topics.filter((x) => x.key || t - x.at <= P.topicTtlSec * 1000);
-    if (!S.topics.length || deps.busy() || !okRate(t)) return;
+    if (!S.topics.length || mouthBusy() || !okRate(t)) return;
     // 关键的先说；同时有几条就并成一句画面
     S.topics.sort((a, b) => Number(b.key) - Number(a.key) || a.at - b.at);
     const batch = S.topics.splice(0, 3);
@@ -112,8 +115,10 @@ export function createLive(deps, params = LIVE_PARAMS) {
       const first = !state.hands_played && !state.discards_used;
       const last = state.hands_left === 1 && o.kind === "play";
       const big = first || o.kill || last || d.notable >= P.notableBar;
-      if (!big || t - S.lastCombatLine < P.combatGapSec * 1000) return null;
+      if (t - S.lastCombatLine < P.combatGapSec * 1000) return null;
       S.lastCombatLine = t;
+      // 平常的几手：边打边说，不等她（11-07 晚：原来只说要紧的那几手，一个盲注里中间全空着）
+      if (!big) return { text: `[画面] ${o.kind === "discard" ? "弃牌" : "出牌"}：${o.label}。已得 ${state.score}/${state.target}，剩 ${state.hands_left} 次出牌、${state.discards_left} 次弃牌。`, wait: false };
       const b = state.blind || {};
       const why = last ? "最后一手了，打不够就输" : o.kill ? "这手能直接过关" : first ? `刚进${b.name || "盲注"}${b.effect ? "（" + b.effect + "）" : ""}，目标 ${state.target}` : "这步有点冒险";
       return `[画面] ${why}。手牌：${(state.hand || []).length} 张，已得 ${state.score}/${state.target}，剩 ${state.hands_left} 次出牌、${state.discards_left} 次弃牌。你决定：${o.label}`;
@@ -163,7 +168,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
     // 主人 11-07：商店是互动点。进店先报货架，留一会儿给群友点单，再让 Jev 动
     if (entered && state.state === "SHOP") {
       const shelf = shelfLine(state);
-      topic(`[画面] 进商店了，$${state.money}，小丑 ${(state.jokers || []).length}/${state.capacity?.jokers ?? 5}。货架：${shelf || "空的"}。跟大家报一下有什么、你想买哪个，问问群友想要哪个。群友点了要买的，用 live_intent 记下。`, true);
+      topic(`[画面] 进商店了，$${state.money}，小丑 ${(state.jokers || []).length}/${state.capacity?.jokers ?? 5}。货架：${shelf || "空的"}。跟大家报一下有什么、你想买哪个，问问群友想要哪个。`, true);
       await flushTopics();
       const t0 = now();
       while (S.on && (now() - t0 < P.shopWaitMs || (deps.busy() && now() - t0 < P.shopWaitMs * 2))) await sleep(500);
@@ -186,14 +191,15 @@ export function createLive(deps, params = LIVE_PARAMS) {
         jokers: (state.jokers || []).map((j) => j.name), options: p.options.map((o) => ({ key: o.key, label: o.label, score: o.score })),
         choice: d.option.key, confidence: d.confidence, notable: d.notable, fallback: d.fallback, err, decideMs: now() - t0,
         guidance: g.length, style: st.length, intent });
-      let line = beforeLine(state, d);
+      let line = beforeLine(state, d), wait = true;
+      if (line && typeof line === "object") { wait = line.wait; line = line.text; }
       // 攒着没说的要紧画面（「开了一局新的」）先说，免得顺序倒过来（11-07：先说跳盲注、才说开了新局）
       if (line) {
         const keys = S.topics.filter((x) => x.key);
         if (keys.length) { S.topics = S.topics.filter((x) => !x.key); line = keys.map((x) => x.text).join("\n") + "\n" + line; }
         const t1 = now();
-        const spoke = await say(line, { wait: true });
-        rec({ ev: "line", seq: state.seq, spoke, waitMs: now() - t1 });
+        const spoke = await say(line, { wait });
+        rec({ ev: "line", seq: state.seq, spoke, wait, waitMs: now() - t1 });
       }
     } else if (act.action === "start") {
       // 11-07：没给种子，连着几局开局手牌一模一样。随机给一个，记进日志；live.json 的 seed 能钉死（复现用）
@@ -220,7 +226,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
     afterEvents(state, r?.events || [], r?.state || {});
     await flushTopics();
     // 冷场太久：自己找个角度聊（手牌、小丑、Boss…）
-    if (now() - Math.max(S.lastLine, S.startedAt) > P.idleSec * 1000 && !deps.busy()) {
+    if (now() - Math.max(S.lastLine, S.startedAt) > P.idleSec * 1000 && !mouthBusy()) {
       await say(`[画面] 好一阵没说话了。现在：第 ${state.ante} 底注，$${state.money}，小丑：${(state.jokers || []).map((j) => j.name).join("、") || "还没有"}。挑个角度随口聊一句（手里的牌、小丑、接下来的 Boss 都行）。`);
     }
     await sleep(P.actGapMs);

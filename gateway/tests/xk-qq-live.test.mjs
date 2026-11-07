@@ -99,8 +99,8 @@ test("直播：盲注第一手先说再打；过关攒成话题；节奏有上�
   await live._step();   // 结算：自动 cash_out，顺手把攒的话题说了
   assert.equal(f.acts[1].action, "cash_out");
   assert.ok(f.said.some((x) => x.includes("过了小盲注")));
-  // 一分钟内最多 4 句
-  live._S.said = [1, 2, 3, 4].map(() => f.deps.now());
+  // 一分钟内最多 6 句
+  live._S.said = [1, 2, 3, 4, 5, 6].map(() => f.deps.now());
   live._S.lastLine = -Infinity;
   const before = f.said.length;
   live._S.topics.push({ text: "x", key: true, at: f.deps.now() });
@@ -224,4 +224,24 @@ test("她的记忆：新开一段先带主人的规矩，再按这句话挑；�
   let big = [];
   for (let i = 0; i < MEM.warnAt + 5; i++) big = memAdd(big, { text: "第" + i + "条", cat: "杂事" }, 5000 + i).list;
   assert.equal(big.length, MEM.warnAt + 5, "过了 300 条也不删");
+});
+
+test("直播：平常的几手边打边说、不等她；嘴上一句没说完就不插新的", async () => {
+  const f = fakeDeps();
+  let mouth = false, waited = 0;
+  f.deps.mouthBusy = () => mouth;
+  f.deps.speak = (line) => { f.said.push(line); return new Promise(() => {}); };   // 永远说不完：看动作等不等
+  const st = handState([c("HJ"), c("DJ"), c("S4"), c("C4"), c("S2")], { hands_played: 1, hands_left: 3, target: 5000 });
+  f.deps.bridge.state = async () => st;
+  const live = createLive(f.deps);
+  live._S.on = true;
+  const t0 = f.deps.now();
+  await live._step();
+  assert.equal(f.acts.length, 1, "照打");
+  assert.ok(f.said[0].startsWith("[画面] 出牌："), f.said[0]);
+  assert.ok(f.deps.now() - t0 < 10000, "没等她说完");
+  mouth = true; f.tick(20000); st.seq = 99;
+  await live._step();
+  assert.equal(f.said.length, 1, "嘴还在说，这句不插");
+  assert.equal(f.acts.length, 2);
 });

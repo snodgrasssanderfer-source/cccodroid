@@ -510,7 +510,7 @@ export async function handleEvent(cfg, ev) {
   if (ev.message_type === "group") {
     const lc = isOwner ? liveCmd(p.text) : null;
     if (lc) return liveCommand(cfg, ev, key, lc);
-    if (LIVES.get(key)?.on && String(ev.user_id) !== String(cfg.bot)) LIVES.get(key).hear(nick, p.text);
+    if (LIVES.get(key)?.on && String(ev.user_id) !== String(cfg.bot)) { LIVES.get(key).hear(nick, p.text); feedPush(key, "toMouth", line); }
   }
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
   const cmd = isOwner && !!modeCmd(p.text);
@@ -707,6 +707,8 @@ export function handleMessage(cfg, ev, text, extra = {}) {
 
 function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "", opts = {}) {
   const b = BUSY.get(key);
+  // 嘴上一句还没说完：这句不攒（攒了会跟后面的并成一轮普通聊天），直接算没说
+  if (opts.mouth && b && RUNSQQ.get(b.cid)) { opts.onEnd?.(); return; }
   if (b && RUNSQQ.get(b.cid)) { const a = PENDING.get(key) || []; a.push({ cfg, ev, text, line, pending: pendingNote }); PENDING.set(key, a); return; }   // 那一轮还在跑：攒着
   if (b) BUSY.delete(key);   // 记录里已经没有那一轮了（收尾事件丢了）：按实际放开
   const at = Date.now(), cid = "xk-qq-" + (++CID);
@@ -765,15 +767,21 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const card = ensureClean(scope);
       // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
       const memNote = opts.live || opts.diary ? "" : memNoteFor(key, text);
+      const note = opts.mouth || opts.diary ? "" : brainNote(key);
       item = enqueue({
-        message: memNote + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
+        message: memNote + note + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
-        // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
-        allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
-        // 只列聊天那套：ask_owner、ask_home、owner_away 调了也会被拒，列出来她会当成自己有（11-07 真机她把这三样报给了主人）
-        clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS, true) },
+        // 嘴那段一样工具都不给：一轮就是一句台词，快，也不会把台词吃掉去调工具（11-07 晚：七八轮「没出字」都是去改偏好了）
+        ...(opts.mouth
+          ? { allowedTools: [], clean: { tools: [], systemPrompt: card, mcpConfig: null } }
+          : {
+            // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
+            allowedTools: [...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
+            // 只列聊天那套：ask_owner、ask_home、owner_away 调了也会被拒，列出来她会当成自己有（11-07 真机她把这三样报给了主人）
+            clean: { tools: CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS, true) },
+          }),
       });
       // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
       r.scope = scope; r.cardHash = cardHashOf(scope);
@@ -791,6 +799,33 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
   }
 }
 let CID = 0;
+
+// ── 直播时的两边（主人 11-07 晚定）：嘴 = 每场新开的一段短对话，只管念画面，不给工具；脑 = 她平时那段，回群消息、改偏好、记想法 ──
+// 两边互相通气：嘴每句前看到群里刚才说了什么（含脑那边回过的话），脑每轮前看到嘴刚才念了什么。人设卡同一张，群里看着还是一个人
+export const MOUTH = "#live";
+const FEED = new Map();   // 会话 key → { toMouth: [], toBrain: [], said: [] }
+const FEED_MAX = 8;
+function feedPush(key, side, text) {
+  const k = String(key).replace(MOUTH, "");
+  const f = FEED.get(k) || { toMouth: [], toBrain: [], said: [] };
+  f[side].push(oneLine(text, 200)); while (f[side].length > FEED_MAX) f[side].shift();
+  FEED.set(k, f);
+}
+function feedTake(key, side) { const f = FEED.get(key); if (!f?.[side]?.length) return []; const a = f[side]; f[side] = []; return a; }
+/** 嘴这一句前面附的：群里刚才的话；嘴那段新开过的话，再带上自己最近念过的几句 */
+function mouthNote(key, fresh) {
+  const g = feedTake(key, "toMouth"), said = fresh ? (FEED.get(key)?.said || []).slice(-4) : [];
+  return (said.length ? "[你刚才直播里已经说过的]\n" + said.join("\n") + "\n[/你刚才直播里已经说过的]\n" : "") +
+    (g.length ? "[群里刚才（回群消息由你在另一边回，这里只管念画面，可以顺嘴接一句）]\n" + g.join("\n") + "\n[/群里刚才]\n" : "");
+}
+/** 脑这一轮前面附的：直播着就说一声分工，再带上嘴刚才念过的 */
+function brainNote(key) {
+  if (!LIVES.get(key)?.on) return "";
+  const said = feedTake(key, "toBrain");
+  return "[直播中：念画面的是另一边的你，这一轮只管回群里的话。群友点单用 live_intent，改打法用 live_style]\n" +
+    (said.length ? "[你刚才在直播里说的]\n" + said.join("\n") + "\n[/你刚才在直播里说的]\n" : "");
+}
+const MOUTH_TURNS = new Map();   // 嘴那段跑了几轮：太长了换一段新的，免得越说越慢
 
 // 每段会话带过哪些记忆：同一段不带第二遍；会话换了（新开、卡换了作废）就重来
 const MEM_SEEN = new Map();   // 会话 key → { sid, ids }
@@ -873,7 +908,15 @@ function liveDeps(cfg, ev, key, lc) {
     },
     decide: (body) => jsonReq(lc.jevUrl, body, { headers: { authorization: "Bearer " + lc.key }, timeoutMs: 15000 }),
     busy: () => { const b = BUSY.get(key); return !!(b && RUNSQQ.get(b.cid)); },
-    speak: (line) => new Promise((resolve) => deliver(cfg, fake, key, "chat", line, line, null, "", { live: true, voiceRole: lc.voiceRole, onEnd: resolve })),
+    // 嘴：每场新开一段（开播时清掉），跑满 60 句换一段新的，换的时候带上最近念过的几句
+    speak: (line) => new Promise((resolve) => {
+      const mk = key + MOUTH, n = (MOUTH_TURNS.get(mk) || 0) + 1;
+      let fresh = !STATE.qq.sessions[mk];
+      if (n > 60) { delete STATE.qq.sessions[mk]; MOUTH_TURNS.set(mk, 1); fresh = true; } else MOUTH_TURNS.set(mk, n);
+      const text = mouthNote(key, fresh) + line;
+      deliver(cfg, fake, mk, "chat", text, text, null, "", { live: true, mouth: true, voiceRole: lc.voiceRole, onEnd: resolve });
+    }),
+    mouthBusy: () => { const b = BUSY.get(key + MOUTH); return !!(b && RUNSQQ.get(b.cid)); },
     remember: (text) => {
       const ms = readJson(MEMORY_FILE, []) || [];
       const d = new Date();
@@ -908,6 +951,8 @@ async function liveCommand(cfg, ev, key, cmd) {
     for (let i = 0; i < 8 && !(await ping()); i++) await sleep(1500);
   }
   if (!(await ping())) return reply(cfg, ev, "游戏没开：把「小丑牌·小克实验版」打开放在前台，再说一次「开播」");
+  // 嘴那段每场新开：上一场的台词不带进来
+  delete STATE.qq.sessions[key + MOUTH]; MOUTH_TURNS.delete(key + MOUTH); FEED.delete(key); saveState();
   const live = createLive(liveDeps(cfg, ev, key, lc));
   live.voiceRole = lc.voiceRole;
   LIVES.set(key, live);
@@ -1325,6 +1370,7 @@ async function runTool(req, ctx, r) {
           // 直播时回群友的话也念（整条一起到，平板那边照句号切）
           const lv = LIVES.get(ctx.key);
           if (id != null && lv?.on && !r?.speech?.spoke) voiceOut(lv.voiceRole, m.text);   // 画面那轮她照老习惯用了 send_message：没念过正文就念这条
+          if (id != null && lv?.on) feedPush(ctx.key, "toMouth", "你（回群消息那边）：" + m.text);
         } catch (e) {
           failed.push(`第${i + 1}条「${String(m.text).slice(0, 15)}」：${e.message}`);
         }
@@ -1873,6 +1919,7 @@ END_HOOKS.push((run, f = {}) => {
     // 直播画面那轮：工具前、空行前、没露汇报腔的那段正文就是台词，作为一条字幕发进群（声音已经边出字边推了）
     const out = r.speech.end();
     if (out.text && !r.usedSend) reply(r.cfg, r.ev, out.text);
+    if (out.text && r.key.endsWith(MOUTH)) { feedPush(r.key, "toBrain", out.text); feedPush(r.key, "said", out.text); }
     say(`[直播] ${out.silent ? "这轮不说" : out.text ? "说：" + oneLine(out.text, 80) : "没出字"}${out.stopped ? "（后半段像汇报，停了）" : ""}${r.usedSend ? "（她另外用 send_message 发了，字幕不再发）" : ""}${out.dropped ? "；没念的：" + oneLine(out.dropped, 80) : ""}`);
   } else if (r.usedSend) {
     // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
