@@ -838,7 +838,7 @@ function liveDeps(cfg, ev, key, lc) {
   return {
     model: lc.model,
     // 打法偏好：live.json 的 style（字符串数组），每次决策现读，改了不用重启
-    style: () => { const c = readJson(LIVE_FILE, null); return Array.isArray(c?.style) ? c.style.map(String).filter(Boolean).slice(0, 8) : []; },
+    style: () => { const c = readJson(LIVE_FILE, null); return Array.isArray(c?.style) ? c.style.map(String).filter(Boolean) : []; },   // 主人 11-07：不设上限，冲突和合并由 12 号改的时候自己理
     bridge: {
       state: () => jsonReq(lc.bridge + "/state", undefined, { timeoutMs: 10000 }),
       act: async (a) => {
@@ -1335,14 +1335,30 @@ async function runTool(req, ctx, r) {
     }
     case "live_style": {
       // 主人 11-07：Jev 本来就是打游戏用的，12 号自己定打法偏好，群友起哄也行。写 live.json 的 style，下一次决策就读到
+      // 主人 11-07：不设上限；加一条默认往后叠，每次改完把整组编号列回去，让她过一遍有没有冲突、能不能合并
       const c = readJson(LIVE_FILE, null) || {};
       const cur = Array.isArray(c.style) ? c.style.map(String).filter(Boolean) : [];
-      if (a.style == null) return { style: cur, text: cur.length ? "现在的打法偏好：" + cur.join("；") : "现在没有打法偏好，Jev 按自己的打。" };
-      const list = (Array.isArray(a.style) ? a.style : [a.style]).map((x) => oneLine(x, 80)).filter(Boolean).slice(0, 6);
+      const show = (l) => l.length ? l.map((x, i) => `${i + 1}. ${x}`).join("\n") : "（没有，Jev 按自己的打）";
+      const act = ["add", "remove", "set", "clear"].includes(a.action) ? a.action : "list";
+      if (act === "list") return { style: cur, text: "现在的打法偏好：\n" + show(cur) };
+      let list = cur;
+      if (act === "add") {
+        const add = (Array.isArray(a.items) ? a.items : [a.items]).map((x) => oneLine(x, 200)).filter(Boolean);
+        if (!add.length) throw new Error("add 要带 items：要加的那几条");
+        list = [...cur, ...add];
+      } else if (act === "remove") {
+        const no = new Set((Array.isArray(a.numbers) ? a.numbers : [a.numbers]).map(Number).filter((n) => n >= 1 && n <= cur.length));
+        if (!no.size) throw new Error(`remove 要带 numbers：要删的编号（现在 1 到 ${cur.length}）`);
+        list = cur.filter((_, i) => !no.has(i + 1));
+      } else if (act === "set") {
+        list = (Array.isArray(a.items) ? a.items : [a.items]).map((x) => oneLine(x, 200)).filter(Boolean);
+        if (!list.length) throw new Error("set 要带 items：合并好的整组；想清空用 clear");
+      } else list = [];
       c.style = list;
       writeJson(LIVE_FILE, c);
-      say("[直播] 打法偏好改成：" + (list.join("；") || "（清空）"));
-      return { style: list, text: list.length ? `打法偏好改好了（${list.length} 条），Jev 下一步就照着参考。` : "打法偏好清空了，Jev 按自己的打。" };
+      say(`[直播] 打法偏好（${act}）：` + (list.join("；") || "（清空）"));
+      const check = list.length > 1 ? "\n过一遍：有没有互相矛盾的、说的是同一件事的？有就用 set 换成理顺、合并后的整组（矛盾的留新的那条）；没有就不用动。" : "";
+      return { style: list, text: `改好了，Jev 下一步就读到。现在的打法偏好：\n${show(list)}${check}` };
     }
     case "send_voice": {
       // 照直播那套：文字交给主人电脑上的语音服务（xk/voice，GPT-SoVITS）念成 WAV，再当 QQ 语音发（NapCat 自己转 silk）

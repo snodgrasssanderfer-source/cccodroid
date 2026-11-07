@@ -70,8 +70,11 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["path"], properties: {
       path: { type: "string", description: "发件箱里的文件名或相对路径" },
       name: { type: "string", description: "发出去显示的文件名，可不填（默认用文件名）" } } } },
-  { name: "live_style", description: "看或改直播打小丑牌时给 Jev（替你出牌的那个）的打法偏好。不传 style 就是看现在的；传了就整组换掉（传空数组是清空）。每条一句话，最多 6 条，比如「前两个底注别跳盲注」「商店优先买加倍率的小丑」。Jev 每步决策都会读，下一步就生效，但只是参考，它不一定每步照做。",
-    inputSchema: { type: "object", properties: { style: { type: "array", items: { type: "string" }, description: "新的整组偏好；不传就是只看" } } } },
+  { name: "live_style", description: "看或改直播打小丑牌时给 Jev（替你出牌的那个）的打法偏好，比如「前两个底注别跳盲注」「商店优先买加倍率的小丑」。Jev 每步决策都会读，下一步就生效，但只是参考，照做明显会输时它不照做。action：list 看（默认）；add 往后加几条（items）；remove 按编号删（numbers）；set 整组换成 items（合并、理顺时用）；clear 清空。每次改完会把整组带编号列回来：过一遍有没有互相矛盾或重复的，有就用 set 换成合并好的一组。",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["list", "add", "remove", "set", "clear"], description: "默认 list" },
+      items: { type: "array", items: { type: "string" }, description: "add / set 用：每条一句话" },
+      numbers: { type: "array", items: { type: "integer" }, description: "remove 用：要删的编号（list 里的序号）" } } } },
   { name: "send_voice", description: "把一句话念成语音发到当前聊天（主人电脑上的语音服务，用直播那个声音）。text 是要念的原话，口语、短一点（200 字以内），别带表情、括号和网址。念要几秒钟，别连着发好几条；语音服务没开或念不出来会报错，那就改发文字。",
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要念的话" } } } },
   { name: "send_poke", description: "拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时先看聊天记录里谁在说话；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传「未知」或 0 这类占位。适合用「戳一下」代替一句废话，或偶尔逗一下正在聊的人。别频繁。",
@@ -152,7 +155,7 @@ async function call(name, a = {}) {
     return textOf(r, "发出去了。");
   }
   if (name === "live_style") {
-    const r = await rpc("live_style", a.style === undefined ? {} : { style: a.style }, 20000);
+    const r = await rpc("live_style", { action: a.action, items: a.items, numbers: a.numbers }, 20000);
     return textOf(r, "好了。");
   }
   if (name === "send_voice") {
