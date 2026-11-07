@@ -1608,10 +1608,10 @@ END_HOOKS.push((run, f = {}) => {
     }
   } else if (r.usedSend) {
     // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
-  } else if (isSilent(said) && (r.live || said.trim() === "【不说】")) {
-    // 直播画面那一轮她说了「不说」：不往群里发
   } else if (said) {
-    reply(r.cfg, r.ev, said, { split: true });
+    // 聊天模式只认 send_message / send_sticker 发出去的（11-07 真机：她不想回的那几轮，最后那段写给「你」的汇报
+    // 「你在群里回了个www……所以小克这次没回」被当成回话发进了群）。最后的文字只记日志，不往 QQ 发
+    say("聊天模式这一轮没用 send_message，最后的文字不发：" + oneLine(said, 120));
   } else if (f.isError || f.failed) {
     // 聊天模式：群里不该冒「这轮出错了」，记日志就行
     say("这一轮没成，没回话（" + (f.error || "出错") + "）");

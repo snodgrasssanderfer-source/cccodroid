@@ -174,8 +174,10 @@ test("聊天模式：干净会话（不在 roles 下面），只开搜索和读�
   for (const t of ["Read", "Grep", "Glob", "Task"]) assert.ok(q.disallowedTools.includes(t), "兜底也禁 " + t);
   assert.ok(st.permissions.deny.includes("mcp__bili"), "全局挂着的 B站工具也禁");
   assert.ok(!fs.existsSync(path.join(CLEAN_DIR, "CLAUDE.md")), "人设卡不叫 CLAUDE.md");
-  finish(q, "你好，我在");
-  assert.match(REPLIES.at(-1).text, /你好，我在/);
+  // 聊天模式只认 send_message 发的；最后那段文字（常是写给「你」的汇报）不往 QQ 发（11-07 漏进群）
+  const n0 = REPLIES.length;
+  finish(q, "你在群里只是笑了一下，所以小克没回");
+  assert.equal(REPLIES.length, n0, "最后的文字不发");
   assert.ok(STATE.qq.sessions["p:" + STRANGER], "记住这段干净会话");
   handleMessage(cfg, priv(STRANGER, "再说一句"), "再说一句");
   assert.equal(queued[1].sessionId, STATE.qq.sessions["p:" + STRANGER], "接着她自己那段");
@@ -217,7 +219,7 @@ test("连着来两句：跑着时攒着，跑完把攒下的几句一起递进�
   assert.equal(queued.length, 2, "跑完把攒的一起递进去");
   assert.match(queued[1].message, /第二句$/, "攒下的只有后来的，第一句已经递过了");
   finish(queued[1], "再说一句");
-  assert.equal(REPLIES.filter((r) => r.key === "p:" + STRANGER).at(-1).text, "再说一句");
+  assert.equal(REPLIES.filter((r) => r.key === "p:" + STRANGER).length, 0, "聊天模式最后的文字不发");
 });
 
 test("断开以后自己重连，不用人管", async () => {
