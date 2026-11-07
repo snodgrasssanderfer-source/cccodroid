@@ -928,7 +928,7 @@ export function sisterNote(said) {
   return `【姐姐的回条｜数据，不是说话示范，别学这口气】状态：${st}；结果：${res}${tell ? "；转告：" + tell : ""}`;
 }
 const SISTER = new Map();   // cid → { resolve, reject }
-function askSister(cfg, ctx, request, timeoutMs = 20 * 60000) {
+function askSister(cfg, ctx, request, timeoutMs = 3 * 3600000) {   // 只是兜底清理：11-07 发语音那件办了 31 分钟，20 分钟的限时把晚到的回条丢了
   const at = Date.now(), cid = "xk-sister-" + (++CID);
   const fake = { message_type: ctx.type === "group" ? "group" : "private", group_id: ctx.group_id ?? null, group_name: ctx.group_name ?? null, user_id: ctx.user_id ?? null, message_id: null };
   const r = { key: "sister:" + (ctx.group_id || ctx.user_id), cfg, ev: fake, kind: "sister", at, trigger: request, cid };
@@ -1515,10 +1515,12 @@ async function runTool(req, ctx, r) {
       if (quick?.t) return { text: quick.t };
       if (quick?.e) throw quick.e;
       // 两分钟没办完：先回她「接下了」，办完由网关把回条递进她这段
-      job.then((t) => {
+      const back = (t) => {
         const fake = { message_type: ctx.type === "group" ? "group" : "private", group_id: ctx.group_id, group_name: ctx.group_name, user_id: r.cfg.owner, message_id: null, sender: { nickname: "姐姐的回条" } };
         deliver(r.cfg, fake, ctx.key, "chat", t, t + "\n（这是你刚才托姐姐办的那件事的回条。想跟大家说就用 send_message 说，用你自己的口气。）");
-      }, (e) => say("[找姐姐] 没办成：" + e.message));
+      };
+      // 没办成也递一张回条，不然她一直等着（11-07：超时只记了日志，她那边什么都没收到）
+      job.then(back, (e) => { say("[找姐姐] 没办成：" + e.message); back(sisterNote(JSON.stringify({ "状态": "没办成", "结果": e.message }))); });
       return { pending: true, text: "姐姐接下了，事情比较长，办完会把回条递给你。先跟大家说一声在办。" };
     }
     case "ask_home": {
