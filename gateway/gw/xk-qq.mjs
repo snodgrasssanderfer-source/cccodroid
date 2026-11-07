@@ -19,7 +19,7 @@ import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
-import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch } from "./xk-qq-mem.mjs";
+import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch } from "./xk-qq-mem.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
@@ -802,7 +802,10 @@ function memNoteFor(key, text) {
     if (s && s.sid === null && sid) s.sid = sid;
     const fresh = !s || s.sid !== sid;
     if (fresh) { s = { sid, ids: new Set() }; MEM_SEEN.set(key, s); }
-    return memInject(readJson(MEMORY_FILE, []) || [], text, s.ids, { fresh });
+    const ms = readJson(MEMORY_FILE, []) || [], before = new Set(s.ids);
+    const note = memInject(ms, text, s.ids, { fresh });
+    if (memTouch(ms, [...s.ids].filter((id) => !before.has(id)), "inj")) writeJson(MEMORY_FILE, ms);
+    return note;
   } catch (e) { say("附记忆出错：" + e.message); return ""; }
 }
 
@@ -1529,6 +1532,7 @@ async function runTool(req, ctx, r) {
       const ms = readJson(MEMORY_FILE, []) || [];
       const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
       const hits = memSearch(ms, q, { cat: a.cat || "", limit, past: a.past !== false });
+      if (q && memTouch(ms, hits.map((m) => m.id), "q")) writeJson(MEMORY_FILE, ms);   // 光翻最近几条不算用到
       return { text: hits.length ? hits.map((m) => memLine(m)).join("\n") : "没有相关的记忆；换个说法或换一类再试。" };
     }
     case "memory_remove": {

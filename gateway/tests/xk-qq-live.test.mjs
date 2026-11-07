@@ -214,6 +214,10 @@ test("她的记忆：新开一段先带主人的规矩，再按这句话挑；�
   const a = memInject(ms, "Ash 还玩火影手游吗", seen, { fresh: true, now: 3000 });
   assert.ok(a.includes("send_message") && a.includes("火影"), a);
   assert.equal(memInject(ms, "Ash 还玩火影手游吗", seen, { now: 3000 }), "", "带过的不带第二遍");
+  const { memTouch } = await import("../gw/xk-qq-mem.mjs");
+  assert.equal(memTouch(ms, seen, "inj", 3500), 2);
+  memTouch(ms, [ms[1].id], "q", 3600);
+  assert.deepEqual(ms[1].uses, { inj: 1, q: 1, last: 3600 }, "用到一次记一笔");
   assert.equal(memInject(ms, "今天天气", new Set(), { now: 3000 }), "", "不相关的不带");
   const r = memAdd(ms, { text: "Ash 爱玩火影手游，主玩水门", cat: "群友" }, 4000);
   assert.ok(r.near.some((m) => m.text === "Ash 爱玩火影手游"), "同类里相近的交回去让她合并");

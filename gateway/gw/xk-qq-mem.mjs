@@ -66,3 +66,17 @@ export function memInject(list, query, seen, { fresh = false, now = Date.now() }
   if (!pick.length) return "";
   return "[你记得的（网关按这句话自动挑的，不全；要细查用 memory_query）]\n" + pick.map((m) => "- " + memLine(m, MEM.clip)).join("\n") + "\n[/你记得的]\n";
 }
+
+/** 用到一次记一笔（自动附上算 inj，她查到算 q）。11-07 主人同意先只攒数据：以后定淡忘、常用加分的规则时拿来量，现在不影响排序 */
+export function memTouch(list, ids, how, now = Date.now()) {
+  const want = new Set([...ids].map(String));
+  let n = 0;
+  for (const m of list) {
+    if (!want.has(m.id)) continue;
+    m.uses = { inj: 0, q: 0, ...(m.uses || {}) };
+    m.uses[how] = (m.uses[how] || 0) + 1;
+    m.uses.last = now;
+    n++;
+  }
+  return n;
+}
