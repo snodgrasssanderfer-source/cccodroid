@@ -17,6 +17,7 @@ import { memoryMcpServer, roleById, roleDir, roleOfSession } from "./xk-roles.mj
 import { turns } from "./xk-transcript.mjs";
 import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
+import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -498,6 +499,12 @@ export async function handleEvent(cfg, ev) {
     if (/^(不用了|都不做|都不用)[。！!.]*$/.test(p.text.replace(/\s+/g, "")) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
     pending = pendingNote();
   }
+  // 直播（11-07）：主人在群里说「开播」「下播」；直播时群里的话都当观众建议摆给决策模型看一会儿
+  if (ev.message_type === "group") {
+    const lc = isOwner ? liveCmd(p.text) : null;
+    if (lc) return liveCommand(cfg, ev, key, lc);
+    if (LIVES.get(key)?.on && String(ev.user_id) !== String(cfg.bot)) LIVES.get(key).hear(nick, p.text);
+  }
   // 切模式的暗号不走「叫到她」那套判断：只认发送者是不是主人
   const cmd = isOwner && !!modeCmd(p.text);
   if (!cmd && !addressed(ev, cfg)) {
@@ -702,7 +709,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     sid = roleSid("xiaoke");
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
-  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject };
+  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, onEnd: opts.onEnd || null };
   if (kind === "self") {
     // 主人和群友的话混在一轮里：按最严的算，只要有一条不是主人发的就限权
     const evs = all?.length ? all : [ev];
@@ -769,6 +776,86 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
   }
 }
 let CID = 0;
+
+// ── 直播（主人 11-07 定：12 号卡在群里直播打小丑牌；Jev 出决定，她只管说）──
+// 本机配置 ~/.config/xiaoke/live.json：{ bridge, bridgeStart, jevUrl, model, keyFile }；不进仓库
+export const LIVE_FILE = path.join(CFG.home, ".config", "xiaoke", "live.json");
+export const LIVES = new Map();   // 会话 → 直播
+function liveConfig() {
+  const c = readJson(LIVE_FILE, null);
+  if (!c?.jevUrl) throw new Error("没配直播（~/.config/xiaoke/live.json 里要有 jevUrl）");
+  const key = c.key || (c.keyFile ? fs.readFileSync(c.keyFile.replace(/^~/, CFG.home), "utf8").trim() : "");
+  return { bridge: c.bridge || "http://127.0.0.1:12347", bridgeStart: c.bridgeStart || "", jevUrl: c.jevUrl, model: c.model || "jev-latest", key };
+}
+/** 走 IPv4 发 JSON（这台手机走 IPv6 连 Cloudflare 的域名会在握手时断） */
+function jsonReq(url, body, { method = body === undefined ? "GET" : "POST", headers = {}, timeoutMs = 20000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url), mod = u.protocol === "https:" ? https : http;
+    const req = mod.request(u, { method, family: 4, headers: { "content-type": "application/json", ...headers }, timeout: timeoutMs }, (res) => {
+      let d = ""; res.setEncoding("utf8"); res.on("data", (c) => (d += c));
+      res.on("end", () => {
+        let j = null; try { j = JSON.parse(d); } catch {}
+        if (res.statusCode >= 400) return reject(Object.assign(new Error(`HTTP ${res.statusCode} ${oneLine(d, 200)}`), { status: res.statusCode, body: j }));
+        resolve(j);
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("超时")));
+    req.on("error", reject);
+    req.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+}
+function liveDeps(cfg, ev, key, lc) {
+  const fake = { message_type: "group", group_id: ev.group_id, group_name: ev.group_name, user_id: cfg.bot, message_id: null, sender: { nickname: "直播画面" } };
+  return {
+    model: lc.model,
+    bridge: {
+      state: () => jsonReq(lc.bridge + "/state", undefined, { timeoutMs: 10000 }),
+      act: async (a) => {
+        try { return await jsonReq(lc.bridge + "/act", a, { timeoutMs: 60000 }); }
+        catch (e) { if (e.status === 400 && e.body) return e.body; throw e; }
+      },
+    },
+    decide: (body) => jsonReq(lc.jevUrl, body, { headers: { authorization: "Bearer " + lc.key }, timeoutMs: 15000 }),
+    busy: () => { const b = BUSY.get(key); return !!(b && RUNSQQ.get(b.cid)); },
+    speak: (line) => new Promise((resolve) => deliver(cfg, fake, key, "chat", line, line, null, "", { live: true, onEnd: resolve })),
+    remember: (text) => {
+      const ms = readJson(MEMORY_FILE, []) || [];
+      const d = new Date();
+      ms.push({ id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text: oneLine(`${d.getMonth() + 1}月${d.getDate()}日${text}`, 500), at: Date.now(), tag: "game" });
+      while (ms.length > 300) ms.shift();
+      writeJson(MEMORY_FILE, ms);
+    },
+    recent: () => (readJson(MEMORY_FILE, []) || []).filter((m) => m.tag === "game" || m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
+    log: (t) => say("[直播] " + t),
+  };
+}
+async function liveCommand(cfg, ev, key, cmd) {
+  const cur = LIVES.get(key);
+  if (cmd === "stop") {
+    if (cur?.stop("主人让下播")) say("[直播] 下播"); else reply(cfg, ev, "现在没在直播");
+    return;
+  }
+  if (cur?.on) return reply(cfg, ev, "已经在直播了");
+  if (modeOf(key, cfg) !== "chat") return reply(cfg, ev, "直播要在聊天模式下开：先说「聊天模式」");
+  let lc;
+  try { lc = liveConfig(); } catch (e) { return reply(cfg, ev, e.message); }
+  // 牌局桥没起来：照配置拉起来再等一会儿（游戏本身得主人打开放在前台）
+  const ping = () => jsonReq(lc.bridge + "/state", undefined, { timeoutMs: 8000 }).then(() => true, () => false);
+  if (!(await ping()) && lc.bridgeStart) {
+    try {
+      const { spawn } = await import("node:child_process");
+      const out = fs.openSync(path.join(path.dirname(lc.bridgeStart), "bridge.log"), "a");
+      spawn("sh", [lc.bridgeStart, "--host", "127.0.0.1"], { detached: true, stdio: ["ignore", out, out] }).unref();
+      say("[直播] 拉起牌局桥");
+    } catch (e) { say("[直播] 牌局桥拉不起来：" + e.message); }
+    for (let i = 0; i < 8 && !(await ping()); i++) await sleep(1500);
+  }
+  if (!(await ping())) return reply(cfg, ev, "游戏没开：把「小丑牌·小克实验版」打开放在前台，再说一次「开播」");
+  const live = createLive(liveDeps(cfg, ev, key, lc));
+  LIVES.set(key, live);
+  say("[直播] 开播");
+  live.start().catch((e) => say("[直播] 开播出错：" + e.message));
+}
 // 群里那段问屋里的小克（#134）：起一轮只读的、等她的答复再交回群里那一轮
 const ASKHOME = new Map();   // cid → { resolve, reject }
 async function askHome(cfg, ctx, question, timeoutMs = 120000) {
@@ -1483,6 +1570,7 @@ END_HOOKS.push((run, f = {}) => {
   const r = RUNSQQ.get(run.id) || (run.cid && RUNSQQ.get(run.cid));
   if (!r || r.done) return;
   r.done = true;
+  try { r.onEnd?.(); } catch {}
   RUNSQQ.delete(run.id); if (run.cid) RUNSQQ.delete(run.cid);
   if (BUSY.get(r.key)?.cid === r.cid) BUSY.delete(r.key);
   fs.rmSync(path.join(RUN_DIR, String(run.id) + ".json"), { force: true });
@@ -1520,6 +1608,8 @@ END_HOOKS.push((run, f = {}) => {
     }
   } else if (r.usedSend) {
     // 这一轮已经用 send_message / send_sticker 自己发过了：最后的文字不再另发
+  } else if (isSilent(said) && (r.live || said.trim() === "【不说】")) {
+    // 直播画面那一轮她说了「不说」：不往群里发
   } else if (said) {
     reply(r.cfg, r.ev, said, { split: true });
   } else if (f.isError || f.failed) {
