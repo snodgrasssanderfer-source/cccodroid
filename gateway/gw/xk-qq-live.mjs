@@ -53,7 +53,7 @@ export function createLive(deps, params = LIVE_PARAMS) {
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const S = {
     on: false, startedAt: 0, said: [], lastLine: -Infinity, lastDecisionLine: -Infinity, lastCombatLine: -Infinity,
-    topics: [], guidance: [], stuck: 0, runs: 0, best: 0, bestHand: "", lastAnte: 0, stopReason: "",
+    topics: [], guidance: [], stuck: 0, runs: 0, best: 0, bestHand: "", games: [], bosses: [], top: { score: 0, hand: "" }, lastAnte: 0, stopReason: "",
     actedSeq: null,   // 上一个动作是对着哪一帧（牌局桥的 seq）做的：同一帧不再问第二遍
     lastState: "",    // 上一帧在哪个界面（进商店那一下要报货架）
     intent: null,     // 12 号这一步的想法 { text, scope }：管到办成或局面过去（离店、这一手打完）
@@ -125,17 +125,19 @@ export function createLive(deps, params = LIVE_PARAMS) {
   function afterEvents(state, events = [], next = {}) {
     for (const e of events) {
       if (e.type === "hand_played" && e.score > S.best) { S.best = e.score; S.bestHand = HAND_CN[e.hand] || e.hand; }
+      if (e.type === "hand_played" && e.score > S.top.score) S.top = { score: e.score, hand: HAND_CN[e.hand] || e.hand };
       if (e.type === "blind_cleared") {
         const boss = !!state.blind?.boss;
         topic(`[画面] 过了${e.name || "盲注"}：${e.score}/${e.target}。`, !!boss);
-        if (boss) deps.remember?.(`直播打小丑牌，过了第 ${state.ante} 底注的 Boss「${state.blind?.name || e.name}」，当时小丑有：${(state.jokers || []).map((j) => j.name).join("、") || "没有"}`);
+        // 11-07：原来每过一个 Boss、每输一局都单记一条，一场下来十几条，把她的记忆塞满了。现在攒着，下播记一条总的
+        if (boss) S.bosses.push(`${state.ante}「${state.blind?.name || e.name}」`);
       }
       if (e.type === "won") topic("[画面] 赢了！这局通关了。", true);
     }
     if (next.state === "GAME_OVER" && state.state !== "GAME_OVER") {
       const won = !!next.won;
       const txt = `${won ? "通关" : "输了"}：停在第 ${next.ante ?? state.ante} 底注${state.blind?.name ? "的「" + state.blind.name + "」" : ""}，这局最大一手是${S.bestHand || "?"} ${S.best} 分，小丑：${(state.jokers || []).map((j) => j.name).join("、") || "没有"}`;
-      deps.remember?.("直播打小丑牌" + txt);
+      S.games.push(`${won ? "通关" : "输在第 " + (next.ante ?? state.ante) + " 底注" + (state.blind?.name ? "「" + state.blind.name + "」" : "")}（最大一手${S.bestHand || "?"} ${S.best}，小丑：${(state.jokers || []).map((j) => j.name).join("、") || "没有"}）`);
       topic(`[画面] 这局${txt}。`, true);
     }
   }
@@ -274,7 +276,12 @@ export function createLive(deps, params = LIVE_PARAMS) {
       S.on = false; S.stopReason = reason;
       Promise.resolve(deps.speak(`[画面] ${reason}，这场直播结束了，开了 ${S.runs} 局。跟大家道个别。\n` + TAIL)).catch(() => {});
       const min = Math.round((now() - S.startedAt) / 60000);
-      deps.remember?.(`在群里直播打了 ${min} 分钟小丑牌，开了 ${S.runs} 局，最大一手 ${S.best} 分（${reason}）`);
+      // 一场一条；一局都没打完就不记（11-07 记过一条「打了 0 分钟、0 局」）。最大一手按整场算，不是最后那局（原来那局刚开就是 0 分）
+      if (S.games.length) {
+        const wins = S.games.filter((g) => g.startsWith("通关")).length;
+        deps.remember?.(`直播打小丑牌 ${min} 分钟，打完 ${S.games.length} 局${wins ? `、通关 ${wins} 局` : "、一局没赢"}；整场最大一手${S.top.hand || "?"} ${S.top.score} 分` +
+          (S.bosses.length ? `；过的 Boss：第${S.bosses.join("、第")}底注` : "") + `；各局：${S.games.join("；")}（${reason}）`);
+      }
       return true;
     },
     // 测试用

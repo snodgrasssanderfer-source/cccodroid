@@ -574,17 +574,39 @@ test("她自己的轻量记忆：记、查、删，文件在 qq-clean 里，和�
   try {
     handleMessage(cfg, priv(STRANGER, "你好呀"), "你好呀");
     const q = queued[0];
-    rpcReq("m1", q, "memory_append", { text: "阿三喜欢猫" });
+    rpcReq("m0", q, "memory_append", { text: "阿三喜欢猫" });
+    await drainQQRpc();
+    assert.ok(!rpcRes("m0").ok, "不给分类不收");
+    rpcReq("m1", q, "memory_append", { text: "阿三喜欢猫", cat: "群友" });
     await drainQQRpc();
     assert.ok(rpcRes("m1").ok);
     assert.ok(MEMORY_FILE.startsWith(path.join(CFG.workspace, "qq-clean")));
     assert.ok(!MEMORY_FILE.startsWith(path.join(CFG.workspace, "roles")), "不在 roles 下面");
     const ms = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8"));
     assert.equal(ms.at(-1).text, "阿三喜欢猫");
-    rpcReq("m2", q, "memory_query", { query: "猫" });
+    rpcReq("m2", q, "memory_query", { query: "阿三养的什么" });
     await drainQQRpc();
-    assert.match(rpcRes("m2").result.text, /阿三喜欢猫/);
-    rpcReq("m3", q, "memory_remove", { id: ms.at(-1).id });
+    assert.match(rpcRes("m2").result.text, /阿三喜欢猫/, "拆开来匹配，不用一字不差");
+    rpcReq("m2b", q, "memory_query", { query: "阿三", cat: "游戏" });
+    await drainQQRpc();
+    assert.doesNotMatch(rpcRes("m2b").result.text, /阿三喜欢猫/, "只翻那一类");
+    // 事情变了：记新的，旧的放进 ends，标已过去，还查得到
+    rpcReq("m4", q, "memory_append", { text: "阿三现在更喜欢狗了", cat: "群友", ends: [ms.at(-1).id] });
+    await drainQQRpc();
+    assert.match(rpcRes("m4").result.text, /标成已过去/);
+    const ms2 = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8"));
+    assert.equal(ms2.find((m) => m.text === "阿三喜欢猫").past, true);
+    rpcReq("m5", q, "memory_query", { query: "阿三喜欢" });
+    await drainQQRpc();
+    assert.match(rpcRes("m5").result.text, /阿三喜欢猫（[^）]*已过去）/, "已过去的还查得到，标着");
+    assert.match(rpcRes("m5").result.text, /阿三现在更喜欢狗了（/);
+    // 聊天时按这句话自动附上相关的；同一段会话不附第二遍
+    finish(q);
+    const n0 = queued.length;
+    handleMessage(cfg, priv(STRANGER, "阿三最近喜欢什么"), "阿三最近喜欢什么");
+    const msg = queued.at(-1).message;
+    assert.ok(queued.length > n0 && /\[你记得的/.test(msg) && msg.includes("阿三现在更喜欢狗了") && !msg.includes("阿三喜欢猫"), msg);
+    for (const m of ms2) { rpcReq("r" + m.id, queued.at(-1), "memory_remove", { id: m.id }); }
     await drainQQRpc();
     assert.deepEqual(JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8")), []);
   } finally { stopQQ(); bot.close(); }

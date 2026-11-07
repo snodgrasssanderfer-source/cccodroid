@@ -101,13 +101,18 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {
       messageId: { type: ["integer", "string"], ...midParam },
       note: { type: "string", description: "一句简短备注（帮未来的你识别）" } } } },
-  { name: "memory_append", description: "记一条你自己的轻量记忆（下次运行会自动看到）：进行中的话题、想说还没说的话、对某位群友的印象。只记以后真可能用得上的，别每条都记。",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "一句话记清楚" } } } },
-  { name: "memory_query", description: "查你自己的轻量记忆。不传关键词就看最近几条。",
+  { name: "memory_append", description: "记一条你自己的记忆：进行中的话题、想说还没说的话、对某位群友的印象、主人定的规矩、踩过的坑。只记以后真可能用得上的，别每条都记。平时聊天时网关会按对方的话自动附几条相关的，新开一段时先附「主人的规矩」。事情变了或要合并：写一条新的，把旧的记忆号放进 ends，旧的标成已过去（还查得到）。记完会列出同类里相近的几条，看看有没有重复、打架的，有就合并。",
+    inputSchema: { type: "object", required: ["text", "cat"], properties: {
+      text: { type: "string", description: "一句话记清楚；日期写具体的（11月7日），别写昨天、今天" },
+      cat: { type: "string", enum: ["主人的规矩", "群友", "游戏", "工具和坑", "杂事"], description: "分类" },
+      ends: { type: "array", items: { type: "string" }, description: "可选：因为这条而不再作数、或被合并进来的旧记忆号" } } } },
+  { name: "memory_query", description: "查你自己的记忆。关键词会拆开来匹配，不用一字不差；可以只翻某一类。不传关键词就看这一类（或全部）最近几条。",
     inputSchema: { type: "object", properties: {
-      query: { type: "string", description: "可选：按关键词/短句找记忆" },
+      query: { type: "string", description: "可选：关键词或短句" },
+      cat: { type: "string", enum: ["主人的规矩", "群友", "游戏", "工具和坑", "杂事"], description: "可选：只查这一类" },
+      past: { type: "boolean", description: "可选：连已过去的也查，默认是" },
       limit: { type: "integer", minimum: 1, maximum: 20, description: "返回条数，默认 8" } } } },
-  { name: "memory_remove", description: "删掉一条过时/不再准确的轻量记忆。",
+  { name: "memory_remove", description: "彻底删掉一条记错了的记忆。只是过时了用 memory_append 的 ends，别删。",
     inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string", description: "记忆号，memory_query 里那个" } } } },
   // 群友叫起来的那一轮才会有这个工具（网关用 CCAPP_QQ_TOOLS 只给那一轮开）
   { name: "owner_away", description: "只有主人那一轮能用：主人说「我有事不在群」这类话时调一下（away 默认 true），网关会把群友要动真家伙的事攒成清单、私聊发给主人；主人一开口网关会自动记回「在」，不用再调 false。",
@@ -200,11 +205,11 @@ async function call(name, a = {}) {
     return textOf(r, "收好了。");
   }
   if (name === "memory_append") {
-    const r = await rpc("memory_append", { text: a.text }, 20000);
+    const r = await rpc("memory_append", { text: a.text, cat: a.cat, ends: a.ends }, 20000);
     return textOf(r, "记下了。");
   }
   if (name === "memory_query") {
-    const r = await rpc("memory_query", { query: a.query, limit: a.limit }, 20000);
+    const r = await rpc("memory_query", { query: a.query, cat: a.cat, past: a.past, limit: a.limit }, 20000);
     return textOf(r, "没有相关的记忆。");
   }
   if (name === "memory_remove") {

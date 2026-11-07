@@ -108,7 +108,7 @@ test("直播：盲注第一手先说再打；过关攒成话题；节奏有上�
   assert.equal(f.said.length, before);
 });
 
-test("直播：输了、下播都记进她的记忆", async () => {
+test("直播：一场只记一条，下播时写：各局怎么输的、整场最大一手", async () => {
   const f = fakeDeps();
   const st = handState([c("HJ"), c("DJ")], { hands_left: 1, ante: 3, blind: { name: "The Wall", boss: true }, jokers: [{ name: "小丑" }] });
   f.deps.bridge.state = async () => st;
@@ -117,9 +117,13 @@ test("直播：输了、下播都记进她的记忆", async () => {
   live._S.on = true;
   await live._step();
   assert.ok(f.said[0].includes("最后一手"), "最后一手先说");
-  assert.ok(f.mem.some((m) => m.includes("输了") && m.includes("The Wall") && m.includes("小丑")));
+  assert.equal(f.mem.length, 0, "打的时候不记");
   live.stop("测试");
-  assert.ok(f.mem.some((m) => m.includes("直播打了")));
+  assert.equal(f.mem.length, 1);
+  assert.ok(f.mem[0].includes("The Wall") && f.mem[0].includes("小丑") && f.mem[0].includes("对子 40") && f.mem[0].includes("一局没赢"), f.mem[0]);
+  const g = fakeDeps(), l2 = createLive(g.deps);
+  l2._S.on = true; l2.stop("测试");
+  assert.equal(g.mem.length, 0, "一局没打完不记");
 });
 
 test("直播：动作超时不拿同一帧重问，等画面换了再走；被拒的可以重来", async () => {
@@ -198,4 +202,22 @@ test("直播：进商店先报货架、等群友点单再动；点的单进决�
   assert.match(start.seed, /^[1-9A-Z]{8}$/);
   assert.ok(recs.some((r) => r.ev === "decide" && r.choice && r.options.length));
   assert.ok(recs.some((r) => r.ev === "start" && r.seed === start.seed));
+});
+
+test("她的记忆：新开一段先带主人的规矩，再按这句话挑；带过的不再带；满了不悄悄删", async () => {
+  const { memAdd, memInject, catOf, MEM } = await import("../gw/xk-qq-mem.mjs");
+  let ms = [];
+  ms = memAdd(ms, { text: "回群里只用 send_message", cat: "主人的规矩" }, 1000).list;
+  ms = memAdd(ms, { text: "Ash 爱玩火影手游", cat: "群友" }, 2000).list;
+  assert.equal(catOf({ text: "11月7日直播打小丑牌输了", tag: "game" }), "游戏", "老的牌局记录归到游戏");
+  const seen = new Set();
+  const a = memInject(ms, "Ash 还玩火影手游吗", seen, { fresh: true, now: 3000 });
+  assert.ok(a.includes("send_message") && a.includes("火影"), a);
+  assert.equal(memInject(ms, "Ash 还玩火影手游吗", seen, { now: 3000 }), "", "带过的不带第二遍");
+  assert.equal(memInject(ms, "今天天气", new Set(), { now: 3000 }), "", "不相关的不带");
+  const r = memAdd(ms, { text: "Ash 爱玩火影手游，主玩水门", cat: "群友" }, 4000);
+  assert.ok(r.near.some((m) => m.text === "Ash 爱玩火影手游"), "同类里相近的交回去让她合并");
+  let big = [];
+  for (let i = 0; i < MEM.warnAt + 5; i++) big = memAdd(big, { text: "第" + i + "条", cat: "杂事" }, 5000 + i).list;
+  assert.equal(big.length, MEM.warnAt + 5, "过了 300 条也不删");
 });

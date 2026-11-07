@@ -19,6 +19,7 @@ import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
+import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch } from "./xk-qq-mem.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
@@ -762,8 +763,10 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     } else {
       const scope = ev.message_type === "group" ? "g" : "p";
       const card = ensureClean(scope);
+      // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
+      const memNote = opts.live ? "" : memNoteFor(key, text);
       item = enqueue({
-        message: line || incomingLine(ev, text, null, cfg.owner), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
+        message: memNote + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
@@ -788,6 +791,20 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
   }
 }
 let CID = 0;
+
+// 每段会话带过哪些记忆：同一段不带第二遍；会话换了（新开、卡换了作废）就重来
+const MEM_SEEN = new Map();   // 会话 key → { sid, ids }
+function memNoteFor(key, text) {
+  try {
+    const sid = STATE.qq.sessions[key] || null;
+    let s = MEM_SEEN.get(key);
+    // 上一轮是新开的（sid 还是空），跑完才有号：认下来，不算换了一段
+    if (s && s.sid === null && sid) s.sid = sid;
+    const fresh = !s || s.sid !== sid;
+    if (fresh) { s = { sid, ids: new Set() }; MEM_SEEN.set(key, s); }
+    return memInject(readJson(MEMORY_FILE, []) || [], text, s.ids, { fresh });
+  } catch (e) { say("附记忆出错：" + e.message); return ""; }
+}
 
 // ── 直播（主人 11-07 定：12 号卡在群里直播打小丑牌；Jev 出决定，她只管说）──
 // 本机配置 ~/.config/xiaoke/live.json：{ bridge, bridgeStart, jevUrl, model, keyFile }；不进仓库
@@ -857,11 +874,9 @@ function liveDeps(cfg, ev, key, lc) {
     remember: (text) => {
       const ms = readJson(MEMORY_FILE, []) || [];
       const d = new Date();
-      ms.push({ id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text: oneLine(`${d.getMonth() + 1}月${d.getDate()}日${text}`, 500), at: Date.now(), tag: "game" });
-      while (ms.length > 300) ms.shift();
-      writeJson(MEMORY_FILE, ms);
+      writeJson(MEMORY_FILE, memAdd(ms, { text: oneLine(`${d.getMonth() + 1}月${d.getDate()}日${text}`, 500), cat: "游戏" }).list);
     },
-    recent: () => (readJson(MEMORY_FILE, []) || []).filter((m) => m.tag === "game" || m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
+    recent: () => (readJson(MEMORY_FILE, []) || []).filter((m) => !m.past && catOf(m) === "游戏" && m.text.includes("小丑牌")).slice(-3).map((m) => m.text),
     log: (t) => say("[直播] " + t),
     record: (o) => { fs.mkdirSync(LIVE_LOG_DIR, { recursive: true, mode: 0o700 }); fs.appendFileSync(logFile, JSON.stringify(o) + "\n", { mode: 0o600 }); },
     // live.json 的 seed：钉死种子复现用；不填就每局随机
@@ -1498,19 +1513,23 @@ async function runTool(req, ctx, r) {
     }
     case "memory_append": {
       const text = oneLine(a.text, 500);
-      if (!text) throw new Error("text 不能为空");
       const ms = readJson(MEMORY_FILE, []) || [];
-      const m = { id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), text, at: Date.now() };
-      ms.push(m); while (ms.length > 300) ms.shift();
-      writeJson(MEMORY_FILE, ms);
-      return { saved: true, id: m.id, text: "记下了（" + m.id + "）：" + text };
+      const r = memAdd(ms, { text, cat: a.cat, ends: a.ends });
+      if (r.dup) return { saved: false, id: r.item.id, text: "已经记过一样的了：" + memLine(r.item) };
+      writeJson(MEMORY_FILE, r.list);
+      const n = r.list.filter((m) => !m.past).length;
+      return { saved: true, id: r.item.id, text: "记下了：" + memLine(r.item) +
+        (a.ends?.length ? `\n标成已过去的：${[].concat(a.ends).join("、")}` : "") +
+        (r.near.length ? "\n同类里相近的（有重复、打架的就合并：写一条新的，旧的放进 ends）：\n" + r.near.map((m) => memLine(m)).join("\n") : "") +
+        (n > MEM.warnAt ? `\n作数的记忆已经 ${n} 条了，挑同一类的合并一下。` : "") };
     }
     case "memory_query": {
-      const q = oneLine(a.query, 100);
+      const q = oneLine(a.query || "", 100);
+      if (a.cat && !CATS.includes(a.cat)) throw new Error("cat 要从这几类里选：" + CATS.join("、"));
       const ms = readJson(MEMORY_FILE, []) || [];
       const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
-      const hits = (q ? ms.filter((m) => m.text.includes(q)) : ms).slice(-limit);
-      return { text: hits.length ? hits.map((m) => `[${m.id}] ${m.text}`).join("\n") : "没有相关的记忆；可以换一个更具体的关键词再试。" };
+      const hits = memSearch(ms, q, { cat: a.cat || "", limit, past: a.past !== false });
+      return { text: hits.length ? hits.map((m) => memLine(m)).join("\n") : "没有相关的记忆；换个说法或换一类再试。" };
     }
     case "memory_remove": {
       const ms = readJson(MEMORY_FILE, []) || [];
