@@ -12,7 +12,7 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  APPROVALS_FILE, CARD_FILE, TOOLS_NOTE_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
+  APPROVALS_FILE, CARD_FILE, TOOLS_NOTE_FILE, MEM_NUDGE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   drainQQSay, ensureClean, handleEvent, pokeLine, cardText, expandB23, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply, sisterNote, diaryTick, DIARY_DIR } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -993,21 +993,25 @@ test("群里那轮没调 send_message：最后那段短话切成几个气泡", (
 });
 
 test("主人私聊那段多一套 Claude Code 的家什，先告诉她自己是 Claude；群里和别人照旧", () => {
-  STATE.qq.sessions["p:" + OWNER] = "old-sid"; delete STATE.qq.ownerTools;
+  ensureClean("p");   // 卡的 hash 先认下（不然头一轮会当成换了卡、把旧段放掉）
+  STATE.qq.sessions["p:" + OWNER] = "old-sid";
   handleMessage(cfg, priv(OWNER, "帮我看看下载目录"), "帮我看看下载目录");
   const q = queued.at(-1);
   for (const t of ["Bash", "Read", "Edit", "Write"]) { assert.ok(q.clean.tools.includes(t), "有 " + t); assert.ok(q.allowedTools.includes(t)); assert.ok(!q.disallowedTools.includes(t)); }
   assert.ok(q.disallowedTools.includes("Agent"), "不开子代理（那会带上编程助手的整套提示）");
   assert.match(q.clean.systemPrompt, /你是 Claude[\s\S]*那是工具的口气，不是你的/);
-  assert.equal(q.sessionId, null, "头一回带家什：从新的一段开始");
+  assert.equal(q.sessionId, "old-sid", "带上家什不重开：旧段照续");
+  assert.match(q.message, /^\[你设定后面那几节更新了[\s\S]*手边的工具[\s\S]*\[\/更新\]/, "续旧段时系统提示换不进去：改在消息前面附上");
   finish(q, "看好了");
   handleMessage(cfg, priv(OWNER, "再看看"), "再看看");
   assert.ok(queued.at(-1).sessionId, "之后照常续着");
+  assert.ok(!queued.at(-1).message.includes("[/更新]"), "一段里只附一次");
   finish(queued.at(-1), "好");
   fs.writeFileSync(TOOLS_NOTE_FILE, "主人改过的那段\n");
   handleMessage(cfg, priv(OWNER, "改好了"), "改好了");
   assert.match(queued.at(-1).clean.systemPrompt, /主人改过的那段/);
-  assert.equal(queued.at(-1).sessionId, null, "那段话改了：从新的一段开始");
+  assert.ok(queued.at(-1).sessionId, "那段话改了也不重开");
+  assert.match(queued.at(-1).message, /主人改过的那段[\s\S]*\[\/更新\]/, "改过的那版附在这句前面");
   finish(queued.at(-1), "好");
   fs.rmSync(TOOLS_NOTE_FILE);
   handleMessage(cfg, priv(STRANGER, "帮我跑个命令"), "帮我跑个命令");
@@ -1246,4 +1250,39 @@ test("日记：零点叫她写前一天的，最后的正文原样存、原样�
   diaryTick(c, new Date(2026, 10, 9, 0, 0));
   finish(queued.at(-1), "");
   assert.deepEqual(diaryTick(c, new Date(2026, 10, 9, 0, 1)), ["owner"]);
+});
+
+test("聊天记录本：她发的、对方说的都记下，只能翻当前这个聊天；新开一段接上尾巴；聊久了没记东西提一句", async () => {
+  const bot = await connectedBot();
+  try {
+  let k = 0;
+  const rpcCall = async (q, tool, args) => { const id = "cl" + (++k); rpcReq(id, q, tool, args); await drainQQRpc(); const r = rpcRes(id); assert.ok(r.ok, r.error); return r.result; };
+  handleMessage(cfg, priv(OWNER, "我们去看了摩天轮"), "我们去看了摩天轮");
+  const q = queued.at(-1);
+  await rpcCall(q, "send_message", { messages: ["记得 最后那一圈"] });
+  finish(q, "嗯");
+  handleMessage(cfg, priv(STRANGER, "我是路人"), "我是路人");
+  const q2 = queued.at(-1);
+  const other = await rpcCall(q2, "chat_history", { query: "摩天轮" });
+  assert.match(other.text, /没翻到|还没有记录/, "别人那个聊天翻不到主人私聊");
+  finish(q2, "嗯");
+  handleMessage(cfg, priv(OWNER, "你还记得吗"), "你还记得吗");
+  const q3 = queued.at(-1);
+  const mine = await rpcCall(q3, "chat_history", { query: "摩天轮" });
+  assert.match(mine.text, /主人：我们去看了摩天轮[\s\S]*你：记得 最后那一圈/);
+  finish(q3, "嗯");
+  // 段落没了（比如卡换了）：新的一段开头带上一段最后几句
+  delete STATE.qq.sessions["p:" + OWNER];
+  handleMessage(cfg, priv(OWNER, "接着说"), "接着说");
+  assert.match(queued.at(-1).message, /\[刚才的聊天[\s\S]*摩天轮[\s\S]*\[\/刚才的聊天\]/);
+  finish(queued.at(-1), "嗯");
+  // 一直不记：到第 MEM_NUDGE 句提一句
+  let hit = null;
+  for (let i = 0; i < MEM_NUDGE && !hit; i++) {
+    handleMessage(cfg, priv(STRANGER, "闲聊" + i), "闲聊" + i);
+    if (/没记东西/.test(queued.at(-1).message)) hit = i;
+    finish(queued.at(-1), "嗯");
+  }
+  assert.ok(hit != null, "聊久了提醒记一笔");
+  } finally { stopQQ(); bot.close(); }
 });

@@ -20,6 +20,7 @@ import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
 import { GROWTH_RULES, applySelf, readSelf, selfSection } from "./xk-growth-core.mjs";
+import { logAdd, logBackfill, logSearch, logTail } from "./xk-qq-log.mjs";
 import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch, memVisible, sideOf } from "./xk-qq-mem.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
@@ -57,13 +58,15 @@ export const OWNER_TOOLS_NOTE = "\n\n## 手边的家什（只在和主人私聊�
 // 人设卡：主人改好的琉璃川椿卡放这里。不能叫 CLAUDE.md（那会被当成项目说明，叠在 Claude Code 默认的编程助手提示下面）；
 // 它整个当系统提示（--system-prompt），Claude Code 默认那套一个字都不带
 export const CARD_FILE = path.join(CLEAN_DIR, "card.md");
+// 她的聊天记录本：每个聊天一本，翻旧话用（chat_history）；新开一段时也从这里接上一段的尾巴
+export const LOG_DIR = path.join(CLEAN_DIR, "chatlog");
 // 群里干活的那段（「回来」「换成工作模式」）：模型本色，不带人设卡、不读世界书（主人 11-06 定）。
 // 所以不放 roles/ 下面（那里有 agent 设置和两份 CLAUDE.md）；记忆照旧记在 roles/xiaoke/qq-memory（按 run 号认）
 export const SELF_DIR = path.join(CFG.workspace, "qq-self");
 // 聊天模式只挂这一个 MCP：QQ 发消息、拍一拍、看图、表情库、她自己的轻量记忆（#134 第二步，主人说的卡上那套）
 export const QQ_MCP = path.join(HERE, "xk-qq-mcp.mjs");
 export const QQ_MCP_NAME = "qq";
-export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "live_style", "live_intent", "memory_append", "memory_query", "memory_remove", "ask_sister"];
+export const QQ_TOOLS = ["send_message", "send_poke", "get_message_images", "list_stickers", "get_sticker_image", "send_sticker", "sticker_note", "collect_sticker", "send_file", "send_voice", "live_style", "live_intent", "memory_append", "memory_query", "memory_remove", "chat_history", "ask_sister"];
 /** MCP 服务的配置（JSON 串）：只这一个服务。路径是本机的，不外传 */
 export const qqMcpConfig = () => JSON.stringify({ mcpServers: { [QQ_MCP_NAME]: { type: "stdio", command: process.execPath, args: [QQ_MCP] } } });
 /** 只开指定的几个 QQ 工具（MCP 服务按这一轮的 env 过滤 tools/list）；withBili：聊天模式再挂只读的 B站 */
@@ -175,7 +178,8 @@ export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；�
 /** 测试用：把模块里的会话状态清干净 */
 export function resetQQ() {
   STATE.qq = { modes: {}, sessions: {}, interject: {}, lastMine: {} };
-  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); REPLIES.length = 0;
+  BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); MEM_GAP.clear(); REPLIES.length = 0;
+  fs.rmSync(LOG_DIR, { recursive: true, force: true });
   FACES_AT = 0; FACES_JOB = null;
   REPLAY.clear(); LAST_SWEEP = 0;
 }
@@ -786,14 +790,29 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const homeTools = ownerP && !opts.mouth && !opts.growth;
       const card = ensureClean(scope, ownerP, homeTools);
       // 头一回带家什：主人私聊那段从新的一段开始，让那段话从第一轮起就在（旧段落是没有它的卡开的）。记忆不受影响
-      // 主人改了那段话也一样从新的一段开始
-      const nh = homeTools ? crypto.createHash("sha256").update(toolsNote()).digest("hex").slice(0, 16) : "";
-      if (homeTools && STATE.qq.ownerTools !== nh) { STATE.qq.ownerTools = nh; delete STATE.qq.sessions[key]; saveState(); }
+      // 卡后面那几节（「我是谁」、和主人之间、手边的工具）改了不重开：续旧段时系统提示还是第一轮那版（11-08 实测），
+      // 所以变了就在这句前面附上新版，一段里只附一次。只有卡本身换了才重开（见 ensureClean）
+      const talk = !opts.mouth && !opts.growth && !opts.live && !opts.diary;
+      const sid0 = STATE.qq.sessions[key] || null;
+      let upd = "", tail = "";
+      if (!opts.mouth && !opts.growth) {
+        const ex = cleanExtras(ownerP, homeTools).trim(), eh = crypto.createHash("sha256").update(ex).digest("hex").slice(0, 16);
+        STATE.qq.promptSeen ||= {};
+        if (sid0 && ex && STATE.qq.promptSeen[key] !== eh) upd = "[你设定后面那几节更新了（你写的「我是谁」、手边的工具这些），以下面这版为准]\n" + ex + "\n[/更新]\n";
+        if (STATE.qq.promptSeen[key] !== eh) { STATE.qq.promptSeen[key] = eh; saveState(); }
+      }
+      // 新开了一段：把上一段最后几句接上，她一开口还接得上刚才的话头
+      if (!sid0 && talk) tail = logTail(LOG_DIR, key);
+      // 攒着的群消息那一块拆开一句一句记，框框那两行不记
+      if (talk) for (const l of String(line || incomingLine(ev, text, null, cfg.owner)).split("\n")) if (l.trim() && !/^\[\/?最近群里的消息\]$/.test(l.trim())) logAdd(LOG_DIR, key, "in", l);
+      // 聊了好一阵没记东西：提一句（主人 11-08 嫌她记得太少）
+      let nudge = "";
+      if (talk) { const n = (MEM_GAP.get(key) || 0) + 1; if (n >= MEM_NUDGE) { MEM_GAP.set(key, 0); nudge = `[这一阵聊了 ${n} 句你都没记东西；有值得记住的就用 memory_append 记一笔，没有就算了]\n`; } else MEM_GAP.set(key, n); }
       // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
       const memNote = opts.live || opts.diary || opts.growth ? "" : memNoteFor(key, text);
       const note = opts.mouth || opts.diary || opts.growth ? "" : brainNote(key);
       item = enqueue({
-        message: memNote + note + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
+        message: upd + tail + memNote + note + nudge + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: homeTools ? ["Task", "Agent", "Skill"] : CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
@@ -850,7 +869,9 @@ function brainNote(key) {
   return "[直播中：念画面的是另一边的你，这一轮只管回群里的话。群友点单用 live_intent，改打法用 live_style]\n" +
     (said.length ? "[你刚才在直播里说的]\n" + said.join("\n") + "\n[/你刚才在直播里说的]\n" : "");
 }
-const MOUTH_TURNS = new Map();   // 嘴那段跑了几轮：太长了换一段新的，免得越说越慢
+const MOUTH_TURNS = new Map();
+const MEM_GAP = new Map();   // 每个聊天：上回记东西以后又聊了几句
+export const MEM_NUDGE = 12;   // 嘴那段跑了几轮：太长了换一段新的，免得越说越慢
 
 // 每段会话带过哪些记忆：同一段不带第二遍；会话换了（新开、卡换了作废）就重来
 const MEM_SEEN = new Map();   // 会话 key → { sid, ids }
@@ -1391,7 +1412,7 @@ async function runTool(req, ctx, r) {
         if (target.note) notes.push(target.note);
         try {
           const id = await sendOne(ctx, { text: m.text, ...target });
-          if (id != null) { n++; ids.push(id); }
+          if (id != null) { n++; ids.push(id); if (ctx.kind === "chat") logAdd(LOG_DIR, ctx.key, "me", m.text); }
           // 直播时回群友的话也念（整条一起到，平板那边照句号切）
           const lv = LIVES.get(ctx.key);
           if (id != null && lv?.on && !r?.speech?.spoke) voiceOut(lv.voiceRole, m.text);   // 画面那轮她照老习惯用了 send_message：没念过正文就念这条
@@ -1537,6 +1558,7 @@ async function runTool(req, ctx, r) {
       const messageId = await sendSegs(ctx, segsOf(ctx, a, [{ type: "image", data: { file: "base64://" + buf.toString("base64") } }]), 30000);
       const used = markStickerUsed(loadStickers(), it.id, "");
       writeJson(STICKER_FILE, used.entries);
+      if (ctx.kind === "chat") logAdd(LOG_DIR, ctx.key, "me", "[表情] " + oneLine(it.desc || it.id, 60));
       return { sent: true, messageId, id: it.id, text: "表情已发送。" };
     }
     case "sticker_note": {
@@ -1591,6 +1613,7 @@ async function runTool(req, ctx, r) {
       const r = memAdd(ms, { text, cat: a.cat, ends: a.ends, src: sideOf(ctx.key) });
       if (r.dup) return { saved: false, id: r.item.id, text: "已经记过一样的了：" + memLine(r.item) };
       writeJson(MEMORY_FILE, r.list);
+      MEM_GAP.set(ctx.key, 0);
       const n = r.list.filter((m) => !m.past).length;
       return { saved: true, id: r.item.id, text: "记下了：" + memLine(r.item) +
         (a.ends?.length ? `\n标成已过去的：${[].concat(a.ends).join("、")}` : "") +
@@ -1605,6 +1628,10 @@ async function runTool(req, ctx, r) {
       const hits = memSearch(memVisible(ms, sideOf(ctx.key)), q, { cat: a.cat || "", limit, past: a.past !== false });
       if (q && memTouch(ms, hits.map((m) => m.id), "q")) writeJson(MEMORY_FILE, ms);   // 光翻最近几条不算用到
       return { text: hits.length ? hits.map((m) => memLine(m)).join("\n") : "没有相关的记忆；换个说法或换一类再试。" };
+    }
+    case "chat_history": {
+      if (a.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(a.date))) throw new Error("date 写成 YYYY-MM-DD");
+      return { text: logSearch(LOG_DIR, ctx.key, { query: oneLine(a.query || "", 100), date: a.date ? String(a.date) : "", limit: a.limit }) };
     }
     case "memory_remove": {
       const ms = readJson(MEMORY_FILE, []) || [];
@@ -1851,8 +1878,12 @@ export function ensureClean(scope = "p", withBond = false, withTools = false) {
     for (const k of Object.keys(STATE.qq.sessions)) if (k.startsWith(scope + ":") && !k.includes("#")) delete STATE.qq.sessions[k];
     saveState();
   }
-  // 后面接她自己写的「我是谁」（11-08 主人定）。不算进卡的 hash：她每晚改一点，不用为这个把会话都放掉，下一轮起就带新的
-  return stripFrontmatter(raw) + selfSection(readSelf(CLEAN_DIR), "上面的设定", withBond ? readSelf(CLEAN_DIR, "bond") : "") + (withTools ? "\n\n" + toolsNote() + "\n" : "");
+  // 后面接她自己写的「我是谁」（11-08 主人定）。不算进卡的 hash：她每晚改一点，不用为这个把会话都放掉；续着的旧段由 deliver 在消息前附新版
+  return stripFrontmatter(raw) + cleanExtras(withBond, withTools);
+}
+/** 卡后面接的那几节：她自己写的「我是谁」、和主人之间（只主人私聊）、手边的工具（只主人私聊、有工具那段） */
+export function cleanExtras(withBond = false, withTools = false) {
+  return selfSection(readSelf(CLEAN_DIR), "上面的设定", withBond ? readSelf(CLEAN_DIR, "bond") : "") + (withTools ? "\n\n" + toolsNote() + "\n" : "");
 }
 // 那段话放成文件，主人可以自己用大白话改（11-08）；没有就写一份默认的
 export const TOOLS_NOTE_FILE = path.join(CLEAN_DIR, "tools-note.md");
@@ -2099,6 +2130,15 @@ export function startQQ(cfg = loadConfig()) {
   connect(cfg);
   return { status };
 }
+export function backfillOwnerLog(owner, projects = path.join(CFG.home, ".claude", "projects")) {
+  let dirs = [];
+  try { dirs = fs.readdirSync(projects).filter((d) => d.endsWith("-workspace-qq-clean")); } catch { return 0; }
+  const files = dirs.flatMap((d) => { try { return fs.readdirSync(path.join(projects, d)).filter((f) => f.endsWith(".jsonl")).map((f) => path.join(projects, d, f)); } catch { return []; } });
+  const n = logBackfill(LOG_DIR, "p:" + owner, files, OWNER_TAG);
+  if (n) say(`主人私聊的旧话补进记录本了：${n} 句`);
+  return n;
+}
+
 if (LIVE) {
   // 没 qq.json 就什么都不做；主人在手机里写好文件以后，最多一分钟就开始接
   const tick = () => {
@@ -2106,6 +2146,8 @@ if (LIVE) {
   };
   setTimeout(tick, 5000).unref();
   setInterval(tick, 60000).unref();
+  // 记录本是 11-08 才有的：主人私聊以前的话从旧会话记录里补一遍（已经有了就不补）
+  setTimeout(() => { try { const cfg = loadConfig(); if (cfg?.owner) backfillOwnerLog(cfg.owner); } catch (e) { say("补聊天记录出错：" + e.message); } }, 8000).unref();
   setInterval(() => { try { const cfg = loadConfig(); if (cfg && STARTED) diaryTick(cfg); } catch (e) { say("[日记] " + e.message); } }, 60000).unref();
   // 聊天工具来的请求：两百毫秒看一次，有就做；起手先清一遍没人取的旧文件
   try { sweepRpc(); } catch {}
