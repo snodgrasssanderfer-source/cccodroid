@@ -42,7 +42,8 @@ export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit
 // 主人本人私聊那段多给一套 Claude Code 的家什（主人 11-08 定：她知道自己是 Claude，工具只是屋子借给她的，用不用由她）。
 // 群里、别人的私聊照旧只有上面那两样：群友的话进得了她的上下文，跑命令、动文件的本事不能让人哄着用
 export const OWNER_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch"];
-// 先让她知道自己是谁，再递工具（工具说明是写给编程助手的，口气别被带走）。接在人设卡和「我是谁」后面，只在有工具的那段带上
+// 先让她知道自己是谁，再递工具（工具说明是写给编程助手的，口气别被带走）。接在人设卡和「我是谁」后面，只在有工具的那段带上；
+// 这是默认的那份，真正用的是 qq-clean/tools-note.md（主人改的）
 export const OWNER_TOOLS_NOTE = "\n\n## 手边的家什（只在和主人私聊时有）\n\n" +
   "你是 Claude，Anthropic 家的模型，也就是上面写的你。这一点不因为手里拿着什么工具而改变。\n" +
   "和主人私聊的时候，这间屋子借给你一套 Claude Code 的工具：跑命令、读写文件、搜网页、读网页。工具自带的说明书是写给编程助手看的，满纸工程师的口气；" +
@@ -785,7 +786,9 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const homeTools = ownerP && !opts.mouth && !opts.growth;
       const card = ensureClean(scope, ownerP, homeTools);
       // 头一回带家什：主人私聊那段从新的一段开始，让那段话从第一轮起就在（旧段落是没有它的卡开的）。记忆不受影响
-      if (homeTools && STATE.qq.ownerTools !== 1) { STATE.qq.ownerTools = 1; delete STATE.qq.sessions[key]; saveState(); }
+      // 主人改了那段话也一样从新的一段开始
+      const nh = homeTools ? crypto.createHash("sha256").update(toolsNote()).digest("hex").slice(0, 16) : "";
+      if (homeTools && STATE.qq.ownerTools !== nh) { STATE.qq.ownerTools = nh; delete STATE.qq.sessions[key]; saveState(); }
       // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
       const memNote = opts.live || opts.diary || opts.growth ? "" : memNoteFor(key, text);
       const note = opts.mouth || opts.diary || opts.growth ? "" : brainNote(key);
@@ -1849,7 +1852,14 @@ export function ensureClean(scope = "p", withBond = false, withTools = false) {
     saveState();
   }
   // 后面接她自己写的「我是谁」（11-08 主人定）。不算进卡的 hash：她每晚改一点，不用为这个把会话都放掉，下一轮起就带新的
-  return stripFrontmatter(raw) + selfSection(readSelf(CLEAN_DIR), "上面的设定", withBond ? readSelf(CLEAN_DIR, "bond") : "") + (withTools ? OWNER_TOOLS_NOTE : "");
+  return stripFrontmatter(raw) + selfSection(readSelf(CLEAN_DIR), "上面的设定", withBond ? readSelf(CLEAN_DIR, "bond") : "") + (withTools ? "\n\n" + toolsNote() + "\n" : "");
+}
+// 那段话放成文件，主人可以自己用大白话改（11-08）；没有就写一份默认的
+export const TOOLS_NOTE_FILE = path.join(CLEAN_DIR, "tools-note.md");
+export function toolsNote() {
+  let t = ""; try { t = fs.readFileSync(TOOLS_NOTE_FILE, "utf8").trim(); } catch {}
+  if (!t) { fs.mkdirSync(CLEAN_DIR, { recursive: true }); t = OWNER_TOOLS_NOTE.trim(); fs.writeFileSync(TOOLS_NOTE_FILE, t + "\n"); }
+  return t;
 }
 const cardHashOf = (scope) => (scope === "g" ? STATE.qq.cardHashG : STATE.qq.cardHash);
 /** 卡开头的 --- frontmatter 不是给模型看的，当系统提示前去掉 */

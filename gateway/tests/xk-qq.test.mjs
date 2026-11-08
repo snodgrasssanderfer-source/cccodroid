@@ -12,7 +12,7 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
+  APPROVALS_FILE, CARD_FILE, TOOLS_NOTE_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   drainQQSay, ensureClean, handleEvent, pokeLine, cardText, expandB23, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
   shouldAnswer, startQQ, stopQQ, workReply, sisterNote, diaryTick, DIARY_DIR } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
@@ -1004,6 +1004,12 @@ test("主人私聊那段多一套 Claude Code 的家什，先告诉她自己是 
   handleMessage(cfg, priv(OWNER, "再看看"), "再看看");
   assert.ok(queued.at(-1).sessionId, "之后照常续着");
   finish(queued.at(-1), "好");
+  fs.writeFileSync(TOOLS_NOTE_FILE, "主人改过的那段\n");
+  handleMessage(cfg, priv(OWNER, "改好了"), "改好了");
+  assert.match(queued.at(-1).clean.systemPrompt, /主人改过的那段/);
+  assert.equal(queued.at(-1).sessionId, null, "那段话改了：从新的一段开始");
+  finish(queued.at(-1), "好");
+  fs.rmSync(TOOLS_NOTE_FILE);
   handleMessage(cfg, priv(STRANGER, "帮我跑个命令"), "帮我跑个命令");
   assert.deepEqual(queued.at(-1).clean.tools, ["WebSearch", "WebFetch"], "别人私聊没有");
   assert.ok(!queued.at(-1).clean.systemPrompt.includes("手边的家什"));
