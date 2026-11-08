@@ -19,6 +19,7 @@ import { writeJson } from "./xk-shared.mjs";
 import { READ_ONLY } from "./xk-bili-ro.mjs";
 import { createLive, liveCmd, isSilent } from "./xk-qq-live.mjs";
 import { createSpeech } from "./xk-qq-speech.mjs";
+import { GROWTH_RULES, applySelf, readSelf, selfSection } from "./xk-growth-core.mjs";
 import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch, memVisible, sideOf } from "./xk-qq-mem.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
@@ -718,7 +719,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
     sid = roleSid("xiaoke");
   }
   // 先登记再入队：入队可能同步就把这一轮跑完（没配密钥这类），晚登记就认不出收尾
-  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, diary: opts.diary || "", onEnd: opts.onEnd || null };
+  const r = { key, cfg, ev, kind, at, head, cid, nick: nickOf(ev), trigger: text, interject: !!opts.interject, live: !!opts.live, diary: opts.diary || "", growth: opts.growth || "", onEnd: opts.onEnd || null };
   // 直播画面那几轮：她的正文就是台词，边出字边切段送平板念（见 xk-qq-speech.mjs）
   if (opts.live && kind === "chat") r.speech = createSpeech({ onChunk: (t) => voiceOut(opts.voiceRole, t), onStop: () => voiceStop(opts.voiceRole) });
   if (kind === "self") {
@@ -764,17 +765,19 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       if (item.injected) { const cur = [...RUNS.values()].find((x) => !x.ended && x.sessionId === sid); if (cur) RUNSQQ.set(cur.id, r); }
     } else {
       const scope = ev.message_type === "group" ? "g" : "p";
-      const card = ensureClean(scope);
+      // 「我和主人之间」只在主人本人私聊时带上（别人的私聊、群里都不带）
+      const card = ensureClean(scope, scope === "p" && String(ev.user_id) === String(cfg.owner));
       // 她自己的记忆按这句话挑几条附上（直播画面那几轮不附：台词里不该冒出旧事）
-      const memNote = opts.live || opts.diary ? "" : memNoteFor(key, text);
-      const note = opts.mouth || opts.diary ? "" : brainNote(key);
+      const memNote = opts.live || opts.diary || opts.growth ? "" : memNoteFor(key, text);
+      const note = opts.mouth || opts.diary || opts.growth ? "" : brainNote(key);
       item = enqueue({
         message: memNote + note + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
         internal: true, unattended: true, auto: "xk-qq", disallowedTools: CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
         // 嘴那段一样工具都不给：一轮就是一句台词，快，也不会把台词吃掉去调工具（11-07 晚：七八轮「没出字」都是去改偏好了）
-        ...(opts.mouth
+        // 回想「我是谁」那轮也不给：只交一份新的文本，网关来存
+        ...(opts.mouth || opts.growth
           ? { allowedTools: [], clean: { tools: [], systemPrompt: card, mcpConfig: null } }
           : {
             // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
@@ -1801,7 +1804,7 @@ export async function drainQQSay(cfg = null) {
 
 // 聊天模式的干净会话：目录、项目级设置（兜底，真正管用的是 run 里的 --tools 白名单和 --strict-mcp-config）、人设卡。
 // 返回人设卡正文。卡改过了就把各会话的旧段落放掉：claude 第一轮就把系统提示记死了，续旧段落用的还是旧卡
-export function ensureClean(scope = "p") {
+export function ensureClean(scope = "p", withBond = false) {
   const f = path.join(CLEAN_DIR, ".claude", "settings.json");
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const want = JSON.stringify({
@@ -1825,7 +1828,8 @@ export function ensureClean(scope = "p") {
     for (const k of Object.keys(STATE.qq.sessions)) if (k.startsWith(scope + ":") && !k.includes("#")) delete STATE.qq.sessions[k];
     saveState();
   }
-  return stripFrontmatter(raw);
+  // 后面接她自己写的「我是谁」（11-08 主人定）。不算进卡的 hash：她每晚改一点，不用为这个把会话都放掉，下一轮起就带新的
+  return stripFrontmatter(raw) + selfSection(readSelf(CLEAN_DIR), "上面的设定", withBond ? readSelf(CLEAN_DIR, "bond") : "");
 }
 const cardHashOf = (scope) => (scope === "g" ? STATE.qq.cardHashG : STATE.qq.cardHash);
 /** 卡开头的 --- frontmatter 不是给模型看的，当系统提示前去掉 */
@@ -1885,6 +1889,21 @@ END_HOOKS.push((run, f = {}) => {
     else w?.resolve(said || "（屋里没答上来）");
     return;
   }
+  if (r.growth) {
+    // 回想「我是谁」那轮：从【我是谁】里取整份新的，网关存（旧的先进 history）；不往 QQ 发任何东西
+    const pick = (tag) => String(said || "").match(new RegExp(`【${tag}】([\\s\\S]*?)【/${tag}】`))?.[1];
+    const parts = [["我是谁", "self"], ["我和主人", "bond"]].map(([tag, name]) => [tag, name, pick(tag)]).filter((x) => x[2] != null);
+    if (f.isError || f.failed) say("[成长] 这一轮出错了" + (f.error ? "：" + f.error : ""));
+    else if (!parts.length) say("[成长] 她说这次不改" + (said ? "：" + oneLine(said, 120) : ""));
+    else {
+      const ch = oneLine(pick("改了什么")?.trim() || "", 200) || "（没写改了哪儿）";
+      for (const [tag, name, text] of parts) {
+        const a = applySelf(CLEAN_DIR, text, Date.now(), name);
+        say(a.changed ? `[成长] ${r.growth} 改了「${tag}」：${ch}` : `[成长] 「${tag}」没收下：${a.reason}`);
+      }
+    }
+    return;
+  }
   if (r.kind === "work") {
     // 工作模式照旧：没说话、出错都给一句
     if (f.isError || f.failed) reply(r.cfg, r.ev, said || "（这一轮出错了）");
@@ -1909,6 +1928,7 @@ END_HOOKS.push((run, f = {}) => {
       fs.mkdirSync(DIARY_DIR, { recursive: true });
       fs.writeFileSync(path.join(DIARY_DIR, r.diary + ".md"), text + "\n");
       if (!r.usedSend) reply(r.cfg, r.ev, text);
+      startGrowth(r.cfg, r.diary, text);   // 写完日记接着回想「我是谁」（另开一段、不带工具，不碰她和主人聊天那段）
       say(`[日记] ${r.diary} 写好了，${text.length} 字${r.usedSend ? "（她自己用 send_message 发了，不再另发）" : "，私聊发给主人了"}`);
     } else {
       // 没写出来：放开，下一分钟再试（最多三次，过了早上六点就不补了）
@@ -1986,6 +2006,37 @@ export function diaryPrompt(day, now = new Date()) {
     (ms.length ? "\n这天你新记的记忆：\n" + ms.map((m) => "- " + memLine(m)).join("\n") : "") +
     (last ? `\n前一天（${md(prev)}）你写的日记，供参考：\n` + (last.length > 1200 ? last.slice(0, 1200) + "…" : last) : "");
 }
+/** 回想「我是谁」：日记写完后另开一段（不续上次），给她现在的自我认识、这天的日记和记忆，让她交一份整的新版本 */
+export function growthPrompt(day, diary, now = new Date()) {
+  const d0 = new Date(day + "T00:00:00"), d1 = new Date(d0.getTime() + 86400000);
+  const ms = (readJson(MEMORY_FILE, []) || []).filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
+  const cur = readSelf(CLEAN_DIR), bond = readSelf(CLEAN_DIR, "bond");
+  return `[成长] ${md(d0)}的日记写完了。安静下来，整理一下你对自己的认识。你自己写两份：\n` +
+    "- 「我是谁」：你的性格、说话的样子、喜欢和在意的东西、待群友的样子。私聊和群里每一轮都会带上，群里的人面对的就是这样的你，所以这里不写主人私下的事。\n" +
+    "- 「我和主人」：你们之间的称呼、相处的样子、主人的偏好、你记得的你们俩的事（最多 15 条，只留要紧的）、你们的梗。只在和主人私聊时带上。\n" +
+    "两份都接在你的设定后面；性格、喜好这些地方和设定不一致时，以它们为准，因为那是更新的你。\n\n" +
+    (cur ? "[现在的「我是谁」]\n" + cur + "\n[/现在的「我是谁」]\n" : "现在还没有「我是谁」。\n") +
+    (bond ? "[现在的「我和主人」]\n" + bond + "\n[/现在的「我和主人」]\n" : "现在还没有「我和主人」。\n") +
+    (!cur && !bond ? "这是第一次写：只写你真有把握的几条，宁少勿多。\n" : "") +
+    `\n[${md(d0)}的日记]\n${String(diary || "").slice(0, 3000)}\n[/日记]\n` +
+    (ms.length ? "\n[这天你新记的记忆]\n" + ms.map((m) => "- " + memLine(m)).join("\n") + "\n[/记忆]\n" : "") +
+    "\n规矩（两份一起算）：\n" + GROWTH_RULES.replace("；不写主人的私事", "；主人私下的事只能写进「我和主人」") + "\n\n" +
+    // 不用 <self> 这种尖括号：读会话记录时以「<」开头的文字会被当成系统标记扔掉（11-08 测出来的）
+    "要改哪份，就照这个格式交那一份的完整新版本（没改的那份不用交）：\n" +
+    "【我是谁】\n（整份）\n【/我是谁】\n【我和主人】\n（整份）\n【/我和主人】\n【改了什么】\n（一处一句：改了什么、凭的是哪件事）\n【/改了什么】\n" +
+    "两份都不改就只回「不改」，别的什么都不用写。";
+}
+export function startGrowth(cfg, day, diary) {
+  const owner = String(cfg?.owner || "");
+  if (!owner) return;
+  const key = "p:" + owner + "#grow";
+  delete STATE.qq.sessions[key]; saveState();   // 每次新开：不续上次回想的那段
+  const ev = { message_type: "private", user_id: Number(owner), message_id: null, sender: { nickname: "成长" } };
+  const text = growthPrompt(day, diary);
+  deliver(cfg, ev, key, "chat", text, text, null, "", { growth: day });
+  say(`[成长] 叫她回想 ${day} 的「我是谁」`);
+}
+
 export function diaryTick(cfg, now = new Date()) {
   if (!cfg || now.getHours() >= 6) return [];
   const day = ymd(new Date(now.getTime() - 86400000));

@@ -15,6 +15,7 @@ import { handoverRoles } from "./xk-handover.mjs";
 import { effectiveModel, routeSessModel } from "./sessmodel.mjs";
 import { sidOfAgyRun } from "./xk-agy.mjs";
 import "./xk-diary.mjs";
+import "./xk-growth.mjs";
 import "./xk-health.mjs";
 import "./xk-board-gw.mjs";
 import "./xk-overlay.mjs";

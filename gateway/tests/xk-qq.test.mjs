@@ -1198,6 +1198,21 @@ test("日记：零点叫她写前一天的，最后的正文原样存、原样�
   assert.ok(sent.length, "整篇原样发，不拆、不筛");
   assert.ok(sent.every((r) => r.key === "p:" + OWNER), "只私聊发给主人，不进群");
   assert.deepEqual(diaryTick(c, new Date(2026, 10, 8, 0, 1)), [], "写过了不再叫");
+  // 日记写完接着回想「我是谁」：另开一段、不带工具，交上来的整份由网关存，接在卡后面
+  const g = queued.find((x) => /^\[成长\]/.test(x.message));
+  assert.ok(g, "写完日记接着回想");
+  assert.match(g.message, /泡面杯/); assert.match(g.message, /【我是谁】/);
+  assert.deepEqual(g.clean.tools, [], "回想那轮不给工具");
+  const m = REPLIES.length;
+  assert.match(g.message, /【我和主人】/);
+  finish(g, "【我是谁】\n好像挺喜欢看群友的图。\n【/我是谁】\n【我和主人】\n他管我叫小克，睡前常来说晚安。\n【/我和主人】\n【改了什么】\n- 加了一条：今天看泡面杯那张图很开心\n【/改了什么】");
+  assert.equal(REPLIES.length, m, "回想那轮不往 QQ 发东西");
+  assert.match(fs.readFileSync(path.join(CLEAN_DIR, "growth", "self.md"), "utf8"), /喜欢看群友的图/);
+  assert.match(ensureClean("g"), /# 我是谁[\s\S]*喜欢看群友的图/, "群里也接「我是谁」");
+  assert.ok(!ensureClean("g").includes("睡前常来说晚安"), "群里不带「我和主人」");
+  assert.ok(!ensureClean("p").includes("睡前常来说晚安"), "别人私聊也不带");
+  assert.match(ensureClean("p", true), /我和主人之间[\s\S]*睡前常来说晚安/, "只有主人私聊带");
+  fs.rmSync(path.join(CLEAN_DIR, "growth"), { recursive: true, force: true });
   // 没写出来：放开，下一分钟再叫
   STATE.qq.diaryDone = {};
   diaryTick(c, new Date(2026, 10, 9, 0, 0));

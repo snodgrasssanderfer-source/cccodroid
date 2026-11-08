@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { CFG } from "./config.mjs";
 import { findSessionFile, peekSession } from "./sessions.mjs";
 import { writeFileAtomic as write, xkHome } from "./xk-shared.mjs";
+import { readSelf, selfSection } from "./xk-growth-core.mjs";
 
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
@@ -86,8 +87,14 @@ export function ensureRoles() {
     // alwaysLoad：不然记忆工具被收进 ToolSearch，每次想起旧事都要多一个来回
     // XK_ROOM_FILE：群消息文件的路径由网关给，记忆工具不自己拼（它拿不到 CFG，以前靠 HOME 猜，换环境就读到空群）
     write(path.join(d, ".mcp.json"), JSON.stringify({ mcpServers: memoryMcpServer(r.id) }, null, 1) + "\n");
-    write(path.join(d, "CLAUDE.md"), MECHANICS);
+    writeRoleMd(r.id);
   }
+}
+
+/** 角色目录的 CLAUDE.md：机制说明，后面接她自己写的「我是谁」（growth/self.md，主人 11-08 定；没写过就不接）。
+ *  每段会话开头读一次，所以她晚上改完，下一段会话起生效 */
+export function writeRoleMd(id) {
+  write(path.join(roleDir(id), "CLAUDE.md"), MECHANICS + selfSection(readSelf(roleDir(id))));
 }
 
 function agentText(r, systemPrompt, mesExample) {
