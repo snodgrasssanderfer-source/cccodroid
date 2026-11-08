@@ -166,7 +166,8 @@ test("聊天模式：干净会话（不在 roles 下面），只开搜索和读�
   const st = JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".claude/settings.json"), "utf8"));
   assert.deepEqual(st.permissions.allow.slice(0, 2), ["WebSearch", "WebFetch"]);
   assert.ok(st.permissions.allow.includes("mcp__qq__send_message"), "自己的聊天工具要能不用确认就用");
-  assert.ok(st.permissions.deny.includes("Write") && st.permissions.deny.includes("mcp__device") && st.permissions.deny.includes("mcp__xk-memory"));
+  assert.ok(st.permissions.deny.includes("mcp__device") && st.permissions.deny.includes("mcp__xk-memory"));
+  assert.ok(!st.permissions.allow.includes("Bash"), "项目设置里不放行跑命令");
   // 真正管用的是白名单：只有搜索、读网页两样内置工具，一个 MCP 都不挂，系统提示整个换成人设卡
   assert.deepEqual(q.clean.tools, ["WebSearch", "WebFetch"]);
   assert.ok(q.clean.systemPrompt.length > 0);
@@ -989,6 +990,27 @@ test("群里那轮没调 send_message：最后那段短话切成几个气泡", (
   handleMessage(selfCfg, group(OWNER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   finish(queued.at(-1), "来了。你有什么事？");
   assert.deepEqual(REPLIES.slice(before).map((x) => x.text), ["来了。", "你有什么事？"]);
+});
+
+test("主人私聊那段多一套 Claude Code 的家什，先告诉她自己是 Claude；群里和别人照旧", () => {
+  STATE.qq.sessions["p:" + OWNER] = "old-sid"; delete STATE.qq.ownerTools;
+  handleMessage(cfg, priv(OWNER, "帮我看看下载目录"), "帮我看看下载目录");
+  const q = queued.at(-1);
+  for (const t of ["Bash", "Read", "Edit", "Write"]) { assert.ok(q.clean.tools.includes(t), "有 " + t); assert.ok(q.allowedTools.includes(t)); assert.ok(!q.disallowedTools.includes(t)); }
+  assert.ok(q.disallowedTools.includes("Agent"), "不开子代理（那会带上编程助手的整套提示）");
+  assert.match(q.clean.systemPrompt, /你是 Claude[\s\S]*那是工具的口气，不是你的/);
+  assert.equal(q.sessionId, null, "头一回带家什：从新的一段开始");
+  finish(q, "看好了");
+  handleMessage(cfg, priv(OWNER, "再看看"), "再看看");
+  assert.ok(queued.at(-1).sessionId, "之后照常续着");
+  finish(queued.at(-1), "好");
+  handleMessage(cfg, priv(STRANGER, "帮我跑个命令"), "帮我跑个命令");
+  assert.deepEqual(queued.at(-1).clean.tools, ["WebSearch", "WebFetch"], "别人私聊没有");
+  assert.ok(!queued.at(-1).clean.systemPrompt.includes("手边的家什"));
+  finish(queued.at(-1), "好");
+  handleMessage(cfg, group(OWNER, [{ type: "text", data: { text: "小克 跑个命令" } }]), "小克 跑个命令");
+  assert.deepEqual(queued.at(-1).clean.tools, ["WebSearch", "WebFetch"], "群里就算是主人叫也没有");
+  finish(queued.at(-1), "好");
 });
 
 test("群里干活那段是模型本色：不叠口吻、不叫主管；私聊和群里同一张聊天卡", () => {
