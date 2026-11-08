@@ -1902,14 +1902,14 @@ END_HOOKS.push((run, f = {}) => {
       privateSay(r.cfg, note).catch((e) => say("私聊汇报没发出去：" + e.message));
     }
   } else if (r.diary) {
-    // 日记那轮：最后的正文就是日记，原样存一份、原样发进群（主人 11-07 定：不过目、不设限，她想写什么写什么）
+    // 日记那轮：最后的正文就是日记，原样存一份、原样私聊发给主人（11-07 定不过目、不设限；11-08 改成只发私聊）
     const text = String(said || "").trim();
-    const gid = String(r.ev.group_id);
+    const gid = "owner";
     if (text) {
       fs.mkdirSync(DIARY_DIR, { recursive: true });
       fs.writeFileSync(path.join(DIARY_DIR, r.diary + ".md"), text + "\n");
       if (!r.usedSend) reply(r.cfg, r.ev, text);
-      say(`[日记] ${r.diary} 写好了，${text.length} 字${r.usedSend ? "（她自己用 send_message 发了，不再另发）" : "，发进群了"}`);
+      say(`[日记] ${r.diary} 写好了，${text.length} 字${r.usedSend ? "（她自己用 send_message 发了，不再另发）" : "，私聊发给主人了"}`);
     } else {
       // 没写出来：放开，下一分钟再试（最多三次，过了早上六点就不补了）
       if (STATE.qq.diaryDone?.[gid] === r.diary) { delete STATE.qq.diaryDone[gid]; saveState(); }
@@ -1977,11 +1977,12 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 const md = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
 export function diaryPrompt(day, now = new Date()) {
   const d0 = new Date(day + "T00:00:00"), d1 = new Date(d0.getTime() + 86400000);
-  const ms = memVisible(readJson(MEMORY_FILE, []) || [], "g").filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
+  // 只发给主人（11-08 主人定），私聊和群里记的都给她当素材
+  const ms = memVisible(readJson(MEMORY_FILE, []) || [], "p").filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
   const prev = new Date(d0.getTime() - 86400000);
   let last = ""; try { last = fs.readFileSync(path.join(DIARY_DIR, ymd(prev) + ".md"), "utf8").trim(); } catch {}
   return `[日记] 现在是${md(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}，${md(d0)}过完了。写一篇这一天的日记，想写什么就写什么，长短随你。\n` +
-    "这一轮最后写出来的正文就是日记：网关原样存一份，再原样发进群里。别用 send_message，正文之外也不用再跟谁交代。" +
+    "这一轮最后写出来的正文就是日记：网关原样存一份，再原样私聊发给主人（只有他看得到）。别用 send_message，正文之外也不用再跟谁交代。" +
     (ms.length ? "\n这天你新记的记忆：\n" + ms.map((m) => "- " + memLine(m)).join("\n") : "") +
     (last ? `\n前一天（${md(prev)}）你写的日记，供参考：\n` + (last.length > 1200 ? last.slice(0, 1200) + "…" : last) : "");
 }
@@ -1990,22 +1991,21 @@ export function diaryTick(cfg, now = new Date()) {
   const day = ymd(new Date(now.getTime() - 86400000));
   STATE.qq.diaryDone ||= {}; STATE.qq.diaryTries ||= {};
   const fired = [];
-  for (const gid of Object.keys(cfg.groups || {})) {
-    if (STATE.qq.diaryDone[gid] === day) continue;
-    const tk = gid + ":" + day;
-    if ((STATE.qq.diaryTries[tk] || 0) >= 3) continue;
-    const key = "g:" + gid;
-    if (LIVES.get(key)?.on) continue;                                   // 正直播：下播了再写
-    const b = BUSY.get(key); if (b && RUNSQQ.get(b.cid)) continue;     // 她正回着话：等这一轮完
-    STATE.qq.diaryDone[gid] = day;
-    STATE.qq.diaryTries = { [tk]: (STATE.qq.diaryTries[tk] || 0) + 1 };
-    saveState();
-    const ev = { message_type: "group", group_id: Number(gid), group_name: cfg.groupNames?.[gid] || "", user_id: cfg.bot, message_id: null, sender: { nickname: "日记" } };
-    const text = diaryPrompt(day, now);
-    deliver(cfg, ev, key, "chat", text, text, null, "", { diary: day });
-    say(`[日记] 叫她写 ${day} 的日记（群 ${gid}）`);
-    fired.push(gid);
-  }
+  // 11-08 主人定：日记只私聊发给他（群里没人看），写在她和主人私聊的那一段里
+  const owner = String(cfg.owner || "");
+  if (!owner || STATE.qq.diaryDone.owner === day) return fired;
+  const tk = "owner:" + day;
+  if ((STATE.qq.diaryTries[tk] || 0) >= 3) return fired;
+  const key = "p:" + owner;
+  const b = BUSY.get(key); if (b && RUNSQQ.get(b.cid)) return fired;   // 她正跟主人聊着：等这一轮完
+  STATE.qq.diaryDone.owner = day;
+  STATE.qq.diaryTries = { [tk]: (STATE.qq.diaryTries[tk] || 0) + 1 };
+  saveState();
+  const ev = { message_type: "private", user_id: Number(owner), message_id: null, sender: { nickname: "日记" } };
+  const text = diaryPrompt(day, now);
+  deliver(cfg, ev, key, "chat", text, text, null, "", { diary: day });
+  say(`[日记] 叫她写 ${day} 的日记（私聊发给主人）`);
+  fired.push("owner");
   return fired;
 }
 
