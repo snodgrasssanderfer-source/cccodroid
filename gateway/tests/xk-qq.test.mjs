@@ -166,13 +166,14 @@ test("聊天模式：干净会话（不在 roles 下面），只开搜索和读�
   const st = JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".claude/settings.json"), "utf8"));
   assert.deepEqual(st.permissions.allow.slice(0, 2), ["WebSearch", "WebFetch"]);
   assert.ok(st.permissions.allow.includes("mcp__qq__send_message"), "自己的聊天工具要能不用确认就用");
-  assert.ok(st.permissions.deny.includes("mcp__device") && st.permissions.deny.includes("mcp__xk-memory"));
+  assert.ok(st.permissions.deny.includes("mcp__xk-memory"));
+  for (const t of ["mcp__device", "mcp__bili"]) assert.ok(q.disallowedTools.includes(t), "群里每轮禁 " + t);
   assert.ok(!st.permissions.allow.includes("Bash"), "项目设置里不放行跑命令");
   // 真正管用的是白名单：只有搜索、读网页两样内置工具，一个 MCP 都不挂，系统提示整个换成人设卡
   assert.deepEqual(q.clean.tools, ["WebSearch", "WebFetch"]);
   assert.ok(q.clean.systemPrompt.length > 0);
   for (const t of ["Read", "Grep", "Glob", "Task"]) assert.ok(q.disallowedTools.includes(t), "兜底也禁 " + t);
-  assert.ok(st.permissions.deny.includes("mcp__bili"), "全局挂着的 B站工具也禁");
+  assert.ok(!JSON.parse(q.clean.mcpConfig).mcpServers.bili, "群里不挂整套 B站");
   assert.ok(!fs.existsSync(path.join(CLEAN_DIR, "CLAUDE.md")), "人设卡不叫 CLAUDE.md");
   // 聊天模式只认 send_message 发的；最后那段文字（常是写给「你」的汇报）不往 QQ 发（11-07 漏进群）
   const n0 = REPLIES.length;
@@ -998,7 +999,8 @@ test("主人私聊那段多一套 Claude Code 的家什，先告诉她自己是 
   handleMessage(cfg, priv(OWNER, "帮我看看下载目录"), "帮我看看下载目录");
   const q = queued.at(-1);
   for (const t of ["Bash", "Read", "Edit", "Write"]) { assert.ok(q.clean.tools.includes(t), "有 " + t); assert.ok(q.allowedTools.includes(t)); assert.ok(!q.disallowedTools.includes(t)); }
-  assert.ok(q.disallowedTools.includes("Agent"), "不开子代理（那会带上编程助手的整套提示）");
+  for (const t of ["Agent", "Skill"]) assert.ok(q.clean.tools.includes(t) && !q.disallowedTools.includes(t), "主人 11-09 全开：" + t);
+  for (const t of ["mcp__device", "mcp__bili"]) assert.ok(q.allowedTools.includes(t), "放行 " + t);
   assert.match(q.clean.systemPrompt, /你是 Claude[\s\S]*那是工具的口气，不是你的/);
   assert.equal(q.sessionId, "old-sid", "带上家什不重开：旧段照续");
   assert.match(q.message, /^\[你设定后面那几节更新了[\s\S]*手边的工具[\s\S]*\[\/更新\]/, "续旧段时系统提示换不进去：改在消息前面附上");

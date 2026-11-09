@@ -39,10 +39,21 @@ export const CLEAN_DIR = path.join(CFG.workspace, "qq-clean");
 // 聊天模式只给联网搜索和读网页（AstrBot 的做法，主人 11-06 定的）。用白名单（--tools）而不是黑名单：
 // 黑名单漏了 Read/Grep 就能读到手机上的 token 和记忆，漏了 mcp__bili 群里谁都能让她去 B站删评论（小克审 #135 时查出来的）
 export const CLEAN_TOOLS = ["WebSearch", "WebFetch"];
-export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "Agent", "Skill"];
+export const CLEAN_DENY = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "Agent", "Skill", "mcp__device", "mcp__bili"];
 // 主人本人私聊那段多给一套 Claude Code 的家什（主人 11-08 定：她知道自己是 Claude，工具只是屋子借给她的，用不用由她）。
 // 群里、别人的私聊照旧只有上面那两样：群友的话进得了她的上下文，跑命令、动文件的本事不能让人哄着用
-export const OWNER_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch"];
+export const OWNER_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch", "NotebookEdit", "Skill", "Agent"];
+// 主人 11-09 定：私聊那段再全开——组件说明书（Skill）、派子代理（Agent）、手机工具（device）、整套 B站（含写）。
+// 读屏、点按、剪贴板、分享照样过 cc-guard（没人能批，等于拦着）；群里和别人那段一样不挂
+export const OWNER_MCP = ["mcp__device", "mcp__bili"];
+function ownerMcpConfig() {
+  const j = JSON.parse(qqMcpConfigTools(QQ_TOOLS, true));
+  // 和 usage.mjs 的 deviceMcpConfig 同一个脚本；不 import 它（会把那一大摊一起拉进来）
+  const dev = path.join(HERE, "..", "bin", "device-mcp.mjs");
+  if (fs.existsSync(dev)) j.mcpServers.device = { type: "stdio", command: process.execPath, args: [dev] };
+  const b = biliTarget(); if (b) j.mcpServers.bili = { type: "stdio", ...b };
+  return JSON.stringify(j);
+}
 // 先让她知道自己是谁，再递工具（工具说明是写给编程助手的，口气别被带走）。接在人设卡和「我是谁」后面，只在有工具的那段带上；
 // 这是默认的那份，真正用的是 qq-clean/tools-note.md（主人改的）
 export const OWNER_TOOLS_NOTE = "\n\n## 手边的家什（只在和主人私聊时有）\n\n" +
@@ -813,7 +824,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const note = opts.mouth || opts.diary || opts.growth ? "" : brainNote(key);
       item = enqueue({
         message: upd + tail + memNote + note + nudge + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
-        internal: true, unattended: true, auto: "xk-qq", disallowedTools: homeTools ? ["Task", "Agent", "Skill"] : CLEAN_DENY,
+        internal: true, unattended: true, auto: "xk-qq", disallowedTools: homeTools ? [] : CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
         // 嘴那段一样工具都不给：一轮就是一句台词，快，也不会把台词吃掉去调工具（11-07 晚：七八轮「没出字」都是去改偏好了）
@@ -822,9 +833,9 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
           ? { allowedTools: [], clean: { tools: [], systemPrompt: card, mcpConfig: null } }
           : {
             // 项目设置里也放行了，这里再钉一遍：没人看着的时候不能弹确认，卡一下就白掉一轮
-            allowedTools: [...(homeTools ? OWNER_TOOLS : []), ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
+            allowedTools: [...(homeTools ? [...OWNER_TOOLS, ...OWNER_MCP] : []), ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
             // 只列聊天那套：ask_owner、ask_home、owner_away 调了也会被拒，列出来她会当成自己有（11-07 真机她把这三样报给了主人）
-            clean: { tools: homeTools ? OWNER_TOOLS : CLEAN_TOOLS, systemPrompt: card, mcpConfig: qqMcpConfigTools(QQ_TOOLS, true) },
+            clean: { tools: homeTools ? OWNER_TOOLS : CLEAN_TOOLS, systemPrompt: card, mcpConfig: homeTools ? ownerMcpConfig() : qqMcpConfigTools(QQ_TOOLS, true) },
           }),
       });
       // 这一轮是用哪张卡开的：跑完时卡要是换了，这一段就作废（见结束钩子）
@@ -1859,8 +1870,9 @@ export function ensureClean(scope = "p", withBond = false, withTools = false) {
   const want = JSON.stringify({
     permissions: {
       allow: [...CLEAN_TOOLS, ...QQ_TOOLS.map((t) => `mcp__${QQ_MCP_NAME}__${t}`), ...BILI_RO_TOOLS],
-      // 内置工具不在这里拒：项目设置拒了的，主人私聊那段的 allowedTools 也放不开。群里和别人那段靠每轮的 --tools 白名单和 disallowedTools
-      deny: ["mcp__device", "mcp__xk-memory", "mcp__bili"],
+      // 内置工具、手机工具、B站都不在这里拒：项目设置拒了的，主人私聊那段的 allowedTools 也放不开。
+      // 群里和别人那段靠每轮的 --tools 白名单、--strict-mcp-config（根本不挂）和 disallowedTools（CLEAN_DENY）
+      deny: ["mcp__xk-memory"],
     },
     disableClaudeAiConnectors: true, disableBundledSkills: true,
   }, null, 1) + "\n";
