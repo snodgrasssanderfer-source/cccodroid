@@ -1288,3 +1288,40 @@ test("聊天记录本：她发的、对方说的都记下，只能翻当前这�
   assert.ok(hit != null, "聊久了提醒记一笔");
   } finally { stopQQ(); bot.close(); }
 });
+
+test("主人私聊那段要批的操作：在 QQ 上问主人，回「批」放行、「不批」拒绝；别人回不算，群里照旧无人值守", async () => {
+  const { RUNS } = await import("../gw/runs.mjs");
+  const { publish } = await import("../gw/bus.mjs");
+  ensureClean("p");
+  handleMessage(cfg, priv(OWNER, "把书架改成倒地"), "把书架改成倒地");
+  const q = queued.at(-1);
+  assert.equal(q.unattended, false, "主人私聊那段不算无人值守");
+  const answers = [];
+  RUNS.set(q.id, { id: q.id, answerPerm: (id, a) => { answers.push([id, a.behavior]); return true; } });
+  try {
+    publish({ type: "perm_request", runId: q.id, id: "p1", tool: "Bash", input: { command: "rm -f ../shots/*" } });
+    publish({ type: "perm_request", runId: q.id, id: "p2", tool: "Bash", input: { command: "rm -rf build/*" } });
+    handleMessage(cfg, priv(STRANGER, "批"), "批");
+    assert.equal(answers.length, 0, "别人说批不算");
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.deepEqual(answers, [["p1", "allow"]], "一次只答最前面那条");
+    handleMessage(cfg, priv(OWNER, "不批"), "不批");
+    assert.deepEqual(answers.at(-1), ["p2", "deny"]);
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.equal(answers.length, 2, "没在等的时候，「批」就是普通的一句话");
+    // 跑完了：还没答的作废
+    publish({ type: "perm_request", runId: q.id, id: "p3", tool: "Bash", input: { command: "rm x/*" } });
+    publish({ type: "run_end", runId: q.id });
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.equal(answers.length, 2, "那一轮结束了就不再答");
+  } finally { RUNS.delete(q.id); (await import("../gw/queue.mjs")).pump(); }
+  // 那一轮收尾后，攒着的主人的话递进去：只有没人等时说的那两句「批」，回确认的「批」「不批」不当聊天
+  finish(q, "");
+  const next = queued.at(-1);
+  assert.notEqual(next, q);
+  assert.equal((next.message.match(/批/g) || []).length, 2, next.message);
+  assert.ok(!next.message.includes("不批"), next.message);
+  // 别人的私聊、群里：照旧无人值守
+  handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+  assert.equal(queued.at(-1).unattended, true);
+});

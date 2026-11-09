@@ -190,6 +190,8 @@ export const REPLIES = [];   // 每一句要发回 QQ 的话（测试看它；�
 export function resetQQ() {
   STATE.qq = { modes: {}, sessions: {}, interject: {}, lastMine: {} };
   BUSY.clear(); PENDING.clear(); RUNSQQ.clear(); SENT.clear(); WAITERS.clear(); NICK.clear(); MSGS.clear(); MEMBERS.clear(); SENT_KEY.clear(); HISTORY.clear(); MEM_GAP.clear(); REPLIES.length = 0;
+  for (const q of PERM_Q.values()) for (const p of q) clearTimeout(p.timer);
+  PERM_Q.clear();
   fs.rmSync(LOG_DIR, { recursive: true, force: true });
   FACES_AT = 0; FACES_JOB = null;
   REPLAY.clear(); LAST_SWEEP = 0;
@@ -722,6 +724,8 @@ function useAwait(ev) {
 export function handleMessage(cfg, ev, text, extra = {}) {
   const key = convKey(ev);
   const owner = String(ev.user_id) === String(cfg.owner);
+  // 她在等主人批一件事：这句「批」「不批」是回那个的，不当聊天
+  if (owner && permReply(cfg, ev, text)) return;
   // 切模式：只认发送者的号，不看内容是谁写的；别人的同一句话当普通消息
   const mc = owner ? modeCmd(text) : null;
   if (mc === "chat") { setMode(key, "chat"); return reply(cfg, ev, MODE_TEXT.chat); }
@@ -735,6 +739,68 @@ export function handleMessage(cfg, ev, text, extra = {}) {
   if (kind === "work" && !owner) { say("工作模式：不是主人的消息，不递给两边"); return; }
   deliver(cfg, ev, key, kind, text, extra.line, null, extra.pending || "");
 }
+
+// ── 主人私聊那段要人批的操作（主人 11-09 定）：带通配符的删除、读屏点按这类，claude 会停下来问。
+// 以前这几轮标着无人值守，网关替主人回了拒绝；现在在 QQ 上问主人本人，回「批」放行、「不批」拒绝，五分钟没回按不批。
+// 群里、别人的私聊照旧无人值守，一律拒绝。只认主人的号在私聊里回的话
+export const PERM_WAIT_MS = 5 * 60000;
+const PERM_Q = new Map();   // 会话 key → [{ runId, id, tool, what, cfg, timer, asked }]，一次只问最前面那条
+export const PERM_YES = /^(批|批准|准|可以|行|好|同意|允许)[。！!.～~]?$/;
+export const PERM_NO = /^(不批|不准|不行|不可以|拒绝|不同意|别|不要)[。！!.～~]?$/;
+function permWhat(p) {
+  const i = p.input || {};
+  return oneLine(p.guard?.what || i.command || i.file_path || i.url || p.description || JSON.stringify(i), 300);
+}
+function permAsk(key) {
+  const p = PERM_Q.get(key)?.[0];
+  if (!p || p.asked) return;
+  p.asked = true;
+  p.timer = setTimeout(() => permAnswer(key, false, "主人五分钟没回，按不批处理。别再试同一个操作，换个不用批的做法，或者跟主人说清楚卡在哪"), PERM_WAIT_MS);
+  p.timer.unref?.();
+  say(`问主人批不批：${p.tool} ${p.what.slice(0, 60)}`);
+  privateSay(p.cfg, `12号想做一件要你批的事：${p.tool} ${p.what}。回「批」就放行，回「不批」就拒绝；五分钟没回按不批。`)
+    .catch((e) => say("问主人批不批没发出去：" + e.message));
+}
+function permDrop(key, pred) {
+  const q = PERM_Q.get(key); if (!q) return;
+  const head = q[0];
+  for (const p of q.filter(pred)) clearTimeout(p.timer);
+  const rest = q.filter((p) => !pred(p));
+  if (rest.length) { PERM_Q.set(key, rest); if (rest[0] !== head) permAsk(key); } else PERM_Q.delete(key);
+}
+function permAnswer(key, ok, why) {
+  const p = PERM_Q.get(key)?.[0];
+  if (!p) return false;
+  permDrop(key, (x) => x === p);
+  const run = RUNS.get(p.runId);
+  const sent = run?.answerPerm?.(p.id, ok ? { behavior: "allow" } : { behavior: "deny", message: why || "主人没批这个操作。别再试同一个，换个不用批的做法" });
+  say(`${ok ? "主人批了" : "没批"}：${p.tool}${sent ? "" : "（那一轮已经不在了）"}`);
+  return true;
+}
+/** 主人私聊里回的「批」「不批」：有在等的就答掉，返回 true（这句不再当聊天递给她） */
+export function permReply(cfg, ev, text) {
+  if (ev.message_type !== "private" || String(ev.user_id) !== String(cfg.owner)) return false;
+  const key = convKey(ev), t = String(text || "").trim();
+  if (!PERM_Q.get(key)?.length) return false;
+  if (PERM_YES.test(t)) return permAnswer(key, true);
+  if (PERM_NO.test(t)) return permAnswer(key, false);
+  return false;
+}
+onPublish((ev) => {
+  if (ev?.type === "perm_request") {
+    const r = RUNSQQ.get(ev.runId);
+    if (!r?.permRelay || r.done) return;
+    const q = PERM_Q.get(r.key) || [];
+    q.push({ runId: ev.runId, id: ev.id, tool: String(ev.tool || ""), what: permWhat(ev), cfg: r.cfg, timer: null, asked: false });
+    PERM_Q.set(r.key, q);
+    permAsk(r.key);
+  } else if (ev?.type === "perm_resolved") {
+    // App 里点掉了（主人在屏幕上批的）：QQ 这边不用再等
+    for (const k of [...PERM_Q.keys()]) permDrop(k, (p) => p.id === ev.id && p.runId === ev.runId);
+  } else if (ev?.type === "run_end") {
+    for (const k of [...PERM_Q.keys()]) permDrop(k, (p) => p.runId === ev.runId);
+  }
+});
 
 function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = "", opts = {}) {
   const b = BUSY.get(key);
@@ -799,6 +865,7 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const ownerP = scope === "p" && String(ev.user_id) === String(cfg.owner);
       // 主人私聊那段（嘴和回想那两轮不算，它们一样工具都不给）多一套 Claude Code 的家什
       const homeTools = ownerP && !opts.mouth && !opts.growth;
+      r.permRelay = homeTools;
       const card = ensureClean(scope, ownerP, homeTools);
       // 头一回带家什：主人私聊那段从新的一段开始，让那段话从第一轮起就在（旧段落是没有它的卡开的）。记忆不受影响
       // 卡后面那几节（「我是谁」、和主人之间、手边的工具）改了不重开：续旧段时系统提示还是第一轮那版（11-08 实测），
@@ -824,7 +891,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
       const note = opts.mouth || opts.diary || opts.growth ? "" : brainNote(key);
       item = enqueue({
         message: upd + tail + memNote + note + nudge + (line || incomingLine(ev, text, null, cfg.owner)), sessionId: STATE.qq.sessions[key] || null, cwd: CLEAN_DIR, cid,
-        internal: true, unattended: true, auto: "xk-qq", disallowedTools: homeTools ? [] : CLEAN_DENY,
+        // 主人私聊那段不算无人值守：要批的操作在 QQ 上问主人（见 permReply）
+        internal: true, unattended: !homeTools, auto: "xk-qq", disallowedTools: homeTools ? [] : CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
         provider: roleById("xiaoke").provider,
         // 嘴那段一样工具都不给：一轮就是一句台词，快，也不会把台词吃掉去调工具（11-07 晚：七八轮「没出字」都是去改偏好了）
