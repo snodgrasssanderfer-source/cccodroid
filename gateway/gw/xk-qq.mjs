@@ -2136,13 +2136,13 @@ function lastPadGroup(cfg) {
 export const DIARY_DIR = path.join(CLEAN_DIR, "diary");
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const md = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
-export function diaryPrompt(day, now = new Date()) {
+export function diaryPrompt(day, now = new Date(), late = false) {
   const d0 = new Date(day + "T00:00:00"), d1 = new Date(d0.getTime() + 86400000);
   // 只发给主人（11-08 主人定），私聊和群里记的都给她当素材
   const ms = memVisible(readJson(MEMORY_FILE, []) || [], "p").filter((m) => m.at >= d0.getTime() && m.at < d1.getTime());
   const prev = new Date(d0.getTime() - 86400000);
   let last = ""; try { last = fs.readFileSync(path.join(DIARY_DIR, ymd(prev) + ".md"), "utf8").trim(); } catch {}
-  return `[日记] 现在是${md(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}，${md(d0)}过完了。写一篇这一天的日记，想写什么就写什么，长短随你。\n` +
+  return `[日记] 现在是${md(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}，${md(d0)}过完了${late ? "（零点那会儿网关没开着，没叫上你，现在补）" : ""}。写一篇这一天的日记，想写什么就写什么，长短随你。\n` +
     "这一轮最后写出来的正文就是日记：网关原样存一份，再原样私聊发给主人（只有他看得到）。别用 send_message，正文之外也不用再跟谁交代。" +
     (ms.length ? "\n这天你新记的记忆：\n" + ms.map((m) => "- " + memLine(m)).join("\n") : "") +
     (last ? `\n前一天（${md(prev)}）你写的日记，供参考：\n` + (last.length > 1200 ? last.slice(0, 1200) + "…" : last) : "");
@@ -2179,13 +2179,18 @@ export function startGrowth(cfg, day, diary) {
 }
 
 export function diaryTick(cfg, now = new Date()) {
-  if (!cfg || now.getHours() >= 6) return [];
+  if (!cfg) return [];
   const day = ymd(new Date(now.getTime() - 86400000));
   STATE.qq.diaryDone ||= {}; STATE.qq.diaryTries ||= {};
   const fired = [];
   // 11-08 主人定：日记只私聊发给他（群里没人看），写在她和主人私聊的那一段里
   const owner = String(cfg.owner || "");
   if (!owner || STATE.qq.diaryDone.owner === day) return fired;
+  // 那天的已经有了（比如她在私聊里自己补过）：认下，不再叫
+  if (fs.existsSync(path.join(DIARY_DIR, day + ".md"))) { STATE.qq.diaryDone.owner = day; saveState(); return fired; }
+  // 零点照常叫；过了六点还没写，是那会儿网关没开着（11-10：App 夜里被关到中午，11-09 那篇整个漏了，成长也跟着没跑）。
+  // 这时候不再干等明晚，等她手上这一轮聊完就补；下面的 BUSY 照样管着，不插进正在跑的那一轮
+  const late = now.getHours() >= 6;
   const tk = "owner:" + day;
   if ((STATE.qq.diaryTries[tk] || 0) >= 3) return fired;
   const key = "p:" + owner;
@@ -2194,9 +2199,9 @@ export function diaryTick(cfg, now = new Date()) {
   STATE.qq.diaryTries = { [tk]: (STATE.qq.diaryTries[tk] || 0) + 1 };
   saveState();
   const ev = { message_type: "private", user_id: Number(owner), message_id: null, sender: { nickname: "日记" } };
-  const text = diaryPrompt(day, now);
+  const text = diaryPrompt(day, now, late);
   deliver(cfg, ev, key, "chat", text, text, null, "", { diary: day });
-  say(`[日记] 叫她写 ${day} 的日记（私聊发给主人）`);
+  say(`[日记] 叫她${late ? "补" : ""}写 ${day} 的日记（私聊发给主人）`);
   fired.push("owner");
   return fired;
 }

@@ -1216,14 +1216,13 @@ test("找姐姐的回条：只留三栏平铺的事实，标明是数据", () =>
 });
 
 
-test("日记：零点叫她写前一天的，最后的正文原样存、原样私聊发给主人；写过的不再叫，白天不叫", () => {
+test("日记：零点叫她写前一天的，最后的正文原样存、原样私聊发给主人；写过的不再叫；零点那会儿没叫上，白天补", () => {
   const c = { ...cfg, groups: { "555": "clean" } };
   STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
   fs.rmSync(DIARY_DIR, { recursive: true, force: true });
-  assert.deepEqual(diaryTick(c, new Date(2026, 10, 8, 14, 0)), [], "白天不叫");
   assert.deepEqual(diaryTick(c, new Date(2026, 10, 8, 0, 0)), ["owner"]);
   const q = queued.at(-1);
-  assert.match(q.message, /^\[日记\][\s\S]*11月7日过完了/);
+  assert.match(q.message, /^\[日记\][\s\S]*11月7日过完了。/);
   assert.equal(q.cwd, CLEAN_DIR, "写在她聊天那一段里");
   const n = REPLIES.length;
   finish(q, "今天直播又输了。\n\n不过泡面杯那张图我很喜欢。");
@@ -1252,6 +1251,17 @@ test("日记：零点叫她写前一天的，最后的正文原样存、原样�
   diaryTick(c, new Date(2026, 10, 9, 0, 0));
   finish(queued.at(-1), "");
   assert.deepEqual(diaryTick(c, new Date(2026, 10, 9, 0, 1)), ["owner"]);
+  finish(queued.at(-1), "");
+  // 零点那会儿网关没开着：到中午还没写，空下来就补，提示里说清是补的
+  STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 10, 12, 30)), ["owner"]);
+  assert.match(queued.at(-1).message, /11月9日过完了（零点那会儿网关没开着/);
+  finish(queued.at(-1), "补上了。");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 10, 12, 31)), [], "补完不再叫");
+  // 她自己在私聊里已经写过那天的：认下，不再叫
+  STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
+  fs.writeFileSync(path.join(DIARY_DIR, "2026-11-10.md"), "自己写的\n");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 11, 15, 0)), [], "有了就不叫");
 });
 
 test("聊天记录本：她发的、对方说的都记下，只能翻当前这个聊天；新开一段接上尾巴；聊久了没记东西提一句", async () => {
