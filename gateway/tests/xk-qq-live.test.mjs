@@ -99,8 +99,8 @@ test("直播：盲注第一手先说再打；过关攒成话题；节奏有上�
   await live._step();   // 结算：自动 cash_out，顺手把攒的话题说了
   assert.equal(f.acts[1].action, "cash_out");
   assert.ok(f.said.some((x) => x.includes("过了小盲注")));
-  // 一分钟内最多 4 句
-  live._S.said = [1, 2, 3, 4].map(() => f.deps.now());
+  // 一分钟内最多 6 句
+  live._S.said = [1, 2, 3, 4, 5, 6].map(() => f.deps.now());
   live._S.lastLine = -Infinity;
   const before = f.said.length;
   live._S.topics.push({ text: "x", key: true, at: f.deps.now() });
@@ -108,7 +108,7 @@ test("直播：盲注第一手先说再打；过关攒成话题；节奏有上�
   assert.equal(f.said.length, before);
 });
 
-test("直播：输了、下播都记进她的记忆", async () => {
+test("直播：一场只记一条，下播时写：各局怎么输的、整场最大一手", async () => {
   const f = fakeDeps();
   const st = handState([c("HJ"), c("DJ")], { hands_left: 1, ante: 3, blind: { name: "The Wall", boss: true }, jokers: [{ name: "小丑" }] });
   f.deps.bridge.state = async () => st;
@@ -117,7 +117,145 @@ test("直播：输了、下播都记进她的记忆", async () => {
   live._S.on = true;
   await live._step();
   assert.ok(f.said[0].includes("最后一手"), "最后一手先说");
-  assert.ok(f.mem.some((m) => m.includes("输了") && m.includes("The Wall") && m.includes("小丑")));
+  assert.equal(f.mem.length, 0, "打的时候不记");
   live.stop("测试");
-  assert.ok(f.mem.some((m) => m.includes("直播打了")));
+  assert.equal(f.mem.length, 1);
+  assert.ok(f.mem[0].includes("The Wall") && f.mem[0].includes("小丑") && f.mem[0].includes("对子 40") && f.mem[0].includes("一局没赢"), f.mem[0]);
+  const g = fakeDeps(), l2 = createLive(g.deps);
+  l2._S.on = true; l2.stop("测试");
+  assert.equal(g.mem.length, 0, "一局没打完不记");
+});
+
+test("直播：动作超时不拿同一帧重问，等画面换了再走；被拒的可以重来", async () => {
+  const f = fakeDeps();
+  const st = { ...handState([c("HJ"), c("DJ"), c("S4"), c("C4"), c("S2")]), seq: 5 };
+  let reads = 0, decides = 0;
+  f.deps.bridge.state = async () => (++reads > 4 ? { ...st, seq: 6 } : st);
+  f.deps.bridge.act = async (a) => { f.acts.push(a); throw new Error("超时"); };
+  const dec = f.deps.decide; f.deps.decide = async (b) => { decides++; return dec(b); };
+  const live = createLive(f.deps);
+  live._S.on = true;
+  await live._step();
+  assert.equal(f.acts.length, 1);
+  assert.ok(reads >= 5, "超时后一直读到换帧");
+  // 下一步读到的已经是新帧（seq 6），但同一帧 5 不会再决策
+  f.deps.bridge.state = async () => st;
+  await live._step();
+  assert.equal(decides, 1, "seq 5 动过了，不再问");
+  // 被拒：这一帧放开
+  f.deps.bridge.act = async () => { throw new Error("游戏拒绝 act：不合法"); };
+  live._S.actedSeq = null;
+  await live._step();
+  assert.equal(live._S.actedSeq, null);
+});
+
+test("直播：开新局的话先于第一个决定说出来", async () => {
+  const f = fakeDeps();
+  const live = createLive(f.deps);
+  live._S.on = true;
+  live._S.topics.push({ text: "[画面] 开了一局新的小丑牌（红色牌组、白注）。", key: true, at: 0 });
+  await live._step();
+  const first = f.said[0];
+  assert.ok(first.indexOf("开了一局新的") >= 0 && first.indexOf("开了一局新的") < first.indexOf("你决定"));
+});
+
+test("打法偏好写进决策请求", async () => {
+  const { decisionRequest } = await import("../gw/xk-balatro.mjs");
+  const body = decisionRequest({ state: "BLIND_SELECT", ante: 1, money: 4, jokers: [] }, [{ key: "play", label: "打" }], { style: ["前两个底注别跳盲注"] });
+  assert.match(body.state, /主播定下的打法偏好.*前两个底注别跳盲注/);
+  assert.doesNotMatch(decisionRequest({ state: "SHOP", jokers: [] }, [{ key: "x", label: "y" }]).state, /打法偏好/);
+});
+
+test("直播：进商店先报货架、等群友点单再动；点的单进决策，离店作废；开局带种子；每步都记", async () => {
+  let t = 0, i = 0;
+  const said = [], acts = [], bodies = [], recs = [];
+  const joker = { name: "贪婪小丑", set: "JOKER", effect: "方片 +3 倍率", price: 5 };
+  const shop = { state: "SHOP", ready: true, seq: 1, money: 10, jokers: [], capacity: { jokers: 5 }, shop: { cards: [joker] },
+    actions: { buy: { type: "object", properties: { card: { type: "integer", const: 0 } } }, next_round: {} } };
+  const blind = { state: "BLIND_SELECT", ready: true, seq: 2, money: 5, actions: { select: {}, skip: {} }, blinds: {} };
+  const menu = { state: "MENU", ready: true, seq: 3, actions: { start: { type: "object", properties: { deck: { const: "RED" }, stake: { enum: ["WHITE"] } } } } };
+  const seqs = [shop, shop, blind, menu];
+  const live = createLive({
+    now: () => t, sleep: async (ms) => { t += ms; },
+    bridge: { state: async () => seqs[Math.min(i, seqs.length - 1)], act: async (a) => { acts.push(a); i++; return { ok: true, events: [], state: {} }; } },
+    decide: async (body) => { bodies.push(body); return { answers: { move: { choice: Object.keys(body.questions.move.criteria)[0], confidence: 0.4 } } }; },
+    busy: () => false, speak: async (line) => { said.push(line); }, remember: () => {}, recent: () => [], log: () => {},
+    record: (o) => recs.push(o),
+  });
+  live._S.on = true;
+  await live._step();
+  assert.equal(acts.length, 0, "进店那一下先不动");
+  assert.ok(said[0].includes("进商店了") && said[0].includes("贪婪小丑"), "报了货架");
+  assert.ok(t >= 15000, "等了群友点单");
+  live.setIntent("买贪婪小丑");
+  await live._step();
+  assert.match(bodies[0].state, /主播这一步就想这么做.*买贪婪小丑/);
+  assert.match(bodies[0].state, /打法底子/);
+  assert.equal(acts[0].action, "buy");
+  i = 2; t += 10000;
+  await live._step();   // 离店到选盲注：想法作废
+  assert.equal(live.intent, "");
+  assert.doesNotMatch(bodies.at(-1).state, /主播这一步就想/);
+  i = 3;
+  await live._step();
+  const start = acts.find((a) => a.action === "start");
+  assert.match(start.seed, /^[1-9A-Z]{8}$/);
+  assert.ok(recs.some((r) => r.ev === "decide" && r.choice && r.options.length));
+  assert.ok(recs.some((r) => r.ev === "start" && r.seed === start.seed));
+});
+
+test("她的记忆：新开一段先带主人的规矩，再按这句话挑；带过的不再带；满了不悄悄删", async () => {
+  const { memAdd, memInject, catOf, MEM } = await import("../gw/xk-qq-mem.mjs");
+  let ms = [];
+  ms = memAdd(ms, { text: "回群里只用 send_message", cat: "主人的规矩" }, 1000).list;
+  ms = memAdd(ms, { text: "Ash 爱玩火影手游", cat: "群友" }, 2000).list;
+  assert.equal(catOf({ text: "11月7日直播打小丑牌输了", tag: "game" }), "游戏", "老的牌局记录归到游戏");
+  const seen = new Set();
+  const a = memInject(ms, "Ash 还玩火影手游吗", seen, { fresh: true, now: 3000 });
+  assert.ok(a.includes("send_message") && a.includes("火影"), a);
+  assert.equal(memInject(ms, "Ash 还玩火影手游吗", seen, { now: 3000 }), "", "带过的不带第二遍");
+  const { memTouch } = await import("../gw/xk-qq-mem.mjs");
+  assert.equal(memTouch(ms, seen, "inj", 3500), 2);
+  memTouch(ms, [ms[1].id], "q", 3600);
+  assert.deepEqual(ms[1].uses, { inj: 1, q: 1, last: 3600 }, "用到一次记一笔");
+  assert.equal(memInject(ms, "今天天气", new Set(), { now: 3000 }), "", "不相关的不带");
+  const r = memAdd(ms, { text: "Ash 爱玩火影手游，主玩水门", cat: "群友" }, 4000);
+  assert.ok(r.near.some((m) => m.text === "Ash 爱玩火影手游"), "同类里相近的交回去让她合并");
+  let big = [];
+  for (let i = 0; i < MEM.warnAt + 5; i++) big = memAdd(big, { text: "第" + i + "条", cat: "杂事" }, 5000 + i).list;
+  assert.equal(big.length, MEM.warnAt + 5, "过了 300 条也不删");
+});
+
+test("她的记忆：私聊记的只在私聊看得到，群里和日记看不到", async () => {
+  const { memAdd, memInject, memSearch, memVisible, sideOf } = await import("../gw/xk-qq-mem.mjs");
+  assert.equal(sideOf("p:123"), "p"); assert.equal(sideOf("g:555"), "g"); assert.equal(sideOf("sister:555"), "g");
+  let ms = [];
+  ms = memAdd(ms, { text: "主人私下说最近在准备考试", cat: "杂事", src: "p" }, 1000).list;
+  ms = memAdd(ms, { text: "群里在聊考试周", cat: "杂事" }, 2000).list;
+  assert.equal(ms[0].src, "p"); assert.equal(ms[1].src, undefined, "群里记的不多带字段，老记忆一样算群里");
+  const g = memVisible(ms, "g");
+  assert.deepEqual(g.map((m) => m.text), ["群里在聊考试周"]);
+  assert.ok(!memInject(g, "主人最近考试吗", new Set(), { fresh: true, now: 3000 }).includes("私下"));
+  assert.equal(memSearch(memVisible(ms, "p"), "考试", {}).length, 2, "私聊那边两边都看得到");
+  assert.throws(() => memAdd(ms, { text: "x", cat: "杂事", ends: [ms[0].id] }), /没有这条/, "群里改不了私聊记的");
+});
+
+test("直播：平常的几手边打边说、不等她；嘴上一句没说完就不插新的", async () => {
+  const f = fakeDeps();
+  let mouth = false, waited = 0;
+  f.deps.mouthBusy = () => mouth;
+  f.deps.speak = (line) => { f.said.push(line); return new Promise(() => {}); };   // 永远说不完：看动作等不等
+  const st = handState([c("HJ"), c("DJ"), c("S4"), c("C4"), c("S2")], { hands_played: 1, hands_left: 3, target: 5000 });
+  f.deps.bridge.state = async () => st;
+  const live = createLive(f.deps);
+  live._S.on = true;
+  const t0 = f.deps.now();
+  await live._step();
+  assert.equal(f.acts.length, 1, "照打");
+  assert.ok(f.said[0].startsWith("[画面] 出牌："), f.said[0]);
+  assert.ok(f.deps.now() - t0 < 10000, "没等她说完");
+  mouth = true; f.tick(20000); st.seq = 99;
+  await live._step();
+  assert.equal(f.said.length, 1, "嘴还在说，这句不插");
+  assert.equal(f.acts.length, 2);
 });

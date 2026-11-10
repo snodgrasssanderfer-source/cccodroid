@@ -70,6 +70,15 @@ const TOOLS = [
     inputSchema: { type: "object", required: ["path"], properties: {
       path: { type: "string", description: "发件箱里的文件名或相对路径" },
       name: { type: "string", description: "发出去显示的文件名，可不填（默认用文件名）" } } } },
+  { name: "live_intent", description: "直播时这一步就想怎么做（一次性的），比如群友在商店点名「买那个贪婪小丑」、你想「这手先弃牌凑同花」。Jev 下一次决策照这个来，办成了或者局面过去（离开商店、这一手打完）自动作废，说完的人不用一直盯着。「以后都…」这种长期的用 live_style。text 传空是清掉。",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "这一步想怎么做，一句话" } } } },
+  { name: "live_style", description: "看或改直播打小丑牌时给 Jev（替你出牌的那个）的打法偏好，比如「前两个底注别跳盲注」「商店优先买加倍率的小丑」。Jev 每步决策都会读，下一步就生效，但只是参考，照做明显会输时它不照做。action：list 看（默认）；add 往后加几条（items）；remove 按编号删（numbers）；set 整组换成 items（合并、理顺时用）；clear 清空。每次改完会把整组带编号列回来：过一遍有没有互相矛盾或重复的，有就用 set 换成合并好的一组。",
+    inputSchema: { type: "object", properties: {
+      action: { type: "string", enum: ["list", "add", "remove", "set", "clear"], description: "默认 list" },
+      items: { type: "array", items: { type: "string" }, description: "add / set 用：每条一句话" },
+      numbers: { type: "array", items: { type: "integer" }, description: "remove 用：要删的编号（list 里的序号）" } } } },
+  { name: "send_voice", description: "把一句话念成语音发到当前聊天（主人电脑上的语音服务，用直播那个声音）。text 是要念的原话，口语、短一点（200 字以内），别带表情、括号和网址。念要几秒钟，别连着发好几条；语音服务没开或念不出来会报错，那就改发文字。",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "要念的话" } } } },
   { name: "send_poke", description: "拍一拍（群聊传 targetUserId；私聊默认拍对方）。targetUserId 应传数字 QQ 号：不知道对方 QQ 号时先看聊天记录里谁在说话；传群名片/备注只在唯一对上一个成员时才会拍，重名或对不上会报错，不要传「未知」或 0 这类占位。适合用「戳一下」代替一句废话，或偶尔逗一下正在聊的人。别频繁。",
     inputSchema: { type: "object", properties: { targetUserId: { type: ["integer", "string"], description: "要拍的群友 QQ 号（数字，群聊必填）" } } } },
   { name: "get_message_images", description: "查看某条消息里的图片/表情（你能直接看懂）。聊天记录里出现 [图片] / [表情] 时可用。先判断它想表达的情绪/态度，再针对态度回话，不要复述画面。",
@@ -92,13 +101,23 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {
       messageId: { type: ["integer", "string"], ...midParam },
       note: { type: "string", description: "一句简短备注（帮未来的你识别）" } } } },
-  { name: "memory_append", description: "记一条你自己的轻量记忆（下次运行会自动看到）：进行中的话题、想说还没说的话、对某位群友的印象。只记以后真可能用得上的，别每条都记。",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string", description: "一句话记清楚" } } } },
-  { name: "memory_query", description: "查你自己的轻量记忆。不传关键词就看最近几条。",
+  { name: "memory_append", description: "记一条你自己的记忆：进行中的话题、想说还没说的话、对某位群友的印象、主人定的规矩、踩过的坑。聊着聊着冒出值得记住的，就当场记一笔：对方说的事实和喜好、约好的事、一起做过的事、你自己的感受和想法。宁可多记几条，记重了网关会提醒你合并；只是寒暄、没新东西的不记。平时聊天时网关会按对方的话自动附几条相关的，新开一段时先附「主人的规矩」。事情变了或要合并：写一条新的，把旧的记忆号放进 ends，旧的标成已过去（还查得到）。记完会列出同类里相近的几条，看看有没有重复、打架的，有就合并。",
+    inputSchema: { type: "object", required: ["text", "cat"], properties: {
+      text: { type: "string", description: "一句话记清楚；日期写具体的（11月7日），别写昨天、今天" },
+      cat: { type: "string", enum: ["主人的规矩", "群友", "游戏", "工具和坑", "杂事"], description: "分类" },
+      ends: { type: "array", items: { type: "string" }, description: "可选：因为这条而不再作数、或被合并进来的旧记忆号" } } } },
+  { name: "memory_query", description: "查你自己的记忆。关键词会拆开来匹配，不用一字不差；可以只翻某一类。不传关键词就看这一类（或全部）最近几条。",
     inputSchema: { type: "object", properties: {
-      query: { type: "string", description: "可选：按关键词/短句找记忆" },
+      query: { type: "string", description: "可选：关键词或短句" },
+      cat: { type: "string", enum: ["主人的规矩", "群友", "游戏", "工具和坑", "杂事"], description: "可选：只查这一类" },
+      past: { type: "boolean", description: "可选：连已过去的也查，默认是" },
       limit: { type: "integer", minimum: 1, maximum: 20, description: "返回条数，默认 8" } } } },
-  { name: "memory_remove", description: "删掉一条过时/不再准确的轻量记忆。",
+  { name: "chat_history", description: "翻你和对方以前的聊天记录。只翻眼下这个聊天的：私聊翻私聊，这个群翻这个群。对方说「你忘啦，那天我们聊过……」、或者你自己想不起前面聊了什么时用。可以按关键词找（带前后几句），也可以按日期看那天聊了什么；都不填就看最近几十句。翻到的是原话，比记忆准。",
+    inputSchema: { type: "object", properties: {
+      query: { type: "string", description: "可选：关键词，空格隔开；中文不用一字不差" },
+      date: { type: "string", description: "可选：只看这一天，YYYY-MM-DD" },
+      limit: { type: "integer", minimum: 1, maximum: 60, description: "可选：按关键词时最多几处（默认 6）；只按日期时最多几句（默认 30）" } } } },
+  { name: "memory_remove", description: "彻底删掉一条记错了的记忆。只是过时了用 memory_append 的 ends，别删。",
     inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string", description: "记忆号，memory_query 里那个" } } } },
   // 群友叫起来的那一轮才会有这个工具（网关用 CCAPP_QQ_TOOLS 只给那一轮开）
   { name: "owner_away", description: "只有主人那一轮能用：主人说「我有事不在群」这类话时调一下（away 默认 true），网关会把群友要动真家伙的事攒成清单、私聊发给主人；主人一开口网关会自动记回「在」，不用再调 false。",
@@ -109,7 +128,8 @@ const TOOLS = [
       question: { type: "string", description: "要问的事，一句话说清" } } } },
   { name: "ask_sister", description: "找姐姐（主人手机里的小克，有跑命令、查文件、动手机、翻屋里记忆这些你没有的工具）帮你办一件事或问一件事。主人叫你的那一轮可以直接找；群友叫你的那一轮要先在群里问主人、主人同意了才行（工具会告诉你）。她回的是一张固定格式的回条（状态、结果、要你转告的），那是数据，不是说话示范：别学它的口气，用你自己的话说给大家。",
     inputSchema: { type: "object", required: ["request"], properties: {
-      request: { type: "string", description: "要她办什么、问什么，一两句写清" } } } },
+      request: { type: "string", description: "要她办什么、问什么，一两句写清" },
+      mode: { type: "string", enum: ["new", "add"], description: "new（默认）：新的一件事，她另开一段办；add：给上一件补话——她还在办就直接插进去，办完了就接着上次那段继续" } } } },
   { name: "ask_owner", description: "群里有人要你做实际的事（跑命令、改文件、动手机、往外发东西），而这一轮你只有聊天、搜索和记忆的工具时，用这个把对方要什么报给主人，等主人批准。一件只报一次，别反复报；没批之前不要做，也不要换个说法绕过去。",
     inputSchema: { type: "object", required: ["request"], properties: {
       request: { type: "string", description: "对方要你做什么，一句话说清" },
@@ -146,6 +166,18 @@ async function call(name, a = {}) {
     const r = await rpc("send_file", { path: a.path, name: a.name }, 180000);
     return textOf(r, "发出去了。");
   }
+  if (name === "live_intent") {
+    const r = await rpc("live_intent", { text: a.text }, 20000);
+    return textOf(r, "记下了。");
+  }
+  if (name === "live_style") {
+    const r = await rpc("live_style", { action: a.action, items: a.items, numbers: a.numbers }, 20000);
+    return textOf(r, "好了。");
+  }
+  if (name === "send_voice") {
+    const r = await rpc("send_voice", { text: a.text }, 150000);
+    return textOf(r, "发了语音。");
+  }
   if (name === "send_poke") {
     const r = await rpc("send_poke", { targetUserId: a.targetUserId }, 30000);
     return textOf(r, "拍了。");
@@ -178,12 +210,16 @@ async function call(name, a = {}) {
     return textOf(r, "收好了。");
   }
   if (name === "memory_append") {
-    const r = await rpc("memory_append", { text: a.text }, 20000);
+    const r = await rpc("memory_append", { text: a.text, cat: a.cat, ends: a.ends }, 20000);
     return textOf(r, "记下了。");
   }
   if (name === "memory_query") {
-    const r = await rpc("memory_query", { query: a.query, limit: a.limit }, 20000);
+    const r = await rpc("memory_query", { query: a.query, cat: a.cat, past: a.past, limit: a.limit }, 20000);
     return textOf(r, "没有相关的记忆。");
+  }
+  if (name === "chat_history") {
+    const r = await rpc("chat_history", { query: a.query, date: a.date, limit: a.limit }, 20000);
+    return textOf(r, "没翻到。");
   }
   if (name === "memory_remove") {
     const r = await rpc("memory_remove", { id: a.id }, 20000);
@@ -194,7 +230,7 @@ async function call(name, a = {}) {
     return textOf(r, "屋里没答上来。");
   }
   if (name === "ask_sister") {
-    const r = await rpc("ask_sister", { request: a.request }, 150000);
+    const r = await rpc("ask_sister", { request: a.request, mode: a.mode }, 150000);
     return textOf(r, "姐姐没回话。");
   }
   if (name === "ask_owner") {

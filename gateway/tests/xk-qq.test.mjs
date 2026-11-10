@@ -12,9 +12,9 @@ import { END_HOOKS, START_GUARDS, cleanOpt } from "../gw/queue.mjs";
 import { projectSlug } from "../gw/projects.mjs";
 import { STATE } from "../gw/xk-core.mjs";
 import {
-  APPROVALS_FILE, CARD_FILE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
+  APPROVALS_FILE, CARD_FILE, TOOLS_NOTE_FILE, MEM_NUDGE, CLEAN_DIR, SELF_DIR, CONFIG_FILE, MEMORY_FILE, QQ_TOOLS, REPLIES, STICKER_FILE, decodeFrames, drainQQRpc,
   drainQQSay, ensureClean, handleEvent, pokeLine, cardText, expandB23, handleMessage, modeCmd, interjectBlock, loadConfig, maybeInterject, modeOf, qqLog, qqStatus, qqMcpConfig, resetQQ, splitBubbles,
-  shouldAnswer, startQQ, stopQQ, workReply, sisterNote } from "../gw/xk-qq.mjs";
+  shouldAnswer, startQQ, stopQQ, workReply, sisterNote, diaryTick, DIARY_DIR } from "../gw/xk-qq.mjs";
 import { gapForChars, leadDelayFor } from "../gw/xk-qq-port.mjs";
 import { ASK } from "../gw/xk-memory.mjs";
 import { memDirFor, qqMemDir } from "../gw/xk-memstore.mjs";
@@ -166,12 +166,14 @@ test("聊天模式：干净会话（不在 roles 下面），只开搜索和读�
   const st = JSON.parse(fs.readFileSync(path.join(CLEAN_DIR, ".claude/settings.json"), "utf8"));
   assert.deepEqual(st.permissions.allow.slice(0, 2), ["WebSearch", "WebFetch"]);
   assert.ok(st.permissions.allow.includes("mcp__qq__send_message"), "自己的聊天工具要能不用确认就用");
-  assert.ok(st.permissions.deny.includes("Write") && st.permissions.deny.includes("mcp__device") && st.permissions.deny.includes("mcp__xk-memory"));
+  assert.ok(st.permissions.deny.includes("mcp__xk-memory"));
+  for (const t of ["mcp__device", "mcp__bili"]) assert.ok(q.disallowedTools.includes(t), "群里每轮禁 " + t);
+  assert.ok(!st.permissions.allow.includes("Bash"), "项目设置里不放行跑命令");
   // 真正管用的是白名单：只有搜索、读网页两样内置工具，一个 MCP 都不挂，系统提示整个换成人设卡
   assert.deepEqual(q.clean.tools, ["WebSearch", "WebFetch"]);
   assert.ok(q.clean.systemPrompt.length > 0);
   for (const t of ["Read", "Grep", "Glob", "Task"]) assert.ok(q.disallowedTools.includes(t), "兜底也禁 " + t);
-  assert.ok(st.permissions.deny.includes("mcp__bili"), "全局挂着的 B站工具也禁");
+  assert.ok(!JSON.parse(q.clean.mcpConfig).mcpServers.bili, "群里不挂整套 B站");
   assert.ok(!fs.existsSync(path.join(CLEAN_DIR, "CLAUDE.md")), "人设卡不叫 CLAUDE.md");
   // 聊天模式只认 send_message 发的；最后那段文字（常是写给「你」的汇报）不往 QQ 发（11-07 漏进群）
   const n0 = REPLIES.length;
@@ -424,6 +426,34 @@ test("拍一拍照原版：群聊必须给号，号码必须是群里出现过�
   } finally { stopQQ(); bot.close(); }
 });
 
+test("send_voice：没配码先说清；配了就把文字交给语音服务念，WAV 当 record 发进群", async () => {
+  const bot = await connectedBot();
+  const got = [];
+  const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(200)]);
+  const tts = http.createServer((req, res) => {
+    let b = ""; req.on("data", (c) => (b += c));
+    req.on("end", () => { got.push({ path: req.url, code: req.headers["x-xk-code"], body: JSON.parse(b) }); res.writeHead(200, { "content-type": "audio/wav" }); res.end(wav); });
+  });
+  await new Promise((r) => tts.listen(0, "127.0.0.1", r));
+  const saved = fs.existsSync(CONFIG_FILE) ? fs.readFileSync(CONFIG_FILE, "utf8") : null;
+  try {
+    handleMessage(cfg, group(STRANGER, [{ type: "text", data: { text: "小克 说句话" } }]), "小克 说句话");
+    const q = queued.at(-1);
+    rpcReq("v0", q, "send_voice", { text: "你好呀" });
+    await drainQQRpc();
+    assert.match(rpcRes("v0").error, /配对码/, "没码要说清找主人配");
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...(saved ? JSON.parse(saved) : {}), voice: { code: "AB12", url: `http://127.0.0.1:${tts.address().port}`, role: "hachimi" } }));
+    rpcReq("v1", q, "send_voice", { text: "你好呀" });
+    await drainQQRpc();
+    assert.ok(rpcRes("v1").ok, rpcRes("v1").error);
+    assert.deepEqual(got, [{ path: "/tts", code: "AB12", body: { role: "hachimi", text: "你好呀" } }]);
+    const seg = bot.actions.filter((x) => x.action === "send_group_msg").at(-1).params.message.at(-1);
+    assert.equal(seg.type, "record");
+    assert.equal(seg.data.file, "base64://" + wav.toString("base64"));
+  } finally { if (saved == null) fs.rmSync(CONFIG_FILE, { force: true }); else fs.writeFileSync(CONFIG_FILE, saved); tts.close(); stopQQ(); bot.close(); }
+});
+
 test("send_message 照原版：字符串、字符串数组、对象数组都认；非法的 @ 只丢目标", async () => {
   const bot = await connectedBot();
   try {
@@ -546,17 +576,39 @@ test("她自己的轻量记忆：记、查、删，文件在 qq-clean 里，和�
   try {
     handleMessage(cfg, priv(STRANGER, "你好呀"), "你好呀");
     const q = queued[0];
-    rpcReq("m1", q, "memory_append", { text: "阿三喜欢猫" });
+    rpcReq("m0", q, "memory_append", { text: "阿三喜欢猫" });
+    await drainQQRpc();
+    assert.ok(!rpcRes("m0").ok, "不给分类不收");
+    rpcReq("m1", q, "memory_append", { text: "阿三喜欢猫", cat: "群友" });
     await drainQQRpc();
     assert.ok(rpcRes("m1").ok);
     assert.ok(MEMORY_FILE.startsWith(path.join(CFG.workspace, "qq-clean")));
     assert.ok(!MEMORY_FILE.startsWith(path.join(CFG.workspace, "roles")), "不在 roles 下面");
     const ms = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8"));
     assert.equal(ms.at(-1).text, "阿三喜欢猫");
-    rpcReq("m2", q, "memory_query", { query: "猫" });
+    rpcReq("m2", q, "memory_query", { query: "阿三养的什么" });
     await drainQQRpc();
-    assert.match(rpcRes("m2").result.text, /阿三喜欢猫/);
-    rpcReq("m3", q, "memory_remove", { id: ms.at(-1).id });
+    assert.match(rpcRes("m2").result.text, /阿三喜欢猫/, "拆开来匹配，不用一字不差");
+    rpcReq("m2b", q, "memory_query", { query: "阿三", cat: "游戏" });
+    await drainQQRpc();
+    assert.doesNotMatch(rpcRes("m2b").result.text, /阿三喜欢猫/, "只翻那一类");
+    // 事情变了：记新的，旧的放进 ends，标已过去，还查得到
+    rpcReq("m4", q, "memory_append", { text: "阿三现在更喜欢狗了", cat: "群友", ends: [ms.at(-1).id] });
+    await drainQQRpc();
+    assert.match(rpcRes("m4").result.text, /标成已过去/);
+    const ms2 = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8"));
+    assert.equal(ms2.find((m) => m.text === "阿三喜欢猫").past, true);
+    rpcReq("m5", q, "memory_query", { query: "阿三喜欢" });
+    await drainQQRpc();
+    assert.match(rpcRes("m5").result.text, /阿三喜欢猫（[^）]*已过去）/, "已过去的还查得到，标着");
+    assert.match(rpcRes("m5").result.text, /阿三现在更喜欢狗了（/);
+    // 聊天时按这句话自动附上相关的；同一段会话不附第二遍
+    finish(q);
+    const n0 = queued.length;
+    handleMessage(cfg, priv(STRANGER, "阿三最近喜欢什么"), "阿三最近喜欢什么");
+    const msg = queued.at(-1).message;
+    assert.ok(queued.length > n0 && /\[你记得的/.test(msg) && msg.includes("阿三现在更喜欢狗了") && !msg.includes("阿三喜欢猫"), msg);
+    for (const m of ms2) { rpcReq("r" + m.id, queued.at(-1), "memory_remove", { id: m.id }); }
     await drainQQRpc();
     assert.deepEqual(JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8")), []);
   } finally { stopQQ(); bot.close(); }
@@ -941,6 +993,38 @@ test("群里那轮没调 send_message：最后那段短话切成几个气泡", (
   assert.deepEqual(REPLIES.slice(before).map((x) => x.text), ["来了。", "你有什么事？"]);
 });
 
+test("主人私聊那段多一套 Claude Code 的家什，先告诉她自己是 Claude；群里和别人照旧", () => {
+  ensureClean("p");   // 卡的 hash 先认下（不然头一轮会当成换了卡、把旧段放掉）
+  STATE.qq.sessions["p:" + OWNER] = "old-sid";
+  handleMessage(cfg, priv(OWNER, "帮我看看下载目录"), "帮我看看下载目录");
+  const q = queued.at(-1);
+  for (const t of ["Bash", "Read", "Edit", "Write"]) { assert.ok(q.clean.tools.includes(t), "有 " + t); assert.ok(q.allowedTools.includes(t)); assert.ok(!q.disallowedTools.includes(t)); }
+  for (const t of ["Agent", "Skill"]) assert.ok(q.clean.tools.includes(t) && !q.disallowedTools.includes(t), "主人 11-09 全开：" + t);
+  for (const t of ["mcp__device", "mcp__bili"]) assert.ok(q.allowedTools.includes(t), "放行 " + t);
+  assert.match(q.clean.systemPrompt, /你是 Claude[\s\S]*那是工具的口气，不是你的/);
+  assert.equal(q.sessionId, "old-sid", "带上家什不重开：旧段照续");
+  assert.match(q.message, /^\[你设定后面那几节更新了[\s\S]*手边的工具[\s\S]*\[\/更新\]/, "续旧段时系统提示换不进去：改在消息前面附上");
+  finish(q, "看好了");
+  handleMessage(cfg, priv(OWNER, "再看看"), "再看看");
+  assert.ok(queued.at(-1).sessionId, "之后照常续着");
+  assert.ok(!queued.at(-1).message.includes("[/更新]"), "一段里只附一次");
+  finish(queued.at(-1), "好");
+  fs.writeFileSync(TOOLS_NOTE_FILE, "主人改过的那段\n");
+  handleMessage(cfg, priv(OWNER, "改好了"), "改好了");
+  assert.match(queued.at(-1).clean.systemPrompt, /主人改过的那段/);
+  assert.ok(queued.at(-1).sessionId, "那段话改了也不重开");
+  assert.match(queued.at(-1).message, /主人改过的那段[\s\S]*\[\/更新\]/, "改过的那版附在这句前面");
+  finish(queued.at(-1), "好");
+  fs.rmSync(TOOLS_NOTE_FILE);
+  handleMessage(cfg, priv(STRANGER, "帮我跑个命令"), "帮我跑个命令");
+  assert.deepEqual(queued.at(-1).clean.tools, ["WebSearch", "WebFetch"], "别人私聊没有");
+  assert.ok(!queued.at(-1).clean.systemPrompt.includes("手边的家什"));
+  finish(queued.at(-1), "好");
+  handleMessage(cfg, group(OWNER, [{ type: "text", data: { text: "小克 跑个命令" } }]), "小克 跑个命令");
+  assert.deepEqual(queued.at(-1).clean.tools, ["WebSearch", "WebFetch"], "群里就算是主人叫也没有");
+  finish(queued.at(-1), "好");
+});
+
 test("群里干活那段是模型本色：不叠口吻、不叫主管；私聊和群里同一张聊天卡", () => {
   handleMessage(selfCfg, group(STRANGER, [{ type: "text", data: { text: "小克 在吗" } }]), "小克 在吗");
   const q = queued.at(-1);
@@ -1131,3 +1215,123 @@ test("找姐姐的回条：只留三栏平铺的事实，标明是数据", () =>
   assert.ok(raw.length < 300 && !raw.includes("##"));
 });
 
+
+test("日记：零点叫她写前一天的，最后的正文原样存、原样私聊发给主人；写过的不再叫；零点那会儿没叫上，白天补", () => {
+  const c = { ...cfg, groups: { "555": "clean" } };
+  STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
+  fs.rmSync(DIARY_DIR, { recursive: true, force: true });
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 8, 0, 0)), ["owner"]);
+  const q = queued.at(-1);
+  assert.match(q.message, /^\[日记\][\s\S]*11月7日过完了。/);
+  assert.equal(q.cwd, CLEAN_DIR, "写在她聊天那一段里");
+  const n = REPLIES.length;
+  finish(q, "今天直播又输了。\n\n不过泡面杯那张图我很喜欢。");
+  assert.equal(fs.readFileSync(path.join(DIARY_DIR, "2026-11-07.md"), "utf8"), "今天直播又输了。\n\n不过泡面杯那张图我很喜欢。\n");
+  const sent = REPLIES.slice(n).filter((r) => r.text.includes("泡面杯") && r.text.includes("又输了"));
+  assert.ok(sent.length, "整篇原样发，不拆、不筛");
+  assert.ok(sent.every((r) => r.key === "p:" + OWNER), "只私聊发给主人，不进群");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 8, 0, 1)), [], "写过了不再叫");
+  // 日记写完接着回想「我是谁」：另开一段、不带工具，交上来的整份由网关存，接在卡后面
+  const g = queued.find((x) => /^\[成长\]/.test(x.message));
+  assert.ok(g, "写完日记接着回想");
+  assert.match(g.message, /泡面杯/); assert.match(g.message, /【我是谁】/);
+  assert.deepEqual(g.clean.tools, [], "回想那轮不给工具");
+  const m = REPLIES.length;
+  assert.match(g.message, /【我和主人】/);
+  finish(g, "【我是谁】\n好像挺喜欢看群友的图。\n【/我是谁】\n【我和主人】\n他管我叫小克，睡前常来说晚安。\n【/我和主人】\n【改了什么】\n- 加了一条：今天看泡面杯那张图很开心\n【/改了什么】");
+  assert.equal(REPLIES.length, m, "回想那轮不往 QQ 发东西");
+  assert.match(fs.readFileSync(path.join(CLEAN_DIR, "growth", "self.md"), "utf8"), /喜欢看群友的图/);
+  assert.match(ensureClean("g"), /# 我是谁[\s\S]*喜欢看群友的图/, "群里也接「我是谁」");
+  assert.ok(!ensureClean("g").includes("睡前常来说晚安"), "群里不带「我和主人」");
+  assert.ok(!ensureClean("p").includes("睡前常来说晚安"), "别人私聊也不带");
+  assert.match(ensureClean("p", true), /我和主人之间[\s\S]*睡前常来说晚安/, "只有主人私聊带");
+  fs.rmSync(path.join(CLEAN_DIR, "growth"), { recursive: true, force: true });
+  // 没写出来：放开，下一分钟再叫
+  STATE.qq.diaryDone = {};
+  diaryTick(c, new Date(2026, 10, 9, 0, 0));
+  finish(queued.at(-1), "");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 9, 0, 1)), ["owner"]);
+  finish(queued.at(-1), "");
+  // 零点那会儿网关没开着：到中午还没写，空下来就补，提示里说清是补的
+  STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 10, 12, 30)), ["owner"]);
+  assert.match(queued.at(-1).message, /11月9日过完了（零点那会儿网关没开着/);
+  finish(queued.at(-1), "补上了。");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 10, 12, 31)), [], "补完不再叫");
+  // 她自己在私聊里已经写过那天的：认下，不再叫
+  STATE.qq.diaryDone = {}; STATE.qq.diaryTries = {};
+  fs.writeFileSync(path.join(DIARY_DIR, "2026-11-10.md"), "自己写的\n");
+  assert.deepEqual(diaryTick(c, new Date(2026, 10, 11, 15, 0)), [], "有了就不叫");
+});
+
+test("聊天记录本：她发的、对方说的都记下，只能翻当前这个聊天；新开一段接上尾巴；聊久了没记东西提一句", async () => {
+  const bot = await connectedBot();
+  try {
+  let k = 0;
+  const rpcCall = async (q, tool, args) => { const id = "cl" + (++k); rpcReq(id, q, tool, args); await drainQQRpc(); const r = rpcRes(id); assert.ok(r.ok, r.error); return r.result; };
+  handleMessage(cfg, priv(OWNER, "我们去看了摩天轮"), "我们去看了摩天轮");
+  const q = queued.at(-1);
+  await rpcCall(q, "send_message", { messages: ["记得 最后那一圈"] });
+  finish(q, "嗯");
+  handleMessage(cfg, priv(STRANGER, "我是路人"), "我是路人");
+  const q2 = queued.at(-1);
+  const other = await rpcCall(q2, "chat_history", { query: "摩天轮" });
+  assert.match(other.text, /没翻到|还没有记录/, "别人那个聊天翻不到主人私聊");
+  finish(q2, "嗯");
+  handleMessage(cfg, priv(OWNER, "你还记得吗"), "你还记得吗");
+  const q3 = queued.at(-1);
+  const mine = await rpcCall(q3, "chat_history", { query: "摩天轮" });
+  assert.match(mine.text, /主人：我们去看了摩天轮[\s\S]*你：记得 最后那一圈/);
+  finish(q3, "嗯");
+  // 段落没了（比如卡换了）：新的一段开头带上一段最后几句
+  delete STATE.qq.sessions["p:" + OWNER];
+  handleMessage(cfg, priv(OWNER, "接着说"), "接着说");
+  assert.match(queued.at(-1).message, /\[刚才的聊天[\s\S]*摩天轮[\s\S]*\[\/刚才的聊天\]/);
+  finish(queued.at(-1), "嗯");
+  // 一直不记：到第 MEM_NUDGE 句提一句
+  let hit = null;
+  for (let i = 0; i < MEM_NUDGE && !hit; i++) {
+    handleMessage(cfg, priv(STRANGER, "闲聊" + i), "闲聊" + i);
+    if (/没记东西/.test(queued.at(-1).message)) hit = i;
+    finish(queued.at(-1), "嗯");
+  }
+  assert.ok(hit != null, "聊久了提醒记一笔");
+  } finally { stopQQ(); bot.close(); }
+});
+
+test("主人私聊那段要批的操作：在 QQ 上问主人，回「批」放行、「不批」拒绝；别人回不算，群里照旧无人值守", async () => {
+  const { RUNS } = await import("../gw/runs.mjs");
+  const { publish } = await import("../gw/bus.mjs");
+  ensureClean("p");
+  handleMessage(cfg, priv(OWNER, "把书架改成倒地"), "把书架改成倒地");
+  const q = queued.at(-1);
+  assert.equal(q.unattended, false, "主人私聊那段不算无人值守");
+  const answers = [];
+  RUNS.set(q.id, { id: q.id, answerPerm: (id, a) => { answers.push([id, a.behavior]); return true; } });
+  try {
+    publish({ type: "perm_request", runId: q.id, id: "p1", tool: "Bash", input: { command: "rm -f ../shots/*" } });
+    publish({ type: "perm_request", runId: q.id, id: "p2", tool: "Bash", input: { command: "rm -rf build/*" } });
+    handleMessage(cfg, priv(STRANGER, "批"), "批");
+    assert.equal(answers.length, 0, "别人说批不算");
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.deepEqual(answers, [["p1", "allow"]], "一次只答最前面那条");
+    handleMessage(cfg, priv(OWNER, "不批"), "不批");
+    assert.deepEqual(answers.at(-1), ["p2", "deny"]);
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.equal(answers.length, 2, "没在等的时候，「批」就是普通的一句话");
+    // 跑完了：还没答的作废
+    publish({ type: "perm_request", runId: q.id, id: "p3", tool: "Bash", input: { command: "rm x/*" } });
+    publish({ type: "run_end", runId: q.id });
+    handleMessage(cfg, priv(OWNER, "批"), "批");
+    assert.equal(answers.length, 2, "那一轮结束了就不再答");
+  } finally { RUNS.delete(q.id); (await import("../gw/queue.mjs")).pump(); }
+  // 那一轮收尾后，攒着的主人的话递进去：只有没人等时说的那两句「批」，回确认的「批」「不批」不当聊天
+  finish(q, "");
+  const next = queued.at(-1);
+  assert.notEqual(next, q);
+  assert.equal((next.message.match(/批/g) || []).length, 2, next.message);
+  assert.ok(!next.message.includes("不批"), next.message);
+  // 别人的私聊、群里：照旧无人值守
+  handleMessage(cfg, priv(STRANGER, "你好"), "你好");
+  assert.equal(queued.at(-1).unattended, true);
+});

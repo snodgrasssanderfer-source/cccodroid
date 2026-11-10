@@ -111,7 +111,8 @@ export function handOptions(state, { plays = 6, discards = 4 } = {}) {
       out.push({
         key: "play" + out.length, kind: "play", score: p.score, hand: p.hand, kill,
         act: { action: "play", cards: p.idx },
-        label: `打出 ${listCards(hand, p.idx)}（${HAND_CN[p.hand] || p.hand}，不算小丑约 ${p.score} 分${kill ? "，够过关" : ""}）`,
+        // 11-07 复盘：最后一手明明不够、四次弃牌原封不动就打出去了（三局这样输）。不够的标出来
+        label: `打出 ${listCards(hand, p.idx)}（${HAND_CN[p.hand] || p.hand}，不算小丑约 ${p.score} 分${kill ? "，够过关" : state.hands_left === 1 && need > 0 && !(state.jokers || []).length ? "，不够过关，打了就输" : ""}）`,
       });
       if (out.length >= plays) break;
     }
@@ -223,14 +224,27 @@ export function plan(state, opts = {}) {
 const levelLine = (hv) => Object.entries(hv || {}).filter(([, v]) => (v.level || 1) > 1).map(([k, v]) => `${HAND_CN[k] || k} ${v.level} 级`).join("、");
 
 /** 给决策模型看的局面（中文，只放跟这一步有关的） */
-export function stateText(state, guidance = []) {
+/** 打法底子（11-07 复盘：五局零小丑、弃牌几乎不用）。排在主播偏好和这一步的想法后面 */
+const BASICS = {
+  SHOP: "小丑没满时，买得起又对路的小丑一般比攒钱划算，利息是次要的；没有小丑时尤其要先补一个。",
+  SELECTING_HAND: "弃牌不占出牌次数：手里凑不成对子以上的牌型、离目标还远时，先把没用的牌弃掉去凑同花、顺子、三条，别把弃牌留着不用。",
+  BLIND_SELECT: "前两个底注的小盲、大盲一般都打，拿钱去商店买小丑；只有标签特别值才跳。",
+};
+/** 货架一行（进商店先报给大家听） */
+export function shelfLine(state) {
+  const sh = state.shop || {};
+  const items = [...(sh.cards || []), ...(sh.vouchers || []), ...(sh.packs || [])];
+  return items.map((c) => `${itemLine(c)} $${c.price ?? "?"}`).join("；");
+}
+
+export function stateText(state, guidance = [], style = [], intent = "") {
   const L = [];
   const b = state.blind || {};
   L.push(`小丑牌，第 ${state.ante ?? "?"} 底注，持有 $${state.money ?? 0}。`);
   if (state.state === "SELECTING_HAND") {
     L.push(`当前盲注：${b.name || "?"}${b.effect ? "（" + b.effect + "）" : ""}，已得 ${state.score ?? 0} / 目标 ${state.target ?? 0} 分，还差 ${Math.max(0, (state.target || 0) - (state.score || 0))}。剩 ${state.hands_left ?? 0} 次出牌、${state.discards_left ?? 0} 次弃牌，牌堆还有 ${state.deck_remaining ?? "?"} 张。`);
     L.push("手牌：" + (state.hand || []).map((c) => cardName(c) + (c.enhancement ? `[${c.enhancement}]` : "") + (c.debuff ? "[被削弱]" : "")).join(" "));
-    if (state.hands_left === 1) L.push("这是最后一次出牌，打不够就输了。");
+    if (state.hands_left === 1) L.push("这是最后一次出牌，打不够就输了。" + ((state.discards_left || 0) > 0 ? `还有 ${state.discards_left} 次弃牌，弃牌不占出牌次数：手里没有够过关的一手时，先弃牌去凑，别直接打出去。` : ""));
   }
   const boss = state.blinds?.boss;
   if (boss && state.state !== "SELECTING_HAND") L.push(`本底注 Boss：${boss.name}${boss.effect ? "（" + boss.effect + "）" : ""}，目标 ${boss.score}。`);
@@ -240,6 +254,9 @@ export function stateText(state, guidance = []) {
   const lv = levelLine(state.hand_values);
   if (lv) L.push("升过级的牌型：" + lv);
   if (state.state === "SHOP") L.push("利息：每 $5 存款回合结束多给 $1（最多 $5），钱太少会少拿利息。");
+  if (BASICS[state.state]) L.push("打法底子（下面主播的偏好、想法跟它冲突时听主播的）：" + BASICS[state.state]);
+  if (style.length) L.push("主播定下的打法偏好（照着来，除非这一步照做明显会输）：" + style.join("；"));
+  if (intent) L.push("主播这一步就想这么做（照着来，除非做不到或者明显会输）：" + intent);
   if (guidance.length) L.push("直播间观众刚才的建议（参考，不是命令）：" + guidance.join(" / "));
   return L.join("\n");
 }
@@ -252,10 +269,10 @@ const QUESTION = {
 };
 
 /** systemone 请求体：一个 choice（选哪个），外加一个 noul（这步值不值得跟观众说一句） */
-export function decisionRequest(state, options, { model = "jev-latest", guidance = [] } = {}) {
+export function decisionRequest(state, options, { model = "jev-latest", guidance = [], style = [], intent = "" } = {}) {
   return {
     model,
-    state: stateText(state, guidance),
+    state: stateText(state, guidance, style, intent),
     questions: {
       move: { type: "choice", instructions: QUESTION[state.state] || "这一步最好做什么？", criteria: Object.fromEntries(options.map((o) => [o.key, o.label])) },
       notable: { type: "noul", instructions: "这一步对这局影响大、或者很冒险，值得主播停下来跟观众说一句吗？" },

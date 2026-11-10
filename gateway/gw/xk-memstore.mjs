@@ -123,7 +123,7 @@ export function remove(dir, id) {
 }
 
 // 关键词：英文数字按词，中文按相邻两字（不分词也能匹配上「面包」「书架」这类词）
-function tokens(s) {
+export function tokens(s) {
   const out = new Set();
   const t = String(s).toLowerCase();
   for (const w of t.match(/[a-z0-9]{2,}/g) || []) out.add(w);
