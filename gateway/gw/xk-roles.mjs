@@ -12,9 +12,18 @@ import { readSelf, selfSection } from "./xk-growth-core.mjs";
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
   { id: "xiaoke", name: "小克", provider: "anthropic", engine: "claude" },   // 主人的 Claude 订阅（上游的「Claude 账户登录」）
-  { id: "hachimi", name: "哈基米", provider: null, engine: "agy" },           // Gemini，经 Antigravity CLI（xk-agy.mjs）
+  // Gemini：默认经 Antigravity CLI（xk-agy.mjs）；hachimi-engine.json 里指了接口，就改走 Claude Code + 那家（主人 11-10：官方渠道连不上，换中转站）
+  { id: "hachimi", name: "哈基米", get provider() { return hachimiAlt()?.provider || null; }, get engine() { return hachimiAlt() ? "claude" : "agy"; } },
   { id: "deepseek", name: "DeepSeek", provider: "deepseek", engine: "claude" },
 ];
+/** 哈基米改走 Claude Code 时用哪家接口：~/.config/xiaoke/hachimi-engine.json {"provider":"<接口 id>"}；没有这个文件就照旧 agy */
+export const HACHIMI_ENGINE_FILE = path.join(xkHome(CFG.home), "hachimi-engine.json");
+let altSeen = { mt: null, v: null };
+export function hachimiAlt() {
+  let mt = null; try { mt = fs.statSync(HACHIMI_ENGINE_FILE).mtimeMs; } catch {}
+  if (mt !== altSeen.mt) { let v = null; try { v = mt == null ? null : JSON.parse(fs.readFileSync(HACHIMI_ENGINE_FILE, "utf8")); } catch {} altSeen = { mt, v }; }
+  return altSeen.v && typeof altSeen.v.provider === "string" && altSeen.v.provider ? altSeen.v : null;
+}
 // name 是角色名（给上游、给引擎看的）；界面上叫「小鱼」这些，在 xk-shared.mjs 的 DISPLAY / displayName 里
 export const roleById = (id) => ROLES.find((r) => r.id === id) || null;
 export const roleDir = (id) => path.join(ROLES_DIR, id);
