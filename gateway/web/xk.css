@@ -385,3 +385,31 @@ html[data-motion="off"] #xk-ob, html[data-motion="off"] #xk-ob * { transition-du
 .xk-padsas b { display: block; font-size: 40px; letter-spacing: .22em; font-variant-numeric: tabular-nums; color: var(--accent); margin: 6px 0 10px; }
 .xk-padsas div { display: flex; gap: 10px; justify-content: center; }
 .xk-padsas .xk-mini.on { background: var(--accent); color: var(--on-accent); }
+
+/* 12号 的聊天室（主人 11-10）：借「我们仨」那页的气泡，头图和头像先用代码画（这轮不出图） */
+#xk-qqroom { position: fixed; inset: 0; z-index: 27; background: var(--bg); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .38s var(--xk-ease); }
+#xk-qqroom.on { transform: none; }
+#xk-qqroom button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.xk-qq-h { height: calc(var(--safe-tt, env(safe-area-inset-top, 0px)) + 88px); background-image: linear-gradient(135deg, color-mix(in srgb, #d9738f 22%, var(--bg2)), var(--bg2) 70%); gap: 10px; align-items: flex-end; }
+.xk-qq-av12 { display: inline-grid; place-items: center; flex: none; border-radius: 50%; background: #d9738f; color: #fff; font-style: normal; font-weight: 700; letter-spacing: -.02em; box-shadow: 0 0 0 1.5px #d9738f; }
+#xk-qqroom .xk-rm-av img, #xk-qqroom .xk-rm-chip img, #xk-qqroom .xk-rm-typing img { border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.5px var(--c); }
+.xk-qq-invite i { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 20px; color: var(--fg2); box-shadow: inset 0 0 0 1.5px var(--line); }
+.xk-qq-state { flex: none; margin: 0 16px 4px; font-size: 12px; color: var(--fg3); }
+.xk-qq-state.off { color: var(--err, #e5484d); }
+.xk-qq-via { font-size: 10px; font-weight: 400; color: var(--fg3); margin-inline-start: 6px; padding: 0 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); }
+.xk-rm-me .xk-qq-via { display: block; width: max-content; margin: 2px 4px 0 auto; }
+.xk-qq-perm { display: flex; flex-direction: column; align-items: center; gap: 6px; border-radius: 12px; padding: 8px 12px; max-width: 86%; text-align: center; }
+.xk-qq-perm span { display: flex; gap: 8px; }
+.xk-qq-perm button { padding: 4px 16px !important; border-radius: 999px; background: var(--bg3) !important; }
+.xk-qq-perm button:first-child { background: var(--accent) !important; color: var(--on-accent) !important; }
+.xk-qq-perm button:disabled { opacity: .5; }
+.xk-qq-img img { display: block; max-width: min(220px, 60vw); max-height: 240px; border-radius: 10px; }
+.xk-qq-img { background: none !important; box-shadow: none !important; padding: 0 !important; }
+.xk-qq-guests { display: grid; gap: 8px; margin-top: 10px; }
+.xk-qq-guests button { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; text-align: start; padding: 10px 14px; border-radius: 14px; background: var(--bg2); color: var(--fg); border: 0; box-shadow: inset 0 0 0 1.5px transparent; }
+.xk-qq-guests button img { grid-row: span 2; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.5px var(--c); }
+.xk-qq-guests button.on { box-shadow: inset 0 0 0 1.5px var(--c); }
+.xk-qq-guests button small { color: var(--fg3); font-size: 12px; }
+.xk-qq-guests button:disabled { opacity: .45; }
+#xk-qq-dot { position: absolute; top: 10px; inset-inline-end: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--err, #e5484d); display: none; }
+#xk-qq-dot.on { display: block; }

@@ -309,7 +309,7 @@
     for (const r of Object.keys(ROLE)) fetch(stateArt("offline", r)).then((x) => x.blob()).then((bl) => { OFF[r] = URL.createObjectURL(bl); }).catch(() => {});
     es.onerror = () => { if (!offT) offT = setTimeout(() => { offT = 0; if (es.readyState !== 1 && !offSaid) { offSaid = true; toast("连不上了", "小屋的网关没应答，正在重连", OFF[root.dataset.xkRole] || OFF.xiaoke, true); } }, 4000); };
     // 连回来时也清一遍：断线那段里漏掉的 run_end 补不回来了
-    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } resetRuns(); };
+    es.onopen = () => { clearTimeout(offT); offT = 0; if (offSaid) { offSaid = false; toast("连上了", "", sprite(root.dataset.xkRole, "wave")); } resetRuns(); if (qqEl) qqLoad().catch(() => {}); };
     es.onmessage = (m) => {
       let ev; try { ev = JSON.parse(m.data); } catch { return; }
       if (ev.type === "xk") {
@@ -338,6 +338,9 @@
         else if (ev.op === "room") roomMsg(ev.msg);
         else if (ev.op === "room_mode") roomModePaint(ev.mode);
         else if (ev.op === "room_typing") roomTyping(ev.role, ev.on);
+        else if (ev.op === "qqapp") qqMsg(ev.msg);
+        else if (ev.op === "qqapp_typing") qqTyping(ev.who, ev.on);
+        else if (ev.op === "qqapp_members") qqPaintMembers(ev.members);
         else if (ev.op === "memory_failed") toast(`${rname(ev.role)}整理记忆没成功`, ev.error, null, true);
         else if (ev.op === "pad_pending" || ev.op === "pad_paired") {
           if (meSub?.dataset.k === "pad") SUB.pad(meSub.querySelector(".xk-subb")).catch(() => {});
@@ -491,6 +494,7 @@
     const b = body("roles"), order = ROLES.order.filter((id) => ROLE[id]);
     b.innerHTML = `<div class="xk-cards">${order.map((id) => `<button class="xk-card xk-press${id === cur.role ? " on" : ""}" data-id="${id}" style="--c:var(--xk-c-${id === "deepseek" ? "xiaoyu" : id});--s:var(--xk-s-${id === "deepseek" ? "xiaoyu" : id})"><img src="${sprite(id, asleep(id) ? "sleeping" : "idle")}" alt=""><b>${rname(id)}</b><span class="xk-tag">${roleState(id)}</span></button>`).join("")}</div>
       <button class="xk-wide xk-press" id="xk-room-go" style="margin-top:12px">进群，三个人一起聊</button>
+      <button class="xk-wide xk-press" id="xk-qq-go" style="margin-top:8px;position:relative">和 12号 聊<i id="xk-qq-dot"></i></button>
       <div class="xk-block"><h2 class="xk-bh">留言板<button class="xk-mini xk-press" id="xk-b-new">贴一张</button></h2><div id="xk-board"></div></div>
       <div class="xk-block"><h2>替班顺序</h2><div class="xk-order">${order.map((id, i) => `${i ? `<button class="xk-swap xk-press" data-i="${i}" aria-label="交换顺序">${svg("swap")}</button>` : ""}<div class="o"><i style="background-image:url('${sprite(id, "idle")}')"></i><span>${rname(id)}</span></div>`).join("")}</div>
         <p class="xk-hint">谁的额度用完，就由下一位接班，只带上刚才那段对话；额度恢复后交还。点中间的箭头换顺序。</p></div>
@@ -503,6 +507,7 @@
     });
     $("#xk-b-new", b).onclick = () => { SFX.play("tap"); postSheet(); };
     $("#xk-room-go", b).onclick = () => openRoom();
+    $("#xk-qq-go", b).onclick = () => openQQ();
     paintBoard(); loadBoard().then(paintBoard).catch(fail);
     $("#xk-imp", b).onchange = (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) importSheet(fs).catch(fail); };
   }
@@ -1508,6 +1513,136 @@
     return true;
   }
 
+  // ── 12号 的聊天室（主人 11-10 定）：QQ 断了也能在 App 里和她聊；她就是 QQ 上那个她（网关 xk-qq-app.mjs，进她和主人私聊的同一段）。
+  //    访客：点「请人」把小克 / 哈基米 / 小鱼请进来，再点一次请出去。头像先用代码画的圆（主人 11-10：这轮不出图）
+  let qqEl = null, qqLast = -1, qqTo = new Set(), qqMem = null;
+  const qqTalking = new Set();
+  const QQ_C = "#d9738f";
+  const qqAv = (id, size = 36) => id === "twelve"
+    ? `<i class="xk-qq-av12" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px">12</i>`
+    : `<img src="${bub(id, "idle")}" alt="" style="width:${size}px;height:${size}px">`;
+  const qqName = (id) => id === "twelve" ? "12号" : rname(id);
+  const qqColor = (id) => id === "twelve" ? QQ_C : rc(id);
+  function qqBody(m) {
+    const src = m.media ? "/api/xk/qqapp/media/" + encodeURIComponent(m.media) : "";
+    if (m.kind === "image" && src) return `<p class="xk-qq-img"><img src="${src}" alt="图片" loading="lazy"></p>`;
+    if (m.kind === "audio" && src) return `<p><audio controls preload="none" src="${src}"></audio></p>`;
+    if (m.kind === "file" && src) return `<p><a href="${src}" download="${esc(m.text)}">${esc(m.text || "文件")}</a></p>`;
+    return foldBody(m.text);
+  }
+  function qqRow(m) {
+    const qq = m.via === "qq" ? '<small class="xk-qq-via">QQ</small>' : "";
+    if (m.from === "system" && m.kind === "perm") return `<div class="xk-rm-sys xk-qq-perm" data-n="${m.n}">${esc(m.text)}${qq}<span><button class="xk-press" data-say="批">批</button><button class="xk-press" data-say="不批">不批</button></span></div>`;
+    if (m.from === "system") return `<div class="xk-rm-sys" data-n="${m.n}">${esc(m.text)}${qq}</div>`;
+    if (m.from === "owner") return `<div class="xk-rm-me" data-n="${m.n}"><p>${esc(m.text)}</p>${qq}</div>`;
+    return `<div class="xk-rm-her" data-n="${m.n}" style="--c:${qqColor(m.from)}"><span class="xk-rm-av">${qqAv(m.from)}</span><div><b>${qqName(m.from)}${qq}</b>${qqBody(m)}</div></div>`;
+  }
+  function qqPaintMembers(ms) {
+    if (ms) qqMem = ms;
+    const box = qqEl && $(".xk-rm-mem", qqEl); if (!box || !qqMem) return;
+    const st12 = qqTalking.has("twelve") ? "在说…" : "在这儿";
+    const chips = [`<button class="xk-rm-chip xk-press${qqTo.has("twelve") ? " on" : ""}" data-id="twelve" style="--c:${QQ_C}">${qqAv("twelve", 30)}<span>12号<small>${st12}</small></span></button>`,
+      ...qqMem.guests.map((id) => { const r = qqMem.roles.find((x) => x.id === id) || {}; const st = qqTalking.has(id) || r.state === "talk" ? "在说…" : r.state === "sleep" ? "睡着了" : "做客中";
+        return `<button class="xk-rm-chip xk-press${qqTo.has(id) ? " on" : ""}" data-id="${id}" style="--c:${rc(id)}">${qqAv(id, 30)}<span>${rname(id)}<small>${st}</small></span></button>`; }),
+      `<button class="xk-rm-chip xk-press xk-qq-invite" data-act="invite"><i>+</i><span>请人<small>进来 / 出去</small></span></button>`];
+    box.innerHTML = chips.join("");
+    const s = qqEl && $(".xk-qq-state", qqEl);
+    if (s) { s.textContent = qqMem.qq ? "QQ 连着：这里和 QQ 私聊是同一段，两边都能接着聊" : "QQ 没连上：她的回话、日记、要你批的事都会到这里"; s.classList.toggle("off", !qqMem.qq); }
+  }
+  function qqInviteSheet() {
+    const rs = (qqMem && qqMem.roles) || [];
+    openSheet(`<h2>请谁来做客</h2><p class="sub">请进来的人在她自己那段对话里接话，记东西也记进她自己的记忆，和 12号 的记忆本分开。点名她才接话。</p>
+      <div class="xk-qq-guests">${rs.map((r) => `<button class="xk-press${r.guest ? " on" : ""}" data-id="${r.id}" style="--c:${rc(r.id)}"${r.state === "sleep" && !r.guest ? " disabled" : ""}>${qqAv(r.id, 40)}<b>${rname(r.id)}</b><small>${r.guest ? "在里面，点一下请出去" : r.state === "sleep" ? "睡着了" : "点一下请进来"}</small></button>`).join("")}</div>`, (s) => {
+      s.querySelector(".xk-qq-guests").onclick = async (e) => {
+        const b = e.target.closest("[data-id]"); if (!b || b.disabled) return;
+        try { const r = await api("/api/xk/qqapp/guest", { method: "POST", body: { id: b.dataset.id, on: !b.classList.contains("on") } }); SFX.play("toggle"); qqPaintMembers(r.members); closeSheet(); }
+        catch (err) { fail(err); }
+      };
+    });
+  }
+  let qqPoll = 0;
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && qqEl) qqLoad().catch(() => {}); });
+  function qqScroll() { const l = qqEl && $(".xk-rm-list", qqEl); if (l) l.scrollTop = l.scrollHeight; }
+  function qqMsg(m, quiet) {
+    if (!qqEl || m.n <= qqLast) { if (!qqEl && m.from !== "owner" && m.via !== "qq") $("#xk-qq-dot")?.classList.add("on"); return; }
+    // 中间缺了几条（事件流断过、卡过）：不硬接这一条，按编号从网关补齐（11-11 主人：发出去的话显示得慢）
+    if (!quiet && qqLast >= 0 && m.n !== qqLast + 1) { qqLoad().catch(() => {}); return; }
+    qqLast = m.n;
+    $(".xk-rm-empty", qqEl)?.remove();
+    $(".xk-rm-list", qqEl).insertAdjacentHTML("beforeend", qqRow(m));
+    if (!quiet) { qqScroll(); if (m.from !== "owner") SFX.play("receive"); }
+  }
+  function qqTyping(who, on) {
+    if (on) qqTalking.add(who); else qqTalking.delete(who);
+    if (!qqEl) return;
+    $(".xk-rm-typing", qqEl).innerHTML = [...qqTalking].map((x) => `<span style="--c:${qqColor(x)}">${qqAv(x, 20)}${qqName(x)}在说…</span>`).join("");
+    qqPaintMembers();
+  }
+  let qqLoading = null;
+  function qqLoad() {
+    // 同一时间只补一次：事件、轮询、发送回执可能同时来要
+    return qqLoading ||= (async () => {
+      try {
+        const r = await api("/api/xk/qqapp?after=" + qqLast);
+        if (!qqEl) return;
+        const fresh = r.messages.filter((m) => m.n > qqLast);
+        for (const m of fresh) qqMsg(m, true);
+        qqPaintMembers(r.members);
+        if (fresh.length) { qqScroll(); if (fresh.some((m) => m.from !== "owner")) SFX.play("receive"); }
+      } finally { qqLoading = null; }
+    })();
+  }
+  async function qqSend(text) {
+    const r = await api("/api/xk/qqapp", { method: "POST", body: { text, to: [...qqTo] } });
+    // 自己说的话按回执当场上屏，不等事件流（事件流慢了、断了，主人会以为没发出去）
+    if (r && r.msg) qqMsg(r.msg);
+    qqTo.clear(); qqPaintMembers();
+  }
+  function openQQ() {
+    if (qqEl) return;
+    $("#xk-qq-dot")?.classList.remove("on");
+    qqEl = document.createElement("section"); qqEl.id = "xk-qqroom"; qqEl.setAttribute("aria-label", "和 12号 的聊天室");
+    qqEl.innerHTML = `<div class="xk-subh xk-qq-h"><button class="xk-back xk-press" aria-label="返回">${svg("back")}</button><h2>12号</h2></div>
+      <div class="xk-rm-mem"></div>
+      <p class="xk-qq-state"></p>
+      <div class="xk-rm-list"><div class="xk-rm-empty"><p>这里是你和 12号 的私聊，和 QQ 上那段是同一个她。<br>QQ 断了也能在这儿接着聊；点「请人」可以叫姐姐们进来。</p></div></div>
+      <div class="xk-rm-typing"></div>
+      <form class="xk-rm-in"><textarea rows="1" placeholder="和 12号 说点什么…" enterkeyhint="send"></textarea><button class="xk-press" aria-label="发送">${svg("go")}</button></form>`;
+    document.body.appendChild(qqEl); void qqEl.offsetWidth; qqEl.classList.add("on"); SFX.play("sheet");
+    qqLast = -1; qqTo = new Set();
+    $(".xk-back", qqEl).onclick = () => closeQQ();
+    $(".xk-rm-mem", qqEl).onclick = (e) => {
+      const c = e.target.closest("[data-id],[data-act]"); if (!c) return;
+      if (c.dataset.act === "invite") { SFX.play("tap"); return qqInviteSheet(); }
+      const id = c.dataset.id; qqTo.has(id) ? qqTo.delete(id) : qqTo.add(id); c.classList.toggle("on"); SFX.play("toggle");
+    };
+    $(".xk-rm-list", qqEl).onclick = async (e) => {
+      const u = e.target.closest(".xk-rm-unfold");
+      if (u) { const f = u.parentElement, open = f.classList.toggle("open"); u.dataset.t ||= u.textContent; u.textContent = open ? "收起" : u.dataset.t; return; }
+      const b = e.target.closest("[data-say]"); if (!b) return;
+      b.parentElement.querySelectorAll("button").forEach((x) => (x.disabled = true));
+      try { SFX.play("send"); await api("/api/xk/qqapp", { method: "POST", body: { text: b.dataset.say } }); } catch (err) { fail(err); }
+    };
+    const ta = $("textarea", qqEl), form = $(".xk-rm-in", qqEl);
+    ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; };
+    ta.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim(); if (!text) return;
+      ta.value = ""; ta.oninput(); SFX.play("send");
+      try { await qqSend(text); } catch (err) { ta.value = text; fail(err); }
+    };
+    qqLoad().catch(fail);
+    qqTyping(null, false);
+    // 兜底：开着的时候每 4 秒对一次账，事件流漏了的也补上（本机请求，很轻）
+    clearInterval(qqPoll); qqPoll = setInterval(() => { if (qqEl && !document.hidden) qqLoad().catch(() => {}); }, 4000);
+  }
+  function closeQQ() {
+    const el = qqEl; if (!el) return false; qqEl = null; clearInterval(qqPoll);
+    el.classList.remove("on"); setTimeout(() => el.remove(), moving() ? 380 : 0);
+    return true;
+  }
+
   // ── 返回键：外壳调 window.__ccBack()，返回 false 就把 App 退到后台。我们的卡片和四页也登记进去（#12）：
   //    先关我们的卡片 → 再让上游关它的浮层（整页、设置、侧栏……一层层退）→ 不在聊天页就回聊天页 → 都没有才退到后台
   const upBack = window.__ccBack;
@@ -1516,6 +1651,7 @@
       if (obEl) { if (obI) obTo(obI - 1); else obDone(); return true; }
       if (sheet.classList.contains("on")) { closeSheet(); return true; }
       if (roomEl) { if (!pickOff()) closeRoom(); return true; }
+      if (qqEl) { closeQQ(); return true; }
       if (tab === 4 && !root.classList.contains("xk-cover") && closeMeSub()) return true;
       if (typeof upBack === "function" && upBack()) return true;
       if (tab !== 0) { go(0); return true; }

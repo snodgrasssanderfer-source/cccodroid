@@ -22,8 +22,10 @@ import { createSpeech } from "./xk-qq-speech.mjs";
 import { GROWTH_RULES, applySelf, readSelf, selfSection } from "./xk-growth-core.mjs";
 import { logAdd, logBackfill, logSearch, logTail } from "./xk-qq-log.mjs";
 import { CATS, MEM, catOf, memAdd, memInject, memLine, memSearch, memTouch, memVisible, sideOf } from "./xk-qq-mem.mjs";
+import { EMBED_MODEL, QUERY_PFX, embedAsync, embedSync, embedWarm, textHash, vecPack, vecUnpack } from "./xk-embed.mjs";
 import { onPublish, publish } from "./bus.mjs";
 import { PAD_SPECIAL } from "./xk-pad.mjs";
+import { appMedia, appSay, setHost, twelveDone } from "./xk-qq-app.mjs";
 // 工具的行为、参数、出错提示照 qq-agent-plus（MIT）搬：纯函数和许可说明都在 xk-qq-port.mjs
 import {
   normalizeMid, normalizeMessageList, normalizeStickerEntry, findSticker, formatStickerList,
@@ -123,6 +125,8 @@ const REQ_DIR = path.join(RPC_DIR, "req"), RES_DIR = path.join(RPC_DIR, "res"), 
 // 表情：QQ 收藏表情是源（fetch_custom_face_detail / add_custom_face）；本地只留备注、笔记、标签、用过几次
 export const STICKER_FILE = path.join(CLEAN_DIR, "stickers.json");
 export const MEMORY_FILE = path.join(CLEAN_DIR, "memory.json");
+// 记忆的向量另存一份（id → 文字指纹 + 向量），memory.json 不动；文字改了、换了模型就重算
+export const MEMVEC_FILE = path.join(CLEAN_DIR, "memory-vec.json");
 // 群友要小克动真家伙时的待审清单：只在手机上，不进仓库（#134 第三步；主人不在时攒着，回来看）
 export const APPROVALS_FILE = path.join(CFG.home, ".config", "xiaoke", "qq-approvals.json");
 
@@ -532,6 +536,7 @@ export async function handleEvent(cfg, ev) {
   const isOwner = String(ev.user_id) === String(cfg.owner);
   // 主人一开口就当他回来了（不在群的标记清掉）；待审清单拼进这一轮的上下文
   let pending = "";
+  if (isOwner && ev.message_type === "private") appSay("owner", p.text, { via: "qq" });
   if (isOwner) {
     if (STATE.qq.away) { STATE.qq.away = false; saveState(); }
     if (/^(不用了|都不做|都不用)[。！!.]*$/.test(p.text.replace(/\s+/g, "")) && pendingItems().length) { clearApprovals(); say("主人说不用了，待审清单清掉"); }
@@ -571,7 +576,7 @@ export function splitBubbles(text) {
 
 /** 私聊里先亮一下「正在输入」（qq-agent-plus 的 #signalTyping；NapCat 动作名 set_input_status，真机核过再定） */
 async function signalTyping(cfg, ev) {
-  if (ev.message_type !== "private" || !cfg) return;
+  if (ev.message_type !== "private" || !cfg || ev.via === "app") return;
   try { await act("set_input_status", { user_id: ev.user_id, event_type: 1 }, 3000); } catch { /* 显示不出来不挡发消息 */ }
 }
 
@@ -592,6 +597,11 @@ function reply(cfg, ev, text, { split = false } = {}) {
   }
   if (left) chunks.push(left);
   const bubbles = chunks.flatMap((c) => (split ? splitBubbles(c) : [c]));
+  if (toApp(convKey(ev), ev.via)) {
+    for (const c of bubbles) { REPLIES.push({ key: convKey(ev), ev, text: c, app: true }); appSay(TWELVE_ID, c, { via: "app", notify: ev.via !== "app" }); }
+    return;
+  }
+  const mirror = isOwnerKey(convKey(ev));
   bubbles.forEach((c, i) => {
     REPLIES.push({ key: convKey(ev), ev, text: c });
     const wait = i === 0 ? leadMs(c) : gapMs(bubbles[i - 1]);
@@ -605,6 +615,7 @@ function reply(cfg, ev, text, { split = false } = {}) {
         ? send(cfg, "send_group_msg", { group_id: ev.group_id, message: msg })
         : send(cfg, "send_private_msg", { user_id: ev.user_id, message: msg });
       if (!ok) say("没发出去：连接断了");
+      else if (mirror) appSay(TWELVE_ID, c, { via: "qq" });
     });
   });
 }
@@ -720,6 +731,25 @@ function useAwait(ev) {
   if (STATE.qq.awaitOwner?.[gid]) { delete STATE.qq.awaitOwner[gid]; saveState(); }
 }
 
+// ── App 里的 12 号聊天室（xk-qq-app.mjs，主人 11-10 定）：那边说的话当成主人在 QQ 私聊里说的，进同一段 ──
+const TWELVE_ID = "twelve";
+function ownerId() { try { return loadConfig()?.owner || null; } catch { return null; } }
+const isOwnerKey = (key) => { const o = ownerId(); return !!o && key === "p:" + o; };
+/** 这句该不该送到 App：从 App 来的；或者是主人私聊、QQ 又没连上（她主动找主人的日记、要批的事） */
+export function toApp(key, via) { return via === "app" || (!status.connected && isOwnerKey(key)); }
+/** App 里主人说了一句（line 给了就整段照它递：客人叫她时用） */
+export function appIn({ text, line = "", chain = 0 }) {
+  const cfg = loadConfig();
+  if (!cfg?.owner) throw Object.assign(new Error("QQ 还没配（没有 qq.json），12号起不来"), { status: 503 });
+  const ev = { post_type: "message", message_type: "private", user_id: String(cfg.owner), message_id: null, via: "app", appChain: chain,
+    sender: { user_id: String(cfg.owner), nickname: NICK.get(String(cfg.owner)) || "主人" } };
+  let pending = "";
+  if (!line || text) { if (STATE.qq.away) { STATE.qq.away = false; saveState(); } pending = pendingNote(); }
+  const own = line && !text ? "" : incomingLine(ev, text, null, cfg.owner).replace(/^\[私聊\]/, "[App 私聊]");
+  handleMessage(cfg, ev, text || "（姐姐在聊天室叫你）", { line: line + own, pending });
+}
+setHost({ deliver: (x) => appIn(x), connected: () => status.connected });
+
 /** 收一条消息（测试也直接喂这个）。extra.line：整理好的一行（带号码和昵称），聊天模式用 */
 export function handleMessage(cfg, ev, text, extra = {}) {
   const key = convKey(ev);
@@ -758,6 +788,8 @@ function permAsk(key) {
   p.timer = setTimeout(() => permAnswer(key, false, "主人五分钟没回，按不批处理。别再试同一个操作，换个不用批的做法，或者跟主人说清楚卡在哪"), PERM_WAIT_MS);
   p.timer.unref?.();
   say(`问主人批不批：${p.tool} ${p.what.slice(0, 60)}`);
+  const ask = `12号想做一件要你批的事：${p.tool} ${p.what}。回「批」就放行，回「不批」就拒绝；五分钟没回按不批。`;
+  if (p.app) { appSay("system", ask, { kind: "perm", notify: true }); return; }
   privateSay(p.cfg, `12号想做一件要你批的事：${p.tool} ${p.what}。回「批」就放行，回「不批」就拒绝；五分钟没回按不批。`)
     .catch((e) => say("问主人批不批没发出去：" + e.message));
 }
@@ -791,7 +823,7 @@ onPublish((ev) => {
     const r = RUNSQQ.get(ev.runId);
     if (!r?.permRelay || r.done) return;
     const q = PERM_Q.get(r.key) || [];
-    q.push({ runId: ev.runId, id: ev.id, tool: String(ev.tool || ""), what: permWhat(ev), cfg: r.cfg, timer: null, asked: false });
+    q.push({ runId: ev.runId, id: ev.id, tool: String(ev.tool || ""), what: permWhat(ev), cfg: r.cfg, timer: null, asked: false, app: r.ev?.via === "app" });
     PERM_Q.set(r.key, q);
     permAsk(r.key);
   } else if (ev?.type === "perm_resolved") {
@@ -954,6 +986,35 @@ export const MEM_NUDGE = 12;   // 嘴那段跑了几轮：太长了换一段新�
 
 // 每段会话带过哪些记忆：同一段不带第二遍；会话换了（新开、卡换了作废）就重来
 const MEM_SEEN = new Map();   // 会话 key → { sid, ids }
+const VEC = { cache: null, filling: false };
+function vecCache() {
+  if (!VEC.cache) {
+    const j = readJson(MEMVEC_FILE, null);
+    VEC.cache = new Map(j?.model === EMBED_MODEL ? Object.entries(j.v || {}).map(([id, o]) => [id, { h: o.h, e: o.e, v: vecUnpack(o.e) }]) : []);
+  }
+  return VEC.cache;
+}
+function vecOf(m) { const c = vecCache().get(m.id); return c && c.h === textHash(m.text) ? c.v : null; }
+/** 缺向量的记忆在后台补上（新记的、头一回装上模型时那一整批）；这一轮先按字挑，补好了下一轮就用上 */
+export function vecFill(ms) {
+  if (VEC.filling) return null;
+  const miss = ms.filter((m) => m.text && !vecOf(m));
+  if (!miss.length) return null;
+  VEC.filling = true;
+  return (async () => {
+    const c = vecCache();
+    for (let i = 0; i < miss.length; i += 16) {
+      const b = miss.slice(i, i + 16), vs = await embedAsync(b.map((m) => m.text));
+      if (!vs) break;
+      b.forEach((m, k) => { const e = vecPack(vs[k]); c.set(m.id, { h: textHash(m.text), e, v: vecUnpack(e) }); });
+    }
+    const live = new Set(ms.map((m) => m.id));
+    for (const id of c.keys()) if (!live.has(id)) c.delete(id);
+    writeJson(MEMVEC_FILE, { model: EMBED_MODEL, v: Object.fromEntries([...c].map(([id, o]) => [id, { h: o.h, e: o.e }])) });
+  })().catch((e) => say("补记忆向量出错：" + e.message)).finally(() => { VEC.filling = false; });
+}
+// 每个聊天最近两句：挑记忆时连上前文一起看（半小时没说话就不算前文了）
+const RECENT_Q = new Map();
 function memNoteFor(key, text) {
   try {
     const sid = STATE.qq.sessions[key] || null;
@@ -963,7 +1024,13 @@ function memNoteFor(key, text) {
     const fresh = !s || s.sid !== sid;
     if (fresh) { s = { sid, ids: new Set() }; MEM_SEEN.set(key, s); }
     const ms = readJson(MEMORY_FILE, []) || [], before = new Set(s.ids);
-    const note = memInject(memVisible(ms, sideOf(key)), text, s.ids, { fresh });
+    const now = Date.now(), cur = oneLine(text, 400);
+    const prev = (RECENT_Q.get(key) || []).filter((x) => now - x.at < 30 * 60000).map((x) => x.t).join("\n");
+    RECENT_Q.set(key, [...(RECENT_Q.get(key) || []), { t: cur, at: now }].slice(-2));
+    vecFill(ms);
+    // 按意思挑：这句话和前文各算一个向量（本机小模型，一句约 20ms；没装或没载好就是 null，退回按字挑）
+    const qs = embedSync(prev ? [QUERY_PFX + cur, QUERY_PFX + prev] : [QUERY_PFX + cur]);
+    const note = memInject(memVisible(ms, sideOf(key)), text, s.ids, { fresh, now, prev, qv: qs?.[0] || null, pv: qs?.[1] || null, vec: vecOf });
     if (memTouch(ms, [...s.ids].filter((id) => !before.has(id)), "inj")) writeJson(MEMORY_FILE, ms);
     return note;
   } catch (e) { say("附记忆出错：" + e.message); return ""; }
@@ -1174,7 +1241,7 @@ function writeRunCtx(runId, r) {
       runId: String(runId), key: r.key, type: r.ev.message_type === "group" ? "group" : "private",
       group_id: r.ev.group_id ?? null, user_id: r.ev.user_id ?? null,
       group_name: r.ev.group_name ?? null, message_id: r.ev.message_id ?? null, at: r.at,
-      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted, owner: !!r.owner, kind: r.kind ?? null,
+      nick: r.nick ?? null, trigger: r.trigger ?? null, restricted: !!r.restricted, owner: !!r.owner, kind: r.kind ?? null, via: r.ev.via || null,
     });
   } catch (e) { say("写这一轮的会话记录失败：" + e.message); }
 }
@@ -1339,6 +1406,9 @@ const pendingNote = () => {
   return items.length ? digestText(items) : "";
 };
 async function privateSay(cfg, text) {
+  const perm = /^12号想做一件要你批的事/.test(String(text));
+  if (!status.connected) { appSay("system", oneLine(text, 1500), { notify: true, ...(perm ? { kind: "perm" } : {}) }); return {}; }
+  appSay("system", oneLine(text, 1500), { via: "qq", ...(perm ? { kind: "perm" } : {}) });
   return act("send_private_msg", { user_id: String(cfg.owner), message: [{ type: "text", data: { text: oneLine(text, 1500) } }] }, 15000);
 }
 async function groupSay(cfg, groupId, text) {
@@ -1386,11 +1456,24 @@ function padQQ(gid, m) {
 function segsText(segs) {
   return (segs || []).map((s) => s.type === "text" ? s.data?.text || "" : s.type === "image" ? "[图片]" : s.type === "face" || s.type === "mface" ? "[表情]" : s.type === "record" ? "[语音]" : s.type === "at" ? "@" + (NICK.get(String(s.data?.qq)) || s.data?.qq || "") + " " : "").join("");
 }
+let APP_ID = 0;
+/** 一串消息段落到 App：字、图、语音各成一条 */
+function segsToApp(segs, via, notify = false) {
+  for (const s of segs || []) {
+    const file = String(s.data?.file || "");
+    const b64 = file.startsWith("base64://") ? Buffer.from(file.slice(9), "base64") : null;
+    if (s.type === "text") appSay(TWELVE_ID, s.data?.text || "", { via, notify });
+    else if (s.type === "image") b64 ? appMedia(TWELVE_ID, b64, extOf(b64), "image", "", { via, notify }) : appSay(TWELVE_ID, "[图片]", { via });
+    else if (s.type === "record") b64 ? appMedia(TWELVE_ID, b64, "wav", "audio", "", { via, notify }) : appSay(TWELVE_ID, "[语音]", { via });
+  }
+}
 async function sendSegs(ctx, segs, timeoutMs = 20000) {
+  if (toApp(ctx.key, ctx.via)) { segsToApp(segs, "app", ctx.via !== "app"); return "app-" + (++APP_ID); }
   const d = await act(ctx.type === "group" ? "send_group_msg" : "send_private_msg",
     ctx.type === "group" ? { group_id: ctx.group_id, message: segs } : { user_id: ctx.user_id, message: segs }, timeoutMs);
   const id = d?.message_id ?? null;
   if (id != null && ctx.type === "group") padQQ(ctx.group_id, { from: "小克", mine: true, text: segsText(segs) });
+  if (id != null && isOwnerKey(ctx.key)) segsToApp(segs, "qq");
   if (id != null) {
     const set = SENT_KEY.get(ctx.key) || new Set();
     set.add(String(id)); while (set.size > 200) set.delete(set.values().next().value);
@@ -1524,6 +1607,11 @@ async function runTool(req, ctx, r) {
       if (st.size > 20 * 1024 * 1024) throw new Error("文件超过 20MB，发不了");
       const name = oneLine(a.name, 200) || path.basename(file);
       // NapCat 在主人电脑上，读不到手机的路径：照偷图那次传 base64://（真机要核 upload_*_file 收不收）
+      if (toApp(ctx.key, ctx.via)) {
+        appMedia(TWELVE_ID, fs.readFileSync(file), path.extname(name).slice(1) || "bin", "file", name, { via: "app", notify: ctx.via !== "app" });
+        if (r) r.usedSend = true;
+        return { sent: true, name, text: "放进 App 聊天室了：" + name };
+      }
       const pdf = "base64://" + fs.readFileSync(file).toString("base64");
       if (ctx.type === "group") await act("upload_group_file", { group_id: ctx.group_id, file: pdf, name }, 120000);
       else await act("upload_private_file", { user_id: ctx.user_id, file: pdf, name }, 120000);
@@ -1582,6 +1670,7 @@ async function runTool(req, ctx, r) {
       return { sent: true, messageId: id, text: `发了一条语音（${text.length} 字）。` };
     }
     case "send_poke": {
+      if (toApp(ctx.key, ctx.via)) { appSay("system", "12号拍了拍你", { via: "app" }); return { poked: true, text: "拍了一下（在 App 里）。" }; }
       const p = pokeTarget(ctx, a.targetUserId);
       if (p.error) throw new Error(p.error);
       if (ctx.type === "group") await act("group_poke", { group_id: ctx.group_id, user_id: p.target }, 15000);
@@ -1704,7 +1793,9 @@ async function runTool(req, ctx, r) {
       if (a.cat && !CATS.includes(a.cat)) throw new Error("cat 要从这几类里选：" + CATS.join("、"));
       const ms = readJson(MEMORY_FILE, []) || [];
       const limit = Math.max(1, Math.min(20, Number(a.limit) || 8));
-      const hits = memSearch(memVisible(ms, sideOf(ctx.key)), q, { cat: a.cat || "", limit, past: a.past !== false });
+      vecFill(ms);
+      const qv = q ? (await embedAsync([QUERY_PFX + q], 3000))?.[0] || null : null;
+      const hits = memSearch(memVisible(ms, sideOf(ctx.key)), q, { cat: a.cat || "", limit, past: a.past !== false, qv, vec: vecOf });
       if (q && memTouch(ms, hits.map((m) => m.id), "q")) writeJson(MEMORY_FILE, ms);   // 光翻最近几条不算用到
       return { text: hits.length ? hits.map((m) => memLine(m)).join("\n") : "没有相关的记忆；换个说法或换一类再试。" };
     }
@@ -2093,6 +2184,10 @@ END_HOOKS.push((run, f = {}) => {
     say("这一轮没成，没回话（" + (f.error || "出错") + "）");
   }
   const pend = PENDING.get(r.key);
+  if (r.ev?.via === "app") {
+    try { twelveDone(r.ev.appChain || 0, { failed: !!(f.isError || f.failed), why: f.error || "", more: !!pend?.length }); }
+    catch (e) { say("12号聊天室收尾出错：" + e.message); }
+  }
   if (pend?.length) {
     PENDING.delete(r.key);
     const last = pend[pend.length - 1];
@@ -2212,6 +2307,7 @@ export function startQQ(cfg = loadConfig()) {
   if (!cfg) return null;
   STOPPED = false;
   say("开始接（NapCat 正向 WebSocket）");
+  embedWarm();   // 挑记忆用的向量模型先载上（没装就什么都不做）
   connect(cfg);
   return { status };
 }
