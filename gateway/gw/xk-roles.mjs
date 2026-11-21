@@ -11,19 +11,27 @@ import { readSelf, selfSection } from "./xk-growth-core.mjs";
 
 export const ROLES_DIR = path.join(CFG.workspace, "roles");
 export const ROLES = [
-  { id: "xiaoke", name: "小克", provider: "anthropic", engine: "claude" },   // 主人的 Claude 订阅（上游的「Claude 账户登录」）
+  // 默认是主人的 Claude 订阅（上游的「Claude 账户登录」）；xiaoke-engine.json 里指了别家就用那家（主人 11-21：订阅登录过期，换 API 密钥 anthropic-key）
+  { id: "xiaoke", name: "小克", get provider() { return xiaokeAlt()?.provider || "anthropic"; }, engine: "claude" },
   // Gemini：默认经 Antigravity CLI（xk-agy.mjs）；hachimi-engine.json 里指了接口，就改走 Claude Code + 那家（主人 11-10：官方渠道连不上，换中转站）
   { id: "hachimi", name: "哈基米", get provider() { return hachimiAlt()?.provider || null; }, get engine() { return hachimiAlt() ? "claude" : "agy"; } },
   { id: "deepseek", name: "DeepSeek", provider: "deepseek", engine: "claude" },
 ];
 /** 哈基米改走 Claude Code 时用哪家接口：~/.config/xiaoke/hachimi-engine.json {"provider":"<接口 id>"}；没有这个文件就照旧 agy */
 export const HACHIMI_ENGINE_FILE = path.join(xkHome(CFG.home), "hachimi-engine.json");
-let altSeen = { mt: null, v: null };
-export function hachimiAlt() {
-  let mt = null; try { mt = fs.statSync(HACHIMI_ENGINE_FILE).mtimeMs; } catch {}
-  if (mt !== altSeen.mt) { let v = null; try { v = mt == null ? null : JSON.parse(fs.readFileSync(HACHIMI_ENGINE_FILE, "utf8")); } catch {} altSeen = { mt, v }; }
-  return altSeen.v && typeof altSeen.v.provider === "string" && altSeen.v.provider ? altSeen.v : null;
+/** 小克改用别家接口：~/.config/xiaoke/xiaoke-engine.json {"provider":"<接口 id>"}；没有就是订阅登录 */
+export const XIAOKE_ENGINE_FILE = path.join(xkHome(CFG.home), "xiaoke-engine.json");
+// 按修改时间缓存着读：provider 每轮都要问，不能每次都读盘
+function engineReader(file) {
+  let seen = { mt: null, v: null };
+  return () => {
+    let mt = null; try { mt = fs.statSync(file).mtimeMs; } catch {}
+    if (mt !== seen.mt) { let v = null; try { v = mt == null ? null : JSON.parse(fs.readFileSync(file, "utf8")); } catch {} seen = { mt, v }; }
+    return seen.v && typeof seen.v.provider === "string" && seen.v.provider ? seen.v : null;
+  };
 }
+export const hachimiAlt = engineReader(HACHIMI_ENGINE_FILE);
+export const xiaokeAlt = engineReader(XIAOKE_ENGINE_FILE);
 // name 是角色名（给上游、给引擎看的）；界面上叫「小鱼」这些，在 xk-shared.mjs 的 DISPLAY / displayName 里
 export const roleById = (id) => ROLES.find((r) => r.id === id) || null;
 export const roleDir = (id) => path.join(ROLES_DIR, id);
