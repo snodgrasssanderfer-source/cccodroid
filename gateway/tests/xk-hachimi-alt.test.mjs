@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { CFG } from "../gw/config.mjs";
 
 if (!/cccodroid-test-/.test(fs.realpathSync(CFG.home)) || process.env.CCAPP_TEST !== "1") throw new Error("只能用 scripts/test.mjs 跑");
-const { HACHIMI_ENGINE_FILE, roleById } = await import("../gw/xk-roles.mjs");
-after(() => fs.rmSync(HACHIMI_ENGINE_FILE, { force: true }));
+const { HACHIMI_ENGINE_FILE, XIAOKE_ENGINE_FILE, roleById } = await import("../gw/xk-roles.mjs");
+after(() => { fs.rmSync(HACHIMI_ENGINE_FILE, { force: true }); fs.rmSync(XIAOKE_ENGINE_FILE, { force: true }); });
 
 test("没有设置文件：照旧 agy；写了接口：Claude Code + 那家；删了又回 agy", async () => {
   fs.rmSync(HACHIMI_ENGINE_FILE, { force: true });
@@ -23,4 +23,18 @@ test("没有设置文件：照旧 agy；写了接口：Claude Code + 那家；�
   fs.rmSync(HACHIMI_ENGINE_FILE);
   assert.equal(h.engine, "agy");
   assert.equal(roleById("xiaoke").engine, "claude");
+});
+
+// 主人 11-21：订阅登录过期，小克换 API 密钥。xiaoke-engine.json 指了哪家就用哪家，没有就是订阅
+test("小克：没有设置文件走订阅；写了 anthropic-key 就走密钥；删了回订阅", () => {
+  fs.rmSync(XIAOKE_ENGINE_FILE, { force: true });
+  const x = roleById("xiaoke");
+  assert.equal(x.provider, "anthropic");
+  fs.mkdirSync(path.dirname(XIAOKE_ENGINE_FILE), { recursive: true });
+  fs.writeFileSync(XIAOKE_ENGINE_FILE, JSON.stringify({ provider: "anthropic-key" }));
+  assert.equal(x.provider, "anthropic-key");
+  assert.equal(x.engine, "claude");
+  assert.equal({ ...x }.provider, "anthropic-key", "展开成普通对象也拿到当下的值");
+  fs.rmSync(XIAOKE_ENGINE_FILE);
+  assert.equal(x.provider, "anthropic");
 });
