@@ -136,7 +136,7 @@ export function agyDiaryDue(now = new Date()) {
 }
 function agyDiaryTick() {
   const role = roleById("hachimi");
-  if (!ENGINE_RUN.agy || STATE.cooldown.hachimi || STATE.diaryAgyAt === today() + (new Date().getHours() >= 22 ? "n" : "d")) return;
+  if (role.engine !== "agy" || !ENGINE_RUN.agy || STATE.cooldown.hachimi || STATE.diaryAgyAt === today() + (new Date().getHours() >= 22 ? "n" : "d")) return;
   if (!agyDiaryDue().length) return;
   STATE.diaryAgyAt = today() + (new Date().getHours() >= 22 ? "n" : "d");   // 每天白天、晚上各最多试一次，失败等下一档
   saveState();

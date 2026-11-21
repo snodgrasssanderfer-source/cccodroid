@@ -216,9 +216,20 @@ export function runAgy(item, extra = {}) {
   const p = warmProc(sid, !!extra.internal, runId);
   clearTimeout(p.timer);
   if (!extra.internal) copyChannel(runId, p.runKey);
-  let text = "", result = null, done = false, turnErr = "";
+  let text = "", result = null, done = false, turnErr = "", stall = null;
+  const poke = () => {
+    clearTimeout(stall);
+    stall = setTimeout(() => {
+      if (done) return;
+      log(`哈基米这轮 ${Math.round(AGY_STALL.ms / 60000)} 分钟没动静，收掉 agy 进程（会话 ${sid}）`);
+      p.dead = true; if (WARM.get(sid) === p) WARM.delete(sid); clearTimeout(p.timer);
+      try { p.child.kill(); } catch {}
+      end(null, `${Math.round(AGY_STALL.ms / 60000)} 分钟没等到回话，多半是 Google 那边连不上（agy 一直在重试），这轮先放下了，过会儿再发一次`);
+    }, AGY_STALL.ms);
+    stall.unref?.();
+  };
   const end = (code, crash) => {
-    if (done) return; done = true; p.turn = null;
+    if (done) return; done = true; p.turn = null; clearTimeout(stall);
     if (result?.conversation_id && STATE.agyConv[sid] !== result.conversation_id) { STATE.agyConv[sid] = result.conversation_id; saveState(); }
     const ok = result && result.status === "SUCCESS";
     const reply = (result && result.response) || text;
@@ -240,8 +251,9 @@ export function runAgy(item, extra = {}) {
     finish({ isError: !ok, subtype: result ? String(result.status) : "no_result", ...(extra.internal ? { finalText: reply } : {}) });
   };
   p.turn = {
-    err(d) { turnErr += d; if (turnErr.length > 20000) turnErr = turnErr.slice(-20000); },
+    err(d) { poke(); turnErr += d; if (turnErr.length > 20000) turnErr = turnErr.slice(-20000); },
     event(raw) {
+      poke();
       // 实测 1.4.12：内容嵌在以事件名命名的键里，{"event":"result","result":{...}}
       const ev = raw[raw.event] && typeof raw[raw.event] === "object" ? raw[raw.event] : raw;
       if (raw.event === "step_update") {
@@ -256,6 +268,7 @@ export function runAgy(item, extra = {}) {
     },
     exit(code, crash) { end(code, crash); },
   };
+  poke();
   try { p.child.stdin.write(JSON.stringify({ event: "user", message: { content } }) + "\n"); if (extra.internal) p.child.stdin.end(); }
   catch (e) { end(null, "写给 agy 失败：" + e.message); }
 }
@@ -265,6 +278,9 @@ export function runAgy(item, extra = {}) {
 // 网关退出时管道一断，agy 读到 EOF 自己退出，不留孤儿。
 export const WARM = new Map();                     // 我们的会话号 → { child, model, agents, runKey, turn, timer, dead }
 export const AGY_IDLE = { ms: 10 * 60 * 1000 };    // 多久没新消息就让它退出：常驻省的是启动时间，不值得一直占着内存
+// 一轮里多久一个字都不出就算卡死（11-10 真机：Google 接口一直 unexpected EOF，agy 自己无限重试、从不给 result，
+// 网关就一直等，哈基米看着像不理人，主人换新对话又多起一个进程）。到点杀掉这个进程、报错，这轮放下
+export const AGY_STALL = { ms: 4 * 60 * 1000 };
 // 按内容比：writeAgents 每轮都重写 AGENTS.md，按修改时间比会每轮都当成「换了人设」
 const agentsMark = () => { try { return crypto.createHash("sha1").update(fs.readFileSync(path.join(DIR, "AGENTS.md"))).digest("hex"); } catch { return ""; } };
 function warmProc(sid, oneShot, runId) {

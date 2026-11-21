@@ -573,6 +573,8 @@
   // 网关推来的：任务变了 / 跑完了的提醒（App 在前台时只弹一句，后台由外壳发系统通知）
   let schedT = 0;
   function onSchedEvent(ev) {
+    // xk：12号聊天室借 sched_note 弹系统通知（App 在后台时），不是定时任务；前台时那页自己有红点
+    if (ev.taskId === "xk-qq-app") return;
     clearTimeout(schedT); schedT = setTimeout(() => { if (SC.detail && SC.cur) SC.detail = null; loadSched(); }, 400);
     if (ev.type === "sched_note" && !document.hidden) {
       const msg = ev.title + (ev.text ? "：" + ev.text.slice(0, 60) : "");

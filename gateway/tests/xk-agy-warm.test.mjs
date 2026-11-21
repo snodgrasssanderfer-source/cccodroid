@@ -7,7 +7,7 @@ import path from "node:path";
 import { onPublish } from "../gw/bus.mjs";
 import { ensureRoles, roleDir } from "../gw/xk-roles.mjs";
 import { STATE } from "../gw/xk-core.mjs";
-import { AGY, AGY_IDLE, WARM, runAgy, stopAgy } from "../gw/xk-agy.mjs";
+import { AGY, AGY_IDLE, AGY_STALL, WARM, runAgy, stopAgy } from "../gw/xk-agy.mjs";
 import { fakeAgy, readLog } from "./fixtures/xk-fake-agy.mjs";
 
 ensureRoles();
@@ -20,7 +20,7 @@ const run = (item, extra) => new Promise((done) => {
 });
 const starts = () => readLog(LOG).filter((r) => r.start);
 const waitGone = async (sid) => { for (let i = 0; i < 100 && WARM.has(sid); i++) await new Promise((r) => setTimeout(r, 30)); };
-beforeEach(async () => { await stopAgy(); fs.rmSync(LOG, { force: true }); delete STATE.agyModel; delete STATE.agyVerify; delete STATE.agyAuth; AGY_IDLE.ms = 10 * 60 * 1000; });
+beforeEach(async () => { await stopAgy(); fs.rmSync(LOG, { force: true }); delete STATE.agyModel; delete STATE.agyVerify; delete STATE.agyAuth; AGY_IDLE.ms = 10 * 60 * 1000; AGY_STALL.ms = 4 * 60 * 1000; });
 after(() => stopAgy());
 
 test("同一段对话的两条消息：只起一个 agy，第二条直接递进去", async () => {
@@ -117,4 +117,22 @@ test("整理记忆问一次（askAgy）：不在哈基米目录、不放行工�
   assert.match((await askAgy("整理")).error, /quota exhausted/);
   fakeAgy(AGY, { lines: [], code: 2, stderr: "boom\n", log: LOG });
   assert.match((await askAgy("整理")).error, /boom/);
+});
+
+test("一轮卡住一个字都不出（Google 那边一直连不上）：到点杀掉进程、报错，下一条重新起", async () => {
+  AGY_STALL.ms = 2000;   // 够假 agy 起来、记下它收到的那条
+  fakeAgy(AGY, { lines: [], log: LOG });
+  const a = await run({ id: "w9", message: "在吗", sessionId: null });
+  const sid = a.find((e) => e.type === "init").sessionId;
+  assert.equal(a.at(-1).isError, true);
+  assert.ok(a.some((e) => e.type === "error" && /没等到回话/.test(e.message)), "主人看得到为什么没回");
+  assert.equal(WARM.has(sid), false, "卡住的进程收掉了");
+  const pid = starts()[0].pid;
+  for (let i = 0; i < 50; i++) { try { process.kill(pid, 0); } catch { break; } await new Promise((r) => setTimeout(r, 30)); }
+  assert.throws(() => process.kill(pid, 0), "进程真退了");
+  AGY_STALL.ms = 4 * 60 * 1000;
+  fakeAgy(AGY, { lines: ok("c9", "我回来了"), log: LOG });
+  const b = await run({ id: "w10", message: "再试一次", sessionId: sid });
+  assert.equal(b.at(-1).isError, false);
+  assert.equal(starts().length, 2, "新起了一个");
 });
