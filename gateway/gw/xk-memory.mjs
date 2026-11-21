@@ -15,7 +15,8 @@ import { claudeCmd, claudeEnv, ensureBridge, killTree, settingsArgs } from "./cl
 import { roleById, roleDir, roleOfDir, roleOfSession } from "./xk-roles.mjs";
 import { turns } from "./xk-transcript.mjs";
 import { line, load, remember, remove, search, today, update } from "./xk-memstore.mjs";
-import { ENGINE_ASK, STATE, XK_HOME, addRoute, httpError, json, saveState } from "./xk-core.mjs";
+import { ENGINE_ASK, STATE, XK_HOME, addRoute, httpError, json, projectOf, saveState } from "./xk-core.mjs";
+import { projectById } from "./projects.mjs";
 
 // 停多久算「这段聊完了」：太短会把一段话拆成好几次整理，太长主人第二天回来时还没记
 const IDLE_MS = 10 * 60 * 1000;
@@ -45,14 +46,16 @@ function fire(sid) {
 
 // 整理是格式化活：用便宜档，别为记笔记跑一轮主模型、吃主人的订阅额度。看法带人设，留给角色在聊天里自己记。
 // 小克（订阅）用 haiku；别家用它的快档（DeepSeek 是 flash）
-const CHEAP = { anthropic: "haiku" };
+const CHEAP = { anthropic: "haiku", "anthropic-key": "haiku" };   // 密钥那家同样是 Anthropic，按量计费更该用便宜档
 export const cheapModel = (P) => CHEAP[P.id] || P.fastModel || P.defaultModel || "";
 const WORK = path.join(XK_HOME, "ask");   // 一次性调用的工作目录：不在角色目录里，就不读人设、不跑 hook、不挂记忆工具
 /** 问一次、拿回文字：不给工具、不留会话。{ text } 或 { error } */
 export const ASK = {
   async claude(prompt, role, system = SYSTEM) {   // system：聊天室判断谁接话也借这个问一次（xk-room.mjs）
-    const P = providerById(role.provider);
-    if (!P) return { error: `${role.name}的接口（${role.provider}）没配` };
+    // 项目里选了哪家就用哪家（主人 11-21 把小克换成 API 密钥后，订阅登录已失效）；聊天室借用时 role 可能不是真角色，没项目就用它自带的
+    const pid = (role.id && projectById(projectOf(role.id))?.provider) || role.provider;
+    const P = providerById(pid);
+    if (!P) return { error: `${role.name}的接口（${pid}）没配` };
     // 她那家正好是全局那家、又不是登录模式时，claude 走本地 DNS 桥（同 autotitle）
     if (P.id === PROVIDER.id && !isLoginMode() && !(await ensureBridge())) return { error: "本地 DNS 桥启动失败，连不上接口" };
     const model = cheapModel(P);

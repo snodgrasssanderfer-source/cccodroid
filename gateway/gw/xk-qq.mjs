@@ -926,7 +926,8 @@ function deliver(cfg, ev, key, kind, text, line = "", all = null, pendingNote = 
         // 主人私聊那段不算无人值守：要批的操作在 QQ 上问主人（见 permReply）
         internal: true, unattended: !homeTools, auto: "xk-qq", disallowedTools: homeTools ? [] : CLEAN_DENY,
         // 聊天模式也是小克（主人 11-06 定：两个模式都用她）。干净会话不挂在任何角色的项目下，不钉的话会落到全局默认那家
-        provider: roleById("xiaoke").provider,
+        // 跟着小克项目选的那家走（主人 11-21：订阅登录过期，换成 API 密钥）；项目没选才用角色默认
+        provider: xiaokeRun().provider,
         // 嘴那段一样工具都不给：一轮就是一句台词，快，也不会把台词吃掉去调工具（11-07 晚：七八轮「没出字」都是去改偏好了）
         // 回想「我是谁」那轮也不给：只交一份新的文本，网关来存
         ...(opts.mouth || opts.growth
